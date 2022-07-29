@@ -1,11 +1,10 @@
-from email import message
 import discord
 from discord import app_commands, ui
 import os
 import asyncio 
 from utils import countdown_fn
 
-MY_GUILD = discord.Object(id=720687175611580426)
+MY_GUILD = discord.Object(id=981567258222555186)
 
 class MyClient(discord.Client):
     def __init__(self, *, intents: discord.Intents):

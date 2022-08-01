@@ -4,7 +4,7 @@ import os
 import asyncio 
 from utils import countdown_fn
 
-MY_GUILD = discord.Object(id=981567258222555186)
+MY_GUILD = discord.Object(id=981567258222555186) #CPRE 981567258222555186 # TESTER 720687175611580426
 
 class MyClient(discord.Client):
     def __init__(self, *, intents: discord.Intents):
@@ -25,15 +25,42 @@ intents = discord.Intents.all()
 intents.members = True
 client = MyClient(intents=intents)
 
+class SendLog():
+    def __init__(self, interaction, val1):
+        self.interaction = interaction
+        if val1 == 0:
+            self.val1 = ""
+        else:
+            self.val1 = val1
+
+    async def send(self):
+        channel = client.get_channel(1003719893260185750)
+        log = discord.Embed(title=f"**ID : **`{self.interaction.id}`", color=0x455EE8)
+        log.set_author(name=self.interaction.user, icon_url=self.interaction.user.display_avatar.url)
+        log.timestamp = self.interaction.created_at
+        log.add_field(name="เซิรฟ์เวอร์",value=f"`{self.interaction.guild}` ({self.interaction.guild_id})")
+        log.add_field(name="ช่อง",value=f"`{self.interaction.channel}` ({self.interaction.channel_id})")
+        log.add_field(name="ผู้เขียน",value=f"`{self.interaction.user}` ({self.interaction.user.id})")
+        log.add_field(name="คำสั่ง",value=f"```/{self.interaction.command.name} {self.val1}```")
+
+        url_view = discord.ui.View()
+        url_view.add_item(discord.ui.Button(label='Go to Message', style=discord.ButtonStyle.url, url=f"https://discord.com/channels/{self.interaction.guild_id}/{self.interaction.channel_id}/{self.interaction.id}"))
+        
+        await channel.send(embed=log,view=url_view)
+
+
 ################################################# Help #################################################
 @client.tree.command(description="❔ ความช่วยเหลือ")
 async def help(interaction: discord.Interaction):
+    
+    await SendLog.send(self=SendLog(interaction,0))
     # หน้าเมนู Embed
     util = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🔧 เครื่องมืออรรถประโยชน์*", color=0x40eefd)
     util.add_field(name="**🔌 นับถอยหลังและตัดการเชื่อมต่อ**", value="`/countdis`", inline=False)
 
     update = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *📌 ประวัติการอัพเดท*", color=0xdcfa80)
     update.add_field(name="1️⃣ V 1.0 | 29/07/2022", value="• Add: Countdis\n• Add: feedback")
+    update.add_field(name="1️⃣ V 1.1 | 02/08/2022", value="• Add: Log\n• Improve: Embed Feedback")
 
     select = discord.ui.Select(placeholder="ตัวเลือกเมนู",options=[
     discord.SelectOption(label="เครื่องมืออรรถประโยชน์",emoji="🔧",description="คำสั่งการใช้งานทั่วไป",value="util",default=False),
@@ -61,6 +88,7 @@ client.member_except = []
 @client.tree.command(description="⏱️ นับถอยหลังและตัดการเชื่อมต่อ")
 @app_commands.describe(time="ใส่เวลาเป็นหน่วยวินาที")
 async def countdis(interaction: discord.Interaction, time: str):
+    await SendLog.send(self=SendLog(interaction,time))
     people_counter = 0
 
     time_int = int(time)
@@ -114,6 +142,7 @@ client.last_use = [0]
 
 @client.tree.command(name="except",description="⛔ ยกเว้นคำสั่ง Countdis")
 async def except_def(interaction: discord.Interaction):
+    await SendLog.send(self=SendLog(interaction,0))
     user = interaction.user
     if user.id not in client.last_use:
         client.member_except.append(user) # คนที่จะไม่ออก
@@ -134,10 +163,18 @@ class FeedbackModal(ui.Modal, title='มีอะไรอยากบอก?'):
     async def on_submit(self, interaction: discord.Interaction):
         channel = client.get_channel(1002616395495907328)
         await interaction.response.send_message(f'ส่งข้อความเรียบร้อย ✅', ephemeral=True)
-        await channel.send(f"**จาก** <@{interaction.user.id}>\n\n{self.message}")
+        feedback = discord.Embed(title="**📨 Feedback**", color=0x45E2A4)
+        feedback.set_author(name=interaction.user, icon_url=interaction.user.display_avatar.url)
+        feedback.timestamp = interaction.created_at
+        feedback.add_field(name="เซิรฟ์เวอร์",value=f"`{interaction.guild}` ({interaction.guild_id})")
+        feedback.add_field(name="ช่อง",value=f"`{interaction.channel}` ({interaction.channel_id})")
+        feedback.add_field(name="ผู้เขียน",value=f"`{interaction.user}` ({interaction.user.id})")
+        feedback.add_field(name="เนื้อหา",value=f"```{self.message}```")
+        await channel.send(embed=feedback)
 
 @client.tree.command(name="feedback",description="📨 ส่งข้อความหลังไมค์ไปหาผู้สร้าง")
 async def feedback(interaction: discord.Interaction):
+    await SendLog.send(self=SendLog(interaction,0))
     await interaction.response.send_modal(FeedbackModal())
 
 

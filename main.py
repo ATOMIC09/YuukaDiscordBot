@@ -2,7 +2,10 @@ import discord
 from discord import app_commands, ui
 import os
 import asyncio 
-from utils import countdown_fn
+from utils import countdown_fn, youtubedl_fn, sectobigger, shorten_url
+import requests
+import shutil
+import json
 
 MY_GUILD = discord.Object(id=981567258222555186) #CPRE 981567258222555186 # TESTER 720687175611580426
 
@@ -26,12 +29,12 @@ intents.members = True
 client = MyClient(intents=intents)
 
 class SendLog():
-    def __init__(self, interaction, val1):
+    def __init__(self, interaction, arg):
         self.interaction = interaction
-        if val1 == 0:
-            self.val1 = ""
+        if arg == "nodata":
+            self.arg = ""
         else:
-            self.val1 = val1
+            self.arg = arg
 
     async def send(self):
         channel = client.get_channel(1003719893260185750)
@@ -41,7 +44,23 @@ class SendLog():
         log.add_field(name="เซิรฟ์เวอร์",value=f"`{self.interaction.guild}` ({self.interaction.guild_id})")
         log.add_field(name="ช่อง",value=f"`{self.interaction.channel}` ({self.interaction.channel_id})")
         log.add_field(name="ผู้เขียน",value=f"`{self.interaction.user}` ({self.interaction.user.id})")
-        log.add_field(name="คำสั่ง",value=f"```/{self.interaction.command.name} {self.val1}```")
+        log.add_field(name="คำสั่ง",value=f"```/{self.interaction.command.name} {self.arg}```")
+
+        url_view = discord.ui.View()
+        url_view.add_item(discord.ui.Button(label='Go to Message', style=discord.ButtonStyle.url, url=f"https://discord.com/channels/{self.interaction.guild_id}/{self.interaction.channel_id}/{self.interaction.id}"))
+        
+        await channel.send(embed=log,view=url_view)
+    
+    async def context(self):
+        channel = client.get_channel(1003719893260185750)
+        log = discord.Embed(title=f"**ID : **`{self.interaction.id}`", color=0x455EE8)
+        log.set_author(name=self.interaction.user, icon_url=self.interaction.user.display_avatar.url)
+        log.timestamp = self.interaction.created_at
+        log.add_field(name="เซิรฟ์เวอร์",value=f"`{self.interaction.guild}` ({self.interaction.guild_id})")
+        log.add_field(name="ช่อง",value=f"`{self.interaction.channel}` ({self.interaction.channel_id})")
+        log.add_field(name="ผู้เขียน",value=f"`{self.interaction.user}` ({self.interaction.user.id})")
+        log.add_field(name="คำสั่ง",value=f"```{self.interaction.command.name} กับรูปภาพ```")
+        log.set_image(url=self.arg.attachments[0])
 
         url_view = discord.ui.View()
         url_view.add_item(discord.ui.Button(label='Go to Message', style=discord.ButtonStyle.url, url=f"https://discord.com/channels/{self.interaction.guild_id}/{self.interaction.channel_id}/{self.interaction.id}"))
@@ -53,7 +72,7 @@ class SendLog():
 @client.tree.command(description="❔ ความช่วยเหลือ")
 async def help(interaction: discord.Interaction):
     
-    await SendLog.send(self=SendLog(interaction,0))
+    await SendLog.send(self=SendLog(interaction,"nodata"))
     # หน้าเมนู Embed
     util = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🔧 เครื่องมืออรรถประโยชน์*", color=0x40eefd)
     util.add_field(name="**🔌 นับถอยหลังและตัดการเชื่อมต่อ**", value="`/countdis`", inline=False)
@@ -142,7 +161,7 @@ client.last_use = [0]
 
 @client.tree.command(name="except",description="⛔ ยกเว้นคำสั่ง Countdis")
 async def except_def(interaction: discord.Interaction):
-    await SendLog.send(self=SendLog(interaction,0))
+    await SendLog.send(self=SendLog(interaction,"nodata"))
     user = interaction.user
     if user.id not in client.last_use:
         client.member_except.append(user) # คนที่จะไม่ออก
@@ -154,6 +173,56 @@ async def except_def(interaction: discord.Interaction):
         client.last_use.pop(0)
         client.last_use.append(0)
         await interaction.response.send_message(content=f"**<@{user.id}> ถูกลบออกจากรายการที่ยกเว้น <:Deny:921703523111022642>**")
+
+
+################################################# Youtube #################################################
+@client.tree.command(name="youtube",description="🎬 ขอไฟล์จาก Youtube")
+@app_commands.describe(url="ใส่ URL ของคลิปใน Youtube")
+async def youtube_def(interaction: discord.Interaction, url: str):
+    await SendLog.send(self=SendLog(interaction,url))
+    await interaction.response.send_message(f"🔎 **กำลังหา** `{url}`")
+
+    # เก็บข้อมูลดิบ
+    title = youtubedl_fn.yt_title(url)
+    ext = youtubedl_fn.yt_ext(url)
+    upload_date = youtubedl_fn.yt_upload_date(url)
+    channel = youtubedl_fn.yt_channel(url)
+    duration = youtubedl_fn.yt_duration(url)
+    view_count = youtubedl_fn.yt_view_count(url)
+    like_count = youtubedl_fn.yt_like_count(url)
+    dislike_count = youtubedl_fn.yt_dislike_count(url)
+    comment_count = youtubedl_fn.yt_comment_count(url)
+    filesize_approx = youtubedl_fn.yt_filesize_approx(url)
+
+    # ข้อมูลสำคัญ
+    videolink = youtubedl_fn.yt_video(url)
+    audiolink = youtubedl_fn.yt_audio(url)
+    thumbnail = youtubedl_fn.yt_thumbnail(url)
+
+    # ข้อมูลสุก
+    videolinknew = shorten_url.shortenmylink(videolink)
+    audiolinknew = shorten_url.shortenmylink(audiolink)
+    durationnew = sectobigger.sec(duration)
+    upload_datenew = sectobigger.datenumbeautiful(upload_date)
+
+    dl = discord.Embed(title = f"**{title}**", color = 0xff80c9)
+    dl.timestamp = interaction.created_at
+    dl.add_field(name="🔐 นามสกุลไฟล์", value=f"`{ext}`", inline=False)
+    dl.add_field(name="🥼 ช่อง", value=f"`{channel}`", inline=False)
+    dl.add_field(name="📆 วันที่อัพโหลด", value=f"`{upload_datenew}`", inline=False)
+    dl.add_field(name="🕒 ระยะเวลา", value=f"`{durationnew}`", inline=False)
+    dl.add_field(name="👀 จำนวนคนดู", value=f"`{view_count} คน`", inline=False)
+    dl.add_field(name="👍🏻 จำนวนคน Like", value=f"`{like_count} คน`", inline=False)
+    dl.add_field(name="👎🏻 จำนวนคน Dislike", value=f"`{dislike_count} คน`", inline=False)
+    dl.add_field(name="💬 จำนวน Comment", value=f"`{comment_count} คน`", inline=False)
+    dl.add_field(name="📦 ขนาดไฟล์", value=f"`{filesize_approx}`", inline=False)
+    dl.set_image(url=thumbnail)
+
+    url_view = discord.ui.View()
+    url_view.add_item(discord.ui.Button(label='Video',emoji="🎬" , style=discord.ButtonStyle.url, url=videolinknew))
+    url_view.add_item(discord.ui.Button(label='Audio',emoji="🔊" , style=discord.ButtonStyle.url, url=audiolinknew))
+
+    await interaction.edit_original_message(content="",embed=dl,view=url_view)
 
 
 ################################################# Feedback #################################################
@@ -174,9 +243,75 @@ class FeedbackModal(ui.Modal, title='มีอะไรอยากบอก?'):
 
 @client.tree.command(name="feedback",description="📨 ส่งข้อความหลังไมค์ไปหาผู้สร้าง")
 async def feedback(interaction: discord.Interaction):
-    await SendLog.send(self=SendLog(interaction,0))
+    await SendLog.send(self=SendLog(interaction,"nodata"))
     await interaction.response.send_modal(FeedbackModal())
 
+################################################# Context Command #################################################
+@client.tree.context_menu(name='Search by Image')
+async def searchbyimage(interaction: discord.Interaction, message: discord.Message):
+    await SendLog.context(self=SendLog(interaction,message))
+    filePath = f"temp/autosave/{client.last_image}"
+    searchUrl = 'https://yandex.com/images/search'
+    files = {'upfile': ('blob', open(filePath, 'rb'), 'image/jpeg')}
+    params = {'rpt': 'imageview', 'format': 'json', 'request': '{"blocks":[{"block":"b-page_type_search-by-image__link"}]}'}
+    response = requests.post(searchUrl, params=params, files=files)
+    query_string = json.loads(response.content)['blocks'][0]['params']['url']
+    img_search_url= searchUrl + '?' + query_string
+
+    search = discord.Embed(title = "**🔎 ค้นหาภาพคล้าย**", color = 0x5be259)
+    search.set_thumbnail(url=client.last_image_url)
+    search.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+    search.timestamp = interaction.created_at
+
+    url_view = discord.ui.View()
+    url_view.add_item(discord.ui.Button(label='ผลการค้นหา',emoji="🔎",style=discord.ButtonStyle.url, url=img_search_url))
+
+    await interaction.response.send_message(embed=search, view=url_view)
+
+
+################################################# Auto Save Attachment #################################################
+@client.event
+async def on_message(message):
+    # Auto Save Attachments with name
+    extension = ""
+    url = ""
+
+    try:
+        attachment_url = message.attachments[0]
+        url = str(attachment_url.url)
+        splitedbydot = url.split(".")
+        splitedbyslash = splitedbydot[len(splitedbydot)-2].split("/")
+        name = splitedbyslash[len(splitedbyslash)-1]
+        extension = splitedbydot[len(splitedbydot)-1]
+
+        FileName = name+"."+extension
+        client.name_only = name
+        r = requests.get(url, stream=True)
+        with open(FileName, 'wb') as out_file:
+            shutil.copyfileobj(r.raw, out_file)
+        shutil.move(FileName, f"temp/autosave/{FileName}")
+        await client.change_presence(activity=discord.Game(name=f"💾 {FileName}"))
+        print('Saving : ' + FileName)
+
+        if extension == "png" or extension == "jpg" or extension == "jpeg" or extension == "webp":
+            client.last_image = FileName
+            client.last_image_url = url
+            print(f"Saved {FileName} to Last Image")
+        elif extension == "mp4" or extension == "webm" or extension == "mkv" or extension == "avi" or extension == "mov" or extension == "flv" or extension == "wmv" or extension == "mpg" or extension == "mpeg":
+            client.last_video = FileName
+            client.last_video_url = url
+            print(f"Saved {FileName} to Last Video")
+        elif extension == "mp3" or extension == "wav" or extension == "m4a" or extension == "flac" or extension == "ogg":
+            client.last_audio = FileName
+            client.last_audio_url = url
+            print(f"Saved {FileName} to Last Audio")
+        elif extension == "pdf":
+            client.last_pdf = FileName
+            client.last_pdf_url = url
+            print(f"Saved {FileName} to Last PDF")
+    
+    except:
+        print("No attachment")
 
 Token = os.environ['YuukaToken']
 client.run(Token)

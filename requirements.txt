@@ -1,1 +1,4 @@
 git+https://github.com/Rapptz/discord.py
+requests
+youtube_dl
+pyshorteners

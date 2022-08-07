@@ -1,11 +1,13 @@
 import discord
 from discord import app_commands, ui
+from discord.ext import tasks
 import os
 import asyncio 
 from utils import countdown_fn, youtubedl_fn, sectobigger, shorten_url
 import requests
 import shutil
 import json
+import psutil
 
 MY_GUILD = discord.Object(id=981567258222555186) #CPRE 981567258222555186 # TESTER 720687175611580426
 
@@ -15,6 +17,11 @@ class MyClient(discord.Client):
         self.tree = app_commands.CommandTree(self)
 
     async def on_ready(self):
+        if not host_status_change.is_running():
+            host_status_change.start()
+        if not autodelete.is_running():
+            autodelete.start()
+            
         await client.change_presence(activity=discord.Game(name="💤 Standby..."))
         print(f'Logged in as {self.user} (ID: {self.user.id})')
         print('------------------------------------------------')
@@ -76,10 +83,13 @@ async def help(interaction: discord.Interaction):
     # หน้าเมนู Embed
     util = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🔧 เครื่องมืออรรถประโยชน์*", color=0x40eefd)
     util.add_field(name="**🔌 นับถอยหลังและตัดการเชื่อมต่อ**", value="`/countdis`", inline=False)
+    util.add_field(name="**⛔ ยกเว้นคำสั่ง Countdis**", value="`/except`", inline=False)
+    util.add_field(name="**📨 ส่งข้อความหลังไมค์ไปหาผู้สร้าง**", value="`/feedback`", inline=False)
+    util.add_field(name="**🎬 ขอไฟล์จาก Youtube**", value="`/youtube`", inline=False)
 
     update = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *📌 ประวัติการอัพเดท*", color=0xdcfa80)
-    update.add_field(name="1️⃣ V 1.0 | 29/07/2022", value="• Add: Countdis\n• Add: feedback")
-    update.add_field(name="1️⃣ V 1.1 | 02/08/2022", value="• Add: Log\n• Add: Youtube\n• Add: Search by Image\n• Improve: Embed Feedback")
+    update.add_field(name="1️⃣ V 1.0 | 29/07/2022", value="• Add: Countdis\n• Add: Feedback")
+    update.add_field(name="1️⃣ V 1.1 | 02/08/2022", value="• Add: Log\n• Add: Youtube\n• Add: Search by Image\n• Add: AutoDelete Temp\n• Add: Hosting Status\n• Improve: Embed Feedback")
 
     select = discord.ui.Select(placeholder="ตัวเลือกเมนู",options=[
     discord.SelectOption(label="เครื่องมืออรรถประโยชน์",emoji="🔧",description="คำสั่งการใช้งานทั่วไป",value="util",default=False),
@@ -312,6 +322,20 @@ async def on_message(message):
     
     except:
         print("No attachment")
+
+@tasks.loop(seconds=30)
+async def host_status_change():
+    # Check Heroku Status
+    cpu = psutil.cpu_percent()
+    ram = psutil.virtual_memory()[2]
+    await client.change_presence(activity=discord.Game(name=f"CPU {cpu}% RAM {ram}%"))
+
+@tasks.loop(minutes=30)
+async def autodelete():
+    # Delete autosave
+    dir = 'temp/autosave' # temp/test/autosave
+    for f in os.listdir(dir):
+        os.remove(os.path.join(dir, f))
 
 Token = os.environ['YuukaToken']
 client.run(Token)

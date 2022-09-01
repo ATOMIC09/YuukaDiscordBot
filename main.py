@@ -9,7 +9,7 @@ import shutil
 import json
 import psutil
 
-MY_GUILD = discord.Object(id=720687175611580426) #CPRE 981567258222555186 # TESTER 720687175611580426
+MY_GUILD = discord.Object(id=981567258222555186) #CPRE 981567258222555186 # TESTER 720687175611580426
 
 class MyClient(discord.Client):
     def __init__(self, *, intents: discord.Intents):
@@ -360,5 +360,5 @@ async def autodelete():
     for f in os.listdir(dir):
         os.remove(os.path.join(dir, f))
 
-Token = os.environ['YuukaTesterToken']
+Token = os.environ['YuukaToken']
 client.run(Token)

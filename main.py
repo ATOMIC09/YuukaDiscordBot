@@ -9,7 +9,7 @@ import shutil
 import json
 import psutil
 
-MY_GUILD = discord.Object(id=981567258222555186) #CPRE 981567258222555186 # TESTER 720687175611580426
+MY_GUILD = discord.Object(id=720687175611580426) #CPRE 981567258222555186 # TESTER 720687175611580426
 
 class MyClient(discord.Client):
     def __init__(self, *, intents: discord.Intents):
@@ -242,6 +242,8 @@ async def youtube_def(interaction: discord.Interaction, url: str):
 @client.tree.command(description="📨 ส่งข้อความด้วยบอท")
 @app_commands.describe(channel="ช่องข้อความที่จะส่ง",message="ข้อความ")
 async def send(interaction: discord.Interaction, channel: discord.TextChannel, *, message: str):
+    combine_arg = str(channel.id) + " " + message
+    await SendLog.send(self=SendLog(interaction,combine_arg))
     await interaction.response.send_message(content=f'"{message}" ถูกส่งไปยัง {channel.mention}',ephemeral=True)
     await channel.send(message)
 
@@ -251,6 +253,7 @@ async def send(interaction: discord.Interaction, channel: discord.TextChannel, *
 @app_commands.describe(member="ผู้ใช้")
 async def kick(interaction: discord.Interaction, member: discord.Member):
     await member.move_to(None)
+    await SendLog.send(self=SendLog(interaction,str(member.id)))
     await interaction.response.send_message(content=f'<@{member.id}> ถูกเตะออกจาก `{member.voice.channel}`',ephemeral=True)
     await interaction.send(member)
 
@@ -357,5 +360,5 @@ async def autodelete():
     for f in os.listdir(dir):
         os.remove(os.path.join(dir, f))
 
-Token = os.environ['YuukaToken']
+Token = os.environ['YuukaTesterToken']
 client.run(Token)

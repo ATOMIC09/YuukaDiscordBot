@@ -235,6 +235,14 @@ async def youtube_def(interaction: discord.Interaction, url: str):
     await interaction.edit_original_message(content="",embed=dl,view=url_view)
 
 
+################################################# Send Message #################################################
+@client.tree.command(description="📨 ส่งข้อความด้วยบอท")
+@app_commands.describe(channel="ช่องข้อความที่จะส่ง",message="ข้อความ")
+async def send(interaction: discord.Interaction, channel: discord.TextChannel, *, message: str):
+    await interaction.response.send_message(content=f'"{message}" ถูกส่งไปยัง {channel.mention}',ephemeral=True)
+    await channel.send(message)
+
+
 ################################################# Feedback #################################################
 class FeedbackModal(ui.Modal, title='มีอะไรอยากบอก?'):
     message = ui.TextInput(label='Answer', style=discord.TextStyle.paragraph)

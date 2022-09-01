@@ -86,10 +86,13 @@ async def help(interaction: discord.Interaction):
     util.add_field(name="**⛔ ยกเว้นคำสั่ง Countdis**", value="`/except`", inline=False)
     util.add_field(name="**📨 ส่งข้อความหลังไมค์ไปหาผู้สร้าง**", value="`/feedback`", inline=False)
     util.add_field(name="**🎬 ขอไฟล์จาก Youtube**", value="`/youtube`", inline=False)
+    util.add_field(name="**📨 ส่งข้อความ**", value="`/send`", inline=False)
+    util.add_field(name="**🦵 เตะคนออกจากแชทเสียง**", value="`/kick`", inline=False)
 
     update = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *📌 ประวัติการอัพเดท*", color=0xdcfa80)
     update.add_field(name="1️⃣ V 1.0 | 29/07/2022", value="• Add: Countdis\n• Add: Feedback")
     update.add_field(name="1️⃣ V 1.1 | 02/08/2022", value="• Add: Log\n• Add: Youtube\n• Add: Search by Image\n• Add: AutoDelete Temp\n• Add: Hosting Status\n• Improve: Embed Feedback")
+    update.add_field(name="1️⃣ V 1.2 | 02/09/2022", value="• Add: Send command\n• Add: Kick member from voice chat")
 
     select = discord.ui.Select(placeholder="ตัวเลือกเมนู",options=[
     discord.SelectOption(label="เครื่องมืออรรถประโยชน์",emoji="🔧",description="คำสั่งการใช้งานทั่วไป",value="util",default=False),
@@ -241,6 +244,15 @@ async def youtube_def(interaction: discord.Interaction, url: str):
 async def send(interaction: discord.Interaction, channel: discord.TextChannel, *, message: str):
     await interaction.response.send_message(content=f'"{message}" ถูกส่งไปยัง {channel.mention}',ephemeral=True)
     await channel.send(message)
+
+
+################################################# Kick member from vc #################################################
+@client.tree.command(description="🦵 เตะสมาชิกจากช่องเสียง")
+@app_commands.describe(member="ผู้ใช้")
+async def kick(interaction: discord.Interaction, member: discord.Member):
+    await member.move_to(None)
+    await interaction.response.send_message(content=f'<@{member.id}> ถูกเตะออกจาก `{member.voice.channel}`',ephemeral=True)
+    await interaction.send(member)
 
 
 ################################################# Feedback #################################################

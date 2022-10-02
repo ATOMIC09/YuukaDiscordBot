@@ -3,3 +3,5 @@ requests
 youtube_dl
 pyshorteners
 psutil
+numpy
+opencv-python-headless==4.5.4.58

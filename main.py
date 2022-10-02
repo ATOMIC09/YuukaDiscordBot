@@ -3,19 +3,19 @@ from discord import app_commands, ui
 from discord.ext import tasks
 import os
 import asyncio 
-from utils import countdown_fn, youtubedl_fn, sectobigger, shorten_url
+from utils import countdown_fn, youtubedl_fn, sectobigger, shorten_url, imageprocess_fn
 import requests
 import shutil
 import json
 import psutil
 
-MY_GUILD = discord.Object(id=981567258222555186) #CPRE 981567258222555186 # TESTER 720687175611580426
+MY_GUILD = discord.Object(id=720687175611580426) #CPRE 981567258222555186 # TESTER 720687175611580426
 
 class MyClient(discord.Client):
     def __init__(self, *, intents: discord.Intents):
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
-
+    
     async def on_ready(self):
         if not host_status_change.is_running():
             host_status_change.start()
@@ -25,18 +25,20 @@ class MyClient(discord.Client):
         await client.change_presence(activity=discord.Game(name="💤 Standby..."))
         print(f'Logged in as {self.user} (ID: {self.user.id})')
         print('------------------------------------------------')
-
+    
+    '''
     async def setup_hook(self):
         # This copies the global commands over to your guild.
         self.tree.copy_global_to(guild=MY_GUILD)
         await self.tree.sync(guild=MY_GUILD)
+    '''
 
 intents = discord.Intents.all()
 intents.members = True
 client = MyClient(intents=intents)
 
 class SendLog():
-    def __init__(self, interaction, arg):
+    def __init__(self, interaction, arg="nodata"):
         self.interaction = interaction
         if arg == "nodata":
             self.arg = ""
@@ -79,7 +81,7 @@ class SendLog():
 @client.tree.command(description="❔ ความช่วยเหลือ")
 async def help(interaction: discord.Interaction):
     
-    await SendLog.send(self=SendLog(interaction,"nodata"))
+    await SendLog.send(self=SendLog(interaction))
     # หน้าเมนู Embed
     util = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🔧 เครื่องมืออรรถประโยชน์*", color=0x40eefd)
     util.add_field(name="**🔌 นับถอยหลังและตัดการเชื่อมต่อ**", value="`/countdis`", inline=False)
@@ -88,11 +90,13 @@ async def help(interaction: discord.Interaction):
     util.add_field(name="**🎬 ขอไฟล์จาก Youtube**", value="`/youtube`", inline=False)
     util.add_field(name="**📨 ส่งข้อความ**", value="`/send`", inline=False)
     util.add_field(name="**🦵 เตะคนออกจากแชทเสียง**", value="`/kick`", inline=False)
+    util.add_field(name="**🍟 ทอดกรอบภาพ**", value="`/deepfry`", inline=False)
 
     update = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *📌 ประวัติการอัพเดท*", color=0xdcfa80)
     update.add_field(name="1️⃣ V 1.0 | 29/07/2022", value="• Add: Countdis\n• Add: Feedback")
     update.add_field(name="1️⃣ V 1.1 | 02/08/2022", value="• Add: Log\n• Add: Youtube\n• Add: Search by Image\n• Add: AutoDelete Temp\n• Add: Hosting Status\n• Improve: Embed Feedback")
     update.add_field(name="1️⃣ V 1.2 | 02/09/2022", value="• Add: Send command\n• Add: Kick member from voice chat")
+    update.add_field(name="1️⃣ V 1.3 | 02/10/2022", value="• Add: Deepfry command\n• Improve: Change Guild to Global Command")
 
     select = discord.ui.Select(placeholder="ตัวเลือกเมนู",options=[
     discord.SelectOption(label="เครื่องมืออรรถประโยชน์",emoji="🔧",description="คำสั่งการใช้งานทั่วไป",value="util",default=False),
@@ -174,7 +178,7 @@ client.last_use = [0]
 
 @client.tree.command(name="except",description="⛔ ยกเว้นคำสั่ง Countdis")
 async def except_def(interaction: discord.Interaction):
-    await SendLog.send(self=SendLog(interaction,"nodata"))
+    await SendLog.send(self=SendLog(interaction))
     user = interaction.user
     if user.id not in client.last_use:
         client.member_except.append(user) # คนที่จะไม่ออก
@@ -248,7 +252,7 @@ async def send(interaction: discord.Interaction, channel: discord.TextChannel, *
     await channel.send(message)
 
 
-################################################# Kick member from vc #################################################
+################################################# Kick member from VC #################################################
 @client.tree.command(description="🦵 เตะสมาชิกจากช่องเสียง")
 @app_commands.describe(member="ผู้ใช้")
 async def kick(interaction: discord.Interaction, member: discord.Member):
@@ -276,8 +280,22 @@ class FeedbackModal(ui.Modal, title='มีอะไรอยากบอก?'):
 
 @client.tree.command(name="feedback",description="📨 ส่งข้อความหลังไมค์ไปหาผู้สร้าง")
 async def feedback(interaction: discord.Interaction):
-    await SendLog.send(self=SendLog(interaction,"nodata"))
+    await SendLog.send(self=SendLog(interaction))
     await interaction.response.send_modal(FeedbackModal())
+
+################################################### Deepfry ###################################################
+@client.tree.command(description="🍟 ทอดกรอบภาพ")
+async def deepfry(interaction: discord.Interaction):
+    shutil.copy(f"temp/autosave/{client.last_image}", f"asset/deepfry/deepfryer_input/{client.last_image}")
+    imageprocess_fn.deepfry(f"asset/deepfry/deepfryer_input/{client.last_image}")
+    await SendLog.send(self=SendLog(interaction))
+
+    if "_deepfryer" in client.name_only:
+        file_name = discord.File(f"asset/deepfry/deepfryer_output/{client.name_only}.png")
+        await interaction.response.send_message(file=file_name)
+    else:
+        file_name = discord.File(f"asset/deepfry/deepfryer_output/{client.name_only}_deepfryer.png")
+        await interaction.response.send_message(file=file_name)
 
 ################################################# Context Command #################################################
 @client.tree.context_menu(name='Search by Image')

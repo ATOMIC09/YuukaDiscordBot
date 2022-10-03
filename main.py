@@ -9,7 +9,7 @@ import shutil
 import json
 import psutil
 
-guild_list = [981567258222555186,720687175611580426,1008658885030203422]
+#MY_GUILD = discord.Object(id=720687175611580426) #CPRE 981567258222555186 # TESTER 720687175611580426
 
 class MyClient(discord.Client):
     def __init__(self, *, intents: discord.Intents):
@@ -26,13 +26,8 @@ class MyClient(discord.Client):
         print(f'Logged in as {self.user} (ID: {self.user.id})')
         print('------------------------------------------------')
     
-    
     async def setup_hook(self):
-        for i in range(len(guild_list)):
-            MY_GUILD = discord.Object(id=guild_list[0])
-            # This copies the global commands over to your guild.
-            self.tree.copy_global_to(guild=MY_GUILD)
-            await self.tree.sync(guild=MY_GUILD)
+        await self.tree.sync()
     
 
 intents = discord.Intents.all()

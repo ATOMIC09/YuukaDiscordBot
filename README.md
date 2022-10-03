@@ -1,11 +1,8 @@
 <h1 align="center">🌈 Welcome to YuukaDiscordBot's Repository ✨</h1>
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.2-blue.svg?cacheSeconds=2592000" />
+  <img alt="Version" src="https://img.shields.io/badge/version-1.3-blue.svg?cacheSeconds=2592000" />
   <a href="#" target="_blank">
     <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" />
-  </a>
-  <a href="https://twitter.com/atomic_phutawan" target="_blank">
-    <img alt="Twitter: atomic_phutawan" src="https://img.shields.io/twitter/follow/atomic_phutawan.svg?style=social" />
   </a>
 </p>
 
@@ -22,6 +19,7 @@
 - `/youtube` ใช้เพื่อดูข้อมูลของคลิปใน Youtube รวมถึงโหลดคลิปและเสียงได้
 - `/send` ใช้เพื่อส่งข้อความ
 - `/kick` ใช้เพื่อเตะคนออกจากแชทเสียง
+- `/deepfry` ใช้ทอดกรอบภาพ
 
 ## 📄 รายการคำสั่ง Context Command (คลิ๊กขวาที่ข้อความ -> Apps -> ...)
 - `Search by Image` ใช้ค้นหาภาพคล้าย

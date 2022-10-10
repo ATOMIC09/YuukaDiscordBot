@@ -88,12 +88,14 @@ async def help(interaction: discord.Interaction):
     util.add_field(name="**📨 ส่งข้อความ**", value="`/send`", inline=False)
     util.add_field(name="**🦵 เตะคนออกจากแชทเสียง**", value="`/kick`", inline=False)
     util.add_field(name="**🍟 ทอดกรอบภาพ**", value="`/deepfry`", inline=False)
+    util.add_field(name="**📢 สแปมคนไม่มา**", value="`/spam`", inline=False) 
 
     update = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *📌 ประวัติการอัพเดท*", color=0xdcfa80)
     update.add_field(name="1️⃣ V 1.0 | 29/07/2022", value="• Add: Countdis\n• Add: Feedback")
     update.add_field(name="2️⃣ V 1.1 | 02/08/2022", value="• Add: Log\n• Add: Youtube\n• Add: Search by Image\n• Add: AutoDelete Temp\n• Add: Hosting Status\n• Improve: Embed Feedback")
     update.add_field(name="3️⃣ V 1.2 | 02/09/2022", value="• Add: Send command\n• Add: Kick member from voice chat")
     update.add_field(name="4️⃣ V 1.3 | 02/10/2022", value="• Add: Deepfry command\n• Improve: Change Guild to Global Command")
+    update.add_field(name="5️⃣ V 1.4 | 11/10/2022", value="• Add: Spam Mentions")
 
     select = discord.ui.Select(placeholder="ตัวเลือกเมนู",options=[
     discord.SelectOption(label="เครื่องมืออรรถประโยชน์",emoji="🔧",description="คำสั่งการใช้งานทั่วไป",value="util",default=False),
@@ -293,6 +295,37 @@ async def deepfry(interaction: discord.Interaction):
     else:
         file_name = discord.File(f"asset/deepfry/deepfryer_output/{client.name_only}_deepfryer.png")
         await interaction.response.send_message(file=file_name)
+
+
+################################################# Spam Mentions #################################################
+stopSpam = False
+@client.tree.command(description="📢 สแปมคนไม่มา")
+@app_commands.describe(member="ผู้ใช้", message="ข้อความ", delay="การหน่วงเวลา", amount="จำนวนครั้ง")
+async def spam(interaction: discord.Interaction, member: discord.Member, *, message: str, delay: int = 2, amount: int = 10):
+    await SendLog.send(self=SendLog(interaction,str(member.id)))
+
+    stop = discord.ui.Button(label="หยุดสแปม",emoji="⏹",style=discord.ButtonStyle.red)
+    async def stop_callback(interaction):
+        global stopSpam 
+        stopSpam = True
+        await interaction.response.edit_message(content=f'⛔ **หยุดสแปม** {message} **กับ** <@{member.id}> **แล้ว**',view=None)
+
+    stop.callback = stop_callback
+    view = discord.ui.View()
+    view.add_item(stop)
+    await interaction.response.send_message(content=f'📢 **กำลังสแปม** {message} **กับ** <@{member.id}>',ephemeral=True,view=view)
+    
+    global stopSpam 
+    channel = client.get_channel(1020927495182241863)
+    for i in range(amount):
+        if stopSpam == False:
+            await asyncio.sleep(delay)
+            await channel.send(f'{message} <@{member.id}>')
+        else:
+            stopSpam = False
+            break
+    await interaction.edit_original_message(content=f'✅ **สแปม** {message} **กับ** <@{member.id}> **จบแล้ว**',view=None)
+        
 
 ################################################# Context Command #################################################
 @client.tree.context_menu(name='Search by Image')

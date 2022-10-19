@@ -136,19 +136,19 @@ async def countdis(interaction: discord.Interaction, time: str):
         await interaction.response.send_message(output)
         for i in range(time_int):
             output = countdown_fn.countdown_fn(time_int)
-            await interaction.edit_original_message(content=output)
+            await interaction.edit_original_response(content=output)
             await asyncio.sleep(1)
             time_int -= 1
 
             if client.timestop == -22052603:
-                await interaction.edit_original_message(content="**การนับถอยหลังถูกยกเลิก 🛑**")
+                await interaction.edit_original_response(content="**การนับถอยหลังถูกยกเลิก 🛑**")
                 break
         if client.timestop != -22052603:
             try:
                 members = interaction.user.voice.channel.members
                 channel = interaction.user.voice.channel
             
-                await interaction.edit_original_message(content="**หมดเวลา 🔔**")
+                await interaction.edit_original_response(content="**หมดเวลา 🔔**")
                 
                 if client.member_except == []: # ไม่มีใครยกเว้น
                     members = interaction.user.voice.channel.members
@@ -169,7 +169,7 @@ async def countdis(interaction: discord.Interaction, time: str):
                     await interaction.followup.send(f"⏏️  **ตัดการเชื่อมต่อจำนวน {people_counter} คน จาก `{channel}` สำเร็จแล้ว**")
                     
             except:
-                await interaction.edit_original_message(content="**ไม่เข้าห้องเสียงแล้วจะให้ถีบยังไงอะ (●'◡'●)**")
+                await interaction.edit_original_response(content="**ไม่เข้าห้องเสียงแล้วจะให้ถีบยังไงอะ (●'◡'●)**")
 
 
 ################################################# Except #################################################
@@ -238,7 +238,7 @@ async def youtube_def(interaction: discord.Interaction, url: str):
     url_view.add_item(discord.ui.Button(label='Video',emoji="🎬" , style=discord.ButtonStyle.url, url=videolinknew))
     url_view.add_item(discord.ui.Button(label='Audio',emoji="🔊" , style=discord.ButtonStyle.url, url=audiolinknew))
 
-    await interaction.edit_original_message(content="",embed=dl,view=url_view)
+    await interaction.edit_original_response(content="",embed=dl,view=url_view)
 
 
 ################################################# Send Message #################################################
@@ -324,7 +324,7 @@ async def spam(interaction: discord.Interaction, member: discord.Member, *, mess
         else:
             stopSpam = False
             break
-    await interaction.edit_original_message(content=f'✅ **สแปม** {message} **กับ** <@{member.id}> **จบแล้ว**',view=None)
+    await interaction.edit_original_response(content=f'✅ **สแปม** {message} **กับ** <@{member.id}> **จบแล้ว**',view=None)
         
 
 ################################################# Context Command #################################################

@@ -19,8 +19,8 @@ class MyClient(discord.Client):
     async def on_ready(self):
         if not host_status_change.is_running():
             host_status_change.start()
-        if not autodelete.is_running():
-            autodelete.start()
+        #if not autodelete.is_running():
+        #    autodelete.start()
             
         await client.change_presence(activity=discord.Game(name="💤 Standby..."))
         print(f'Logged in as {self.user} (ID: {self.user.id})')
@@ -202,10 +202,13 @@ async def youtube_def(interaction: discord.Interaction, url: str):
     title = youtubedl_fn.yt_title(url)
     ext = youtubedl_fn.yt_ext(url)
     upload_date = youtubedl_fn.yt_upload_date(url)
-    channel = youtubedl_fn.yt_channel(url)
+    channel, channel_id = youtubedl_fn.yt_channel(url)
     duration = youtubedl_fn.yt_duration(url)
     view_count = youtubedl_fn.yt_view_count(url)
-    like_count = youtubedl_fn.yt_like_count(url)
+    try:
+        like_count = youtubedl_fn.yt_like_count(url)
+    except:
+        like_count = "Null"
     dislike_count = youtubedl_fn.yt_dislike_count(url)
     comment_count = youtubedl_fn.yt_comment_count(url)
     filesize_approx = youtubedl_fn.yt_filesize_approx(url)
@@ -224,7 +227,7 @@ async def youtube_def(interaction: discord.Interaction, url: str):
     dl = discord.Embed(title = f"**{title}**", color = 0xff80c9)
     dl.timestamp = interaction.created_at
     dl.add_field(name="🔐 นามสกุลไฟล์", value=f"`{ext}`", inline=False)
-    dl.add_field(name="🥼 ช่อง", value=f"`{channel}`", inline=False)
+    dl.add_field(name="🥼 ช่อง", value=f"`{channel}` `({channel_id})`", inline=False)
     dl.add_field(name="📆 วันที่อัพโหลด", value=f"`{upload_datenew}`", inline=False)
     dl.add_field(name="🕒 ระยะเวลา", value=f"`{durationnew}`", inline=False)
     dl.add_field(name="👀 จำนวนคนดู", value=f"`{view_count} คน`", inline=False)
@@ -408,5 +411,5 @@ async def autodelete():
     for f in os.listdir(dir):
         os.remove(os.path.join(dir, f))
 
-Token = os.environ['YuukaToken']
+Token = os.environ['YuukaTesterToken']
 client.run(Token)

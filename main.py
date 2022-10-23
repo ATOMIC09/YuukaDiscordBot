@@ -19,8 +19,8 @@ class MyClient(discord.Client):
     async def on_ready(self):
         if not host_status_change.is_running():
             host_status_change.start()
-        #if not autodelete.is_running():
-        #    autodelete.start()
+        if not autodelete.is_running():
+            autodelete.start()
             
         await client.change_presence(activity=discord.Game(name="💤 Standby..."))
         print(f'Logged in as {self.user} (ID: {self.user.id})')
@@ -411,5 +411,5 @@ async def autodelete():
     for f in os.listdir(dir):
         os.remove(os.path.join(dir, f))
 
-Token = os.environ['YuukaTesterToken']
+Token = os.environ['YuukaToken']
 client.run(Token)

@@ -390,7 +390,8 @@ async def on_message(message):
         with open(FileName, 'wb') as out_file:
             shutil.copyfileobj(r.raw, out_file)
         shutil.move(FileName, f"temp/autosave/{FileName}")
-        await client.change_presence(activity=discord.Game(name=f"💾 {FileName}"))
+        if client.IsAnnouncement == False:
+            await client.change_presence(activity=discord.Game(name=f"💾 {FileName}"))
         print('Saving : ' + FileName)
 
         if extension == "png" or extension == "jpg" or extension == "jpeg" or extension == "webp":

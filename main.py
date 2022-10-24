@@ -33,6 +33,7 @@ class MyClient(discord.Client):
 intents = discord.Intents.all()
 intents.members = True
 client = MyClient(intents=intents)
+client.IsAnnouncement = False
 
 class SendLog():
     def __init__(self, interaction, arg="nodata"):
@@ -301,7 +302,7 @@ async def deepfry(interaction: discord.Interaction):
 stopSpam = False
 @client.tree.command(description="📢 สแปมคนไม่มา")
 @app_commands.describe(member="ผู้ใช้", message="ข้อความ", delay="การหน่วงเวลา", amount="จำนวนครั้ง")
-async def spam(interaction: discord.Interaction, member: discord.Member, *, message: str, delay: int = 2, amount: int = 10):
+async def spam(interaction: discord.Interaction, member: discord.Member, *, message: str, delay: int = 2, amount: int = 5):
     await SendLog.send(self=SendLog(interaction,str(member.id)))
 
     stop = discord.ui.Button(label="หยุดสแปม",emoji="⏹",style=discord.ButtonStyle.red)
@@ -316,16 +317,31 @@ async def spam(interaction: discord.Interaction, member: discord.Member, *, mess
     await interaction.response.send_message(content=f'📢 **กำลังสแปม** {message} **กับ** <@{member.id}>',ephemeral=True,view=view)
     
     global stopSpam 
-    channel = client.get_channel(1020927495182241863)
+    
     for i in range(amount):
         if stopSpam == False:
             await asyncio.sleep(delay)
-            await channel.send(f'{message} <@{member.id}>')
+            await interaction.followup.send(f'{message} <@{member.id}>')
         else:
             stopSpam = False
             break
     await interaction.edit_original_response(content=f'✅ **สแปม** {message} **กับ** <@{member.id}> **จบแล้ว**',view=None)
         
+
+################################################# Announcement #################################################
+@client.tree.command(description="📢 ประกาศ")
+@app_commands.describe(message="ข้อความที่จะประกาศ")
+async def announce(interaction: discord.Interaction, *, message: str):
+    if interaction.user.id == 269000561255383040:
+        if client.IsAnnouncement == False:
+            await SendLog.send(self=SendLog(interaction))
+            client.IsAnnouncement = True
+            await client.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=message))
+            await interaction.response.send_message(f'✅ **ประกาศ** {message} **เรียบร้อย**',ephemeral=True)
+        else:
+            client.IsAnnouncement = False
+            await interaction.response.send_message(f'⏹ **หยุดประกาศเรียบร้อย**',ephemeral=True)
+
 
 ################################################# Context Command #################################################
 @client.tree.context_menu(name='Search by Image')
@@ -394,12 +410,16 @@ async def on_message(message):
     except:
         print("No attachment")
 
+
 @tasks.loop(seconds=30)
 async def host_status_change():
     # Check Heroku Status
-    cpu = psutil.cpu_percent()
-    ram = psutil.virtual_memory()[2]
-    await client.change_presence(activity=discord.Game(name=f"CPU {cpu}% RAM {ram}%"))
+
+    if client.IsAnnouncement == False:
+        cpu = psutil.cpu_percent()
+        ram = psutil.virtual_memory()[2]
+        await client.change_presence(activity=discord.Game(name=f"CPU {cpu}% RAM {ram}%"))
+    
 
 @tasks.loop(minutes=30)
 async def autodelete():

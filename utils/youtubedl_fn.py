@@ -25,7 +25,8 @@ def yt_channel(url):
     with YoutubeDL(VIDEO_YDL_OPTIONS) as ydl:
         info = ydl.extract_info(url, download=False)
     VIDEO_CHANNEL = info['channel']
-    return VIDEO_CHANNEL
+    CHANNEL_ID = info['channel_id']
+    return VIDEO_CHANNEL, CHANNEL_ID
 
 def yt_duration(url):
     with YoutubeDL(VIDEO_YDL_OPTIONS) as ydl:

@@ -337,7 +337,7 @@ async def spam(interaction: discord.Interaction, member: discord.Member, *, mess
 async def announce(interaction: discord.Interaction, *, message: str):
     if interaction.user.id == 269000561255383040:
         if client.IsAnnouncement == False:
-            await SendLog.send(self=SendLog(interaction))
+            await SendLog.send(self=SendLog(interaction, message))
             client.IsAnnouncement = True
             await client.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=message))
             await interaction.response.send_message(f'✅ **ประกาศ** {message} **เรียบร้อย**',ephemeral=True)

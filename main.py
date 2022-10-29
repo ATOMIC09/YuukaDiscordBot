@@ -369,7 +369,6 @@ async def attendance(interaction: discord.Interaction):
         log.add_field(name="🔊 ช่องเสียง",value=f'`{vc.name}`',inline=False)
         log.add_field(name="👥 จำนวนผู้เข้าร่วม",value=f'`{count} คน`',inline=False)
         log.add_field(name="👤 รายชื่อ", value=f'{member}', inline=False)
-        log.set_author(name=interaction.user.display_name,icon_url=interaction.user.display_avatar.url)
         log.timestamp = interaction.created_at
 
         data = [["Number","Name","Discord Activity"]]

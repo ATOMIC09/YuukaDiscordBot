@@ -6,4 +6,3 @@ psutil
 numpy
 opencv-python-headless==4.5.4.58
 python-csv
-pytz==2022.5

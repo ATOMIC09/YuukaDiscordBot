@@ -8,6 +8,8 @@ import requests
 import shutil
 import json
 import psutil
+import csv
+import pytz
 
 #MY_GUILD = discord.Object(id=720687175611580426) #CPRE 981567258222555186 # TESTER 720687175611580426
 
@@ -90,6 +92,7 @@ async def help(interaction: discord.Interaction):
     util.add_field(name="**🦵 เตะคนออกจากแชทเสียง**", value="`/kick`", inline=False)
     util.add_field(name="**🍟 ทอดกรอบภาพ**", value="`/deepfry`", inline=False)
     util.add_field(name="**📢 สแปมคนไม่มา**", value="`/spam`", inline=False) 
+    util.add_field(name="**📝 เช็คชื่อในช่องเสียง**", value="`/attendance`", inline=False)
 
     update = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *📌 ประวัติการอัพเดท*", color=0xdcfa80)
     update.add_field(name="1️⃣ V 1.0 | 29/07/2022", value="• Add: Countdis\n• Add: Feedback")
@@ -97,6 +100,8 @@ async def help(interaction: discord.Interaction):
     update.add_field(name="3️⃣ V 1.2 | 02/09/2022", value="• Add: Send command\n• Add: Kick member from voice chat")
     update.add_field(name="4️⃣ V 1.3 | 02/10/2022", value="• Add: Deepfry command\n• Improve: Change Guild to Global Command")
     update.add_field(name="5️⃣ V 1.4 | 11/10/2022", value="• Add: Spam Mentions")
+    update.add_field(name="6️⃣ V 1.5 | 24/10/2022", value="• Add: Announcement(For Dev Only)\n• Add: Attendance\n• Hotfix: Spam Mentions")
+
 
     select = discord.ui.Select(placeholder="ตัวเลือกเมนู",options=[
     discord.SelectOption(label="เครื่องมืออรรถประโยชน์",emoji="🔧",description="คำสั่งการใช้งานทั่วไป",value="util",default=False),
@@ -346,6 +351,58 @@ async def announce(interaction: discord.Interaction, *, message: str):
             await interaction.response.send_message(f'⏹ **หยุดประกาศเรียบร้อย**',ephemeral=True)
 
 
+################################################# Attendance #################################################
+@client.tree.command(description="📝 บันทึกการเข้าประชุม")
+async def attendance(interaction: discord.Interaction):
+    vc = interaction.user.voice.channel
+    member = ""
+    count = 0
+
+    for user in vc.members:
+        if user.bot == False:
+            member += f'> {user.display_name}\n'
+            count += 1
+
+    await SendLog.send(self=SendLog(interaction))
+    log = discord.Embed(title="📝 บันทึกการเข้าประชุม",color=0x0A50C8)
+    log.add_field(name="🔊 ช่องเสียง",value=f'`{vc.name}`',inline=False)
+    log.add_field(name="👥 จำนวนผู้เข้าร่วม",value=f'`{count} คน`',inline=False)
+    log.add_field(name="👤 รายชื่อ", value=f'{member}', inline=False)
+    log.set_author(name=interaction.user.display_name,icon_url=interaction.user.display_avatar.url)
+    log.timestamp = interaction.created_at
+
+    data = [["Number","Name","Discord Activity"]]
+
+    for i in range(count):
+        try:
+            activity = vc.members[i].activity.name
+        except:
+            activity = "-"
+
+        data.append([i+1,vc.members[i].display_name,activity])
+        
+    data.append([""])
+    data.append([f"Channel: {vc.name}"])
+    data.append([f"Time: {interaction.created_at.astimezone(tz=pytz.timezone('Asia/Bangkok')).strftime('%H:%M:%S')}"])
+    data.append([f"Executed by {interaction.user.display_name}"])
+
+    with open(f'temp/{vc.id}.csv', 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerows(data)
+
+    get_csv = discord.ui.Button(label="ดาวน์โหลด CSV",emoji="📥",style=discord.ButtonStyle.green)
+    
+    async def get_csv_callback(interaction):
+        file = discord.File(f"temp/{vc.id}.csv")
+        await interaction.response.send_message(file=file)
+
+    get_csv.callback = get_csv_callback
+    view = discord.ui.View()
+    view.add_item(get_csv)
+    
+    await interaction.response.send_message(embed=log,view=view)
+
+
 ################################################# Context Command #################################################
 @client.tree.context_menu(name='Search by Image')
 async def searchbyimage(interaction: discord.Interaction, message: discord.Message):
@@ -425,9 +482,9 @@ async def host_status_change():
         await client.change_presence(activity=discord.Game(name=f"CPU {cpu}% RAM {ram}%"))
     
 
-@tasks.loop(minutes=30)
+@tasks.loop(minutes=10)
 async def autodelete():
-    # Delete autosave
+    # Delete autosave every 10 minutes
     dir = 'temp/autosave' # temp/test/autosave
     for f in os.listdir(dir):
         os.remove(os.path.join(dir, f))

@@ -50,7 +50,7 @@ class SendLog():
         log = discord.Embed(title=f"**ID : **`{self.interaction.id}`", color=0x455EE8)
         log.set_author(name=self.interaction.user, icon_url=self.interaction.user.display_avatar.url)
         log.timestamp = self.interaction.created_at
-        log.add_field(name="เซิรฟ์เวอร์",value=f"`{self.interaction.guild}` ({self.interaction.guild_id})")
+        log.add_field(name="เซิร์ฟเวอร์",value=f"`{self.interaction.guild}` ({self.interaction.guild_id})")
         log.add_field(name="ช่อง",value=f"`{self.interaction.channel}` ({self.interaction.channel_id})")
         log.add_field(name="ผู้เขียน",value=f"`{self.interaction.user}` ({self.interaction.user.id})")
         log.add_field(name="คำสั่ง",value=f"```/{self.interaction.command.name} {self.arg}```")
@@ -65,7 +65,7 @@ class SendLog():
         log = discord.Embed(title=f"**ID : **`{self.interaction.id}`", color=0x455EE8)
         log.set_author(name=self.interaction.user, icon_url=self.interaction.user.display_avatar.url)
         log.timestamp = self.interaction.created_at
-        log.add_field(name="เซิรฟ์เวอร์",value=f"`{self.interaction.guild}` ({self.interaction.guild_id})")
+        log.add_field(name="เซิร์ฟเวอร์",value=f"`{self.interaction.guild}` ({self.interaction.guild_id})")
         log.add_field(name="ช่อง",value=f"`{self.interaction.channel}` ({self.interaction.channel_id})")
         log.add_field(name="ผู้เขียน",value=f"`{self.interaction.user}` ({self.interaction.user.id})")
         log.add_field(name="คำสั่ง",value=f"```{self.interaction.command.name} กับรูปภาพ```")
@@ -280,7 +280,7 @@ class FeedbackModal(ui.Modal, title='มีอะไรอยากบอก?'):
         feedback = discord.Embed(title="**📨 Feedback**", color=0x45E2A4)
         feedback.set_author(name=interaction.user, icon_url=interaction.user.display_avatar.url)
         feedback.timestamp = interaction.created_at
-        feedback.add_field(name="เซิรฟ์เวอร์",value=f"`{interaction.guild}` ({interaction.guild_id})")
+        feedback.add_field(name="เซิร์ฟเวอร์",value=f"`{interaction.guild}` ({interaction.guild_id})")
         feedback.add_field(name="ช่อง",value=f"`{interaction.channel}` ({interaction.channel_id})")
         feedback.add_field(name="ผู้เขียน",value=f"`{interaction.user}` ({interaction.user.id})")
         feedback.add_field(name="เนื้อหา",value=f"```{self.message}```")
@@ -354,54 +354,56 @@ async def announce(interaction: discord.Interaction, *, message: str):
 ################################################# Attendance #################################################
 @client.tree.command(description="📝 บันทึกการเข้าประชุม")
 async def attendance(interaction: discord.Interaction):
-    vc = interaction.user.voice.channel
-    member = ""
-    count = 0
+    try:
+        vc = interaction.user.voice.channel
+        member = ""
+        count = 0
 
-    for user in vc.members:
-        if user.bot == False:
-            member += f'> {user.display_name}\n'
-            count += 1
+        for user in vc.members:
+            if user.bot == False:
+                member += f'> {user.display_name}\n'
+                count += 1
 
-    await SendLog.send(self=SendLog(interaction))
-    log = discord.Embed(title="📝 บันทึกการเข้าประชุม",color=0x0A50C8)
-    log.add_field(name="🔊 ช่องเสียง",value=f'`{vc.name}`',inline=False)
-    log.add_field(name="👥 จำนวนผู้เข้าร่วม",value=f'`{count} คน`',inline=False)
-    log.add_field(name="👤 รายชื่อ", value=f'{member}', inline=False)
-    log.set_author(name=interaction.user.display_name,icon_url=interaction.user.display_avatar.url)
-    log.timestamp = interaction.created_at
+        await SendLog.send(self=SendLog(interaction))
+        log = discord.Embed(title="📝 บันทึกการเข้าประชุม",color=0x0A50C8)
+        log.add_field(name="🔊 ช่องเสียง",value=f'`{vc.name}`',inline=False)
+        log.add_field(name="👥 จำนวนผู้เข้าร่วม",value=f'`{count} คน`',inline=False)
+        log.add_field(name="👤 รายชื่อ", value=f'{member}', inline=False)
+        log.set_author(name=interaction.user.display_name,icon_url=interaction.user.display_avatar.url)
+        log.timestamp = interaction.created_at
 
-    data = [["Number","Name","Discord Activity"]]
+        data = [["Number","Name","Discord Activity"]]
 
-    for i in range(count):
-        try:
-            activity = vc.members[i].activity.name
-        except:
-            activity = "-"
+        for i in range(count):
+            try:
+                activity = vc.members[i].activity.name
+            except:
+                activity = "-"
 
-        data.append([i+1,vc.members[i].display_name,activity])
+            data.append([i+1,vc.members[i].display_name,activity])
+            
+        data.append([""])
+        data.append([f"Channel: {vc.name}"])
+        data.append([f"Time: {interaction.created_at.astimezone(tz=pytz.timezone('Asia/Bangkok')).strftime('%H:%M:%S')}"])
+        data.append([f"Executed by {interaction.user.display_name}"])
+
+        with open(f'temp/{vc.id}.csv', 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerows(data)
+
+        get_csv = discord.ui.Button(label="ดาวน์โหลด CSV",emoji="📥",style=discord.ButtonStyle.green)
         
-    data.append([""])
-    data.append([f"Channel: {vc.name}"])
-    data.append([f"Time: {interaction.created_at.astimezone(tz=pytz.timezone('Asia/Bangkok')).strftime('%H:%M:%S')}"])
-    data.append([f"Executed by {interaction.user.display_name}"])
+        async def get_csv_callback(interaction):
+            file = discord.File(f"temp/{vc.id}.csv")
+            await interaction.response.send_message(file=file)
 
-    with open(f'temp/{vc.id}.csv', 'w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        writer.writerows(data)
-
-    get_csv = discord.ui.Button(label="ดาวน์โหลด CSV",emoji="📥",style=discord.ButtonStyle.green)
-    
-    async def get_csv_callback(interaction):
-        file = discord.File(f"temp/{vc.id}.csv")
-        await interaction.response.send_message(file=file)
-
-    get_csv.callback = get_csv_callback
-    view = discord.ui.View()
-    view.add_item(get_csv)
-    
-    await interaction.response.send_message(embed=log,view=view)
-
+        get_csv.callback = get_csv_callback
+        view = discord.ui.View()
+        view.add_item(get_csv)
+        
+        await interaction.response.send_message(embed=log,view=view)
+    except:
+        await interaction.response.send_message(f"**ต้องอยู่ในห้องเสียงก่อน ถึงจะเช็คชื่อได้ ┐⁠(⁠ ⁠˘⁠_⁠˘⁠)⁠┌**")
 
 ################################################# Context Command #################################################
 @client.tree.context_menu(name='Search by Image')

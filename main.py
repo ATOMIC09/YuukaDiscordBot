@@ -53,6 +53,7 @@ class SendLog():
         log.set_author(name=self.interaction.user, icon_url=self.interaction.user.display_avatar.url)
         log.timestamp = self.interaction.created_at
         log.add_field(name="เซิร์ฟเวอร์",value=f"`{self.interaction.guild}` ({self.interaction.guild_id})")
+        log.add_field(name="หมวดหมู่",value=f"`{self.interaction.channel.category.name}` ({self.interaction.channel.category.id})")
         log.add_field(name="ช่อง",value=f"`{self.interaction.channel}` ({self.interaction.channel_id})")
         log.add_field(name="ผู้เขียน",value=f"`{self.interaction.user}` ({self.interaction.user.id})")
         log.add_field(name="คำสั่ง",value=f"```/{self.interaction.command.name} {self.arg}```")
@@ -68,6 +69,7 @@ class SendLog():
         log.set_author(name=self.interaction.user, icon_url=self.interaction.user.display_avatar.url)
         log.timestamp = self.interaction.created_at
         log.add_field(name="เซิร์ฟเวอร์",value=f"`{self.interaction.guild}` ({self.interaction.guild_id})")
+        log.add_field(name="หมวดหมู่",value=f"`{self.interaction.channel.category.name}` ({self.interaction.channel.category.id})")
         log.add_field(name="ช่อง",value=f"`{self.interaction.channel}` ({self.interaction.channel_id})")
         log.add_field(name="ผู้เขียน",value=f"`{self.interaction.user}` ({self.interaction.user.id})")
         log.add_field(name="คำสั่ง",value=f"```{self.interaction.command.name} กับรูปภาพ```")
@@ -82,7 +84,6 @@ class SendLog():
 ################################################# Help #################################################
 @client.tree.command(description="❔ ความช่วยเหลือ")
 async def help(interaction: discord.Interaction):
-    
     await SendLog.send(self=SendLog(interaction))
     # หน้าเมนู Embed
     util = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🔧 เครื่องมืออรรถประโยชน์*", color=0x40eefd)

@@ -10,6 +10,8 @@ import json
 import psutil
 import csv
 import pytz
+from pyexcel.cookbook import merge_all_to_a_book
+import glob
 
 #MY_GUILD = discord.Object(id=720687175611580426) #CPRE 981567258222555186 # TESTER 720687175611580426
 
@@ -386,23 +388,42 @@ async def attendance(interaction: discord.Interaction):
         data.append([f"Time: {interaction.created_at.astimezone(tz=pytz.timezone('Asia/Bangkok')).strftime('%H:%M:%S')}"])
         data.append([f"Executed by {interaction.user.display_name}"])
 
+        # Crate CSV file
         with open(f'temp/{vc.id}.csv', 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             writer.writerows(data)
 
-        get_csv = discord.ui.Button(label="ดาวน์โหลด CSV",emoji="📥",style=discord.ButtonStyle.green)
-        
+        # Create XLSX file
+        merge_all_to_a_book(glob.glob(f"temp/{vc.id}.csv"), f"temp/{vc.id}.xlsx")
+
+        # On Click Export
+        get_csv = discord.ui.Button(label="Export to CSV",emoji="📤",style=discord.ButtonStyle.primary)
+        get_xlsx = discord.ui.Button(label="Export to XLSX",emoji="📤",style=discord.ButtonStyle.green)
+
         async def get_csv_callback(interaction):
-            file = discord.File(f"temp/{vc.id}.csv")
-            await interaction.response.send_message(file=file)
+            try:
+                file = discord.File(f"temp/{vc.id}.csv")
+                await interaction.response.send_message(file=file)
+            except:
+                await interaction.response.send_message("❌ **ไฟล์หมดอายุแล้ว ต้องใช้คำสั่งใหม่อีกครั้ง**")
+
+        async def get_xlsx_callback(interaction):
+            try:
+                file = discord.File(f"temp/{vc.id}.xlsx")
+                await interaction.response.send_message(file=file)
+            except:
+                await interaction.response.send_message("❌ **ไฟล์หมดอายุแล้ว ต้องใช้คำสั่งใหม่อีกครั้ง**")
 
         get_csv.callback = get_csv_callback
+        get_xlsx.callback = get_xlsx_callback
         view = discord.ui.View()
         view.add_item(get_csv)
-        
+        view.add_item(get_xlsx)
         await interaction.response.send_message(embed=log,view=view)
+
     except:
         await interaction.response.send_message(f"**ต้องอยู่ในห้องเสียงก่อน ถึงจะเช็คชื่อได้ ┐⁠(⁠ ⁠˘⁠_⁠˘⁠)⁠┌**")
+
 
 ################################################# Context Command #################################################
 @client.tree.context_menu(name='Search by Image')

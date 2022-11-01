@@ -12,6 +12,7 @@ import csv
 import pytz
 from pyexcel.cookbook import merge_all_to_a_book
 import glob
+from typing import Optional
 
 #MY_GUILD = discord.Object(id=720687175611580426) #CPRE 981567258222555186 # TESTER 720687175611580426
 
@@ -96,6 +97,7 @@ async def help(interaction: discord.Interaction):
     util.add_field(name="**🍟 ทอดกรอบภาพ**", value="`/deepfry`", inline=False)
     util.add_field(name="**📢 สแปมคนไม่มา**", value="`/spam`", inline=False) 
     util.add_field(name="**📝 เช็คชื่อในช่องเสียง**", value="`/attendance`", inline=False)
+    util.add_field(name="**🔎 เช็คคนขาดประชุม**", value="`/absent`", inline=False)
 
     update = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *📌 ประวัติการอัพเดท*", color=0xdcfa80)
     update.add_field(name="1️⃣ V 1.0 | 29/07/2022", value="• Add: Countdis\n• Add: Feedback")
@@ -103,7 +105,7 @@ async def help(interaction: discord.Interaction):
     update.add_field(name="3️⃣ V 1.2 | 02/09/2022", value="• Add: Send command\n• Add: Kick member from voice chat")
     update.add_field(name="4️⃣ V 1.3 | 02/10/2022", value="• Add: Deepfry command\n• Improve: Change Guild to Global Command")
     update.add_field(name="5️⃣ V 1.4 | 11/10/2022", value="• Add: Spam Mentions")
-    update.add_field(name="6️⃣ V 1.5 | 24/10/2022", value="• Add: Announcement(For Dev Only)\n• Add: Attendance\n• Hotfix: Spam Mentions")
+    update.add_field(name="6️⃣ V 1.5 | 24/10/2022", value="• Add: Announcement(For Dev Only)\n• Add: Attendance\n• Add: Absent\n• Hotfix: Spam Mentions")
 
 
     select = discord.ui.Select(placeholder="ตัวเลือกเมนู",options=[
@@ -374,7 +376,8 @@ async def attendance(interaction: discord.Interaction):
         log.add_field(name="👤 รายชื่อ", value=f'{member}', inline=False)
         log.timestamp = interaction.created_at
 
-        data = [["Number","Name","Discord Activity"]]
+        data = [[f"บันทึกการเข้าประชุม {vc.name}"]]
+        data.append(["Number","Name","Discord Activity"])
 
         for i in range(count):
             try:
@@ -385,17 +388,16 @@ async def attendance(interaction: discord.Interaction):
             data.append([i+1,vc.members[i].display_name,activity])
             
         data.append([""])
-        data.append([f"Channel: {vc.name}"])
         data.append([f"Time: {interaction.created_at.astimezone(tz=pytz.timezone('Asia/Bangkok')).strftime('%H:%M:%S')}"])
         data.append([f"Executed by {interaction.user.display_name}"])
 
         # Crate CSV file
-        with open(f'temp/{vc.id}.csv', 'w', newline='', encoding='utf-8') as f:
+        with open(f'temp/{vc.id}_attend.csv', 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             writer.writerows(data)
 
         # Create XLSX file
-        merge_all_to_a_book(glob.glob(f"temp/{vc.id}.csv"), f"temp/{vc.id}.xlsx")
+        merge_all_to_a_book(glob.glob(f"temp/{vc.id}_attend.csv"), f"temp/{vc.id}_attend.xlsx")
 
         # On Click Export
         get_csv = discord.ui.Button(label="Export to CSV",emoji="📤",style=discord.ButtonStyle.primary)
@@ -403,14 +405,14 @@ async def attendance(interaction: discord.Interaction):
 
         async def get_csv_callback(interaction):
             try:
-                file = discord.File(f"temp/{vc.id}.csv")
+                file = discord.File(f"temp/{vc.id}_attend.csv")
                 await interaction.response.send_message(file=file)
             except:
                 await interaction.response.send_message("❌ **ไฟล์หมดอายุแล้ว ต้องใช้คำสั่งใหม่อีกครั้ง**")
 
         async def get_xlsx_callback(interaction):
             try:
-                file = discord.File(f"temp/{vc.id}.xlsx")
+                file = discord.File(f"temp/{vc.id}_attend.xlsx")
                 await interaction.response.send_message(file=file)
             except:
                 await interaction.response.send_message("❌ **ไฟล์หมดอายุแล้ว ต้องใช้คำสั่งใหม่อีกครั้ง**")
@@ -424,6 +426,92 @@ async def attendance(interaction: discord.Interaction):
 
     except:
         await interaction.response.send_message(f"**ต้องอยู่ในห้องเสียงก่อน ถึงจะเช็คชื่อได้ ┐⁠(⁠ ⁠˘⁠_⁠˘⁠)⁠┌**")
+
+
+################################################# Absent #################################################
+@client.tree.command(description="🔎 หาผู้ขาดการประชุม")
+@app_commands.describe(role="ใส่บทบาทที่ต้องการหาผู้ขาดการประชุม")
+async def absent(interaction: discord.Interaction, role: Optional[discord.Role]):
+    try:
+        member_absent = ""
+        count = 0
+        vc = interaction.user.voice.channel
+
+        data = [[f"บันทึกการขาดประชุม {vc.name}"]]
+        data.append(["Number","Name","Role"])
+
+        for member in interaction.guild.members:
+            if member.voice == None:
+                if role == None:
+                    member_absent += f'> {member.display_name}\n'
+                    count += 1
+                    data.append([count,member.display_name,"-"])
+                else:
+                    if role in member.roles:
+                        member_absent += f'> {member.display_name}\n'
+                        count += 1
+                        data.append([count,member.display_name,role.name])
+        if role == None:
+            await SendLog.send(self=SendLog(interaction))
+        else:
+            await SendLog.send(self=SendLog(interaction,role))
+        data.append([""])
+        data.append([f"Time: {interaction.created_at.astimezone(tz=pytz.timezone('Asia/Bangkok')).strftime('%H:%M:%S')}"])
+        data.append([f"Executed by {interaction.user.display_name}"])
+
+        # Crate CSV file
+        with open(f'temp/{vc.id}_absent.csv', 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerows(data)
+
+        # Create XLSX file
+        merge_all_to_a_book(glob.glob(f"temp/{vc.id}_absent.csv"), f"temp/{vc.id}_absent.xlsx")
+
+        # On Click Export
+        get_csv = discord.ui.Button(label="Export to CSV",emoji="📤",style=discord.ButtonStyle.primary)
+        get_xlsx = discord.ui.Button(label="Export to XLSX",emoji="📤",style=discord.ButtonStyle.green)
+
+        async def get_csv_callback(interaction):
+            try:
+                file = discord.File(f"temp/{vc.id}_absent.csv")
+                await interaction.response.send_message(file=file)
+            except:
+                await interaction.response.send_message("❌ **ไฟล์หมดอายุแล้ว ต้องใช้คำสั่งใหม่อีกครั้ง**")
+
+        async def get_xlsx_callback(interaction):
+            try:
+                file = discord.File(f"temp/{vc.id}_absent.xlsx")
+                await interaction.response.send_message(file=file)
+            except:
+                await interaction.response.send_message("❌ **ไฟล์หมดอายุแล้ว ต้องใช้คำสั่งใหม่อีกครั้ง**")
+
+        get_csv.callback = get_csv_callback
+        get_xlsx.callback = get_xlsx_callback
+        view = discord.ui.View()
+        view.add_item(get_csv)
+        view.add_item(get_xlsx)
+
+        if member_absent == "":
+            member_absent = "-"
+
+        if role == None:
+            absent = discord.Embed(title="📝 บันทึกการขาดประชุม",color=0xFF3C5B)
+            absent.add_field(name="🔊 ช่องเสียง",value=f'`{vc.name}`',inline=False)
+            absent.add_field(name="👥 จำนวนผู้ขาด",value=f'`{count} คน`',inline=False)
+            absent.add_field(name="👤 รายชื่อ", value=f'{member_absent}', inline=False)
+            absent.timestamp = interaction.created_at
+            await interaction.response.send_message(embed=absent,view=view)
+        
+        else:
+            absent = discord.Embed(title="📝 บันทึกการขาดประชุม",color=0xFF3C5B)
+            absent.add_field(name="🎩 บทบาท",value=f'`{role}`',inline=False)
+            absent.add_field(name="🔊 ช่องเสียง",value=f'`{vc.name}`',inline=False)
+            absent.add_field(name="👥 จำนวนผู้ขาด",value=f'`{count} คน`',inline=False)
+            absent.add_field(name="👤 รายชื่อ", value=f'{member_absent}', inline=False)
+            absent.timestamp = interaction.created_at
+            await interaction.response.send_message(embed=absent,view=view)
+    except:
+        await interaction.response.send_message(f"**ต้องอยู่ในห้องเสียงก่อน ถึงจะหาคนขาดได้ ಠ⁠_⁠ಠ**")
 
 
 ################################################# Context Command #################################################

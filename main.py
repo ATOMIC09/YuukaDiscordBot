@@ -3,7 +3,7 @@ from discord import app_commands, ui
 from discord.ext import tasks
 import os
 import asyncio 
-from utils import countdown_fn, youtubedl_fn, sectobigger, shorten_url, imageprocess_fn
+from utils import countdown_fn, youtubedl_fn, sectobigger, shorten_url, imageprocess_fn, filesize
 import requests
 import shutil
 import json
@@ -41,12 +41,17 @@ client = MyClient(intents=intents)
 client.IsAnnouncement = False
 
 class SendLog():
-    def __init__(self, interaction, arg="nodata"):
+    def __init__(self, interaction, arg="nodata", arg2="nodata"):
         self.interaction = interaction
         if arg == "nodata":
             self.arg = ""
         else:
             self.arg = arg
+
+        if arg2 == "nodata":
+            self.arg2 = ""
+        else:
+            self.arg2 = arg2
 
     async def send(self):
         channel = client.get_channel(1003719893260185750)
@@ -57,7 +62,7 @@ class SendLog():
         log.add_field(name="หมวดหมู่",value=f"`{self.interaction.channel.category.name}` ({self.interaction.channel.category.id})")
         log.add_field(name="ช่อง",value=f"`{self.interaction.channel}` ({self.interaction.channel_id})")
         log.add_field(name="ผู้เขียน",value=f"`{self.interaction.user}` ({self.interaction.user.id})")
-        log.add_field(name="คำสั่ง",value=f"```/{self.interaction.command.name} {self.arg}```")
+        log.add_field(name="คำสั่ง",value=f"```/{self.interaction.command.name} {self.arg} {self.arg2}```")
 
         url_view = discord.ui.View()
         url_view.add_item(discord.ui.Button(label='Go to Message', style=discord.ButtonStyle.url, url=f"https://discord.com/channels/{self.interaction.guild_id}/{self.interaction.channel_id}/{self.interaction.id}"))
@@ -107,6 +112,7 @@ async def help(interaction: discord.Interaction):
     update.add_field(name="4️⃣ V 1.3 | 02/10/2022", value="• Add: Deepfry command\n• Improve: Change Guild to Global Command")
     update.add_field(name="5️⃣ V 1.4 | 11/10/2022", value="• Add: Spam Mentions")
     update.add_field(name="6️⃣ V 1.5 | 24/10/2022", value="• Add: Announcement(For Dev Only)\n• Add: Attendance\n• Add: Absent\n• Add: Cancel\n• Hotfix: Spam Mentions")
+    update.add_field(name="7️⃣ V 1.6 | 14/12/2022", value="• Change: Emoji and Decoration")
 
 
     select = discord.ui.Select(placeholder="ตัวเลือกเมนู",options=[
@@ -216,7 +222,7 @@ async def cancel(interaction: discord.Interaction):
 @app_commands.describe(url="ใส่ URL ของคลิปใน Youtube")
 async def youtube_def(interaction: discord.Interaction, url: str):
     await SendLog.send(self=SendLog(interaction,url))
-    await interaction.response.send_message(f"🔎 **กำลังหา** `{url}`")
+    await interaction.response.send_message(f"<a:MagnifierGIF:1052563354910216252> **กำลังหา** `{url}`")
 
     # เก็บข้อมูลดิบ
     title = youtubedl_fn.yt_title(url)
@@ -278,7 +284,7 @@ async def send(interaction: discord.Interaction, channel: discord.TextChannel, *
 @client.tree.command(description="🦵 เตะสมาชิกจากช่องเสียง")
 @app_commands.describe(member="ผู้ใช้")
 async def kick(interaction: discord.Interaction, member: discord.Member):
-    await SendLog.send(self=SendLog(interaction,str(member.id)))
+    await SendLog.send(self=SendLog(interaction,str(member.name) + " (" + str(member.id) + ")"))
     await interaction.response.send_message(f'<@{member.id}> ถูกเตะออกจาก `{member.voice.channel}`',ephemeral=True)
     await member.move_to(None)
 
@@ -309,52 +315,55 @@ async def feedback(interaction: discord.Interaction):
 @client.tree.command(description="🍟 ทอดกรอบภาพ")
 async def deepfry(interaction: discord.Interaction):
     try:
+        await interaction.response.send_message("<a:AppleLoadingGIF:1052465926487953428> **กำลังสร้าง...**")
         shutil.copy(f"temp/autosave/{client.last_image}", f"asset/deepfry/deepfryer_input/{client.last_image}")
         imageprocess_fn.deepfry(f"asset/deepfry/deepfryer_input/{client.last_image}")
         await SendLog.send(self=SendLog(interaction))
 
         if "_deepfryer" in client.name_only:
-            file_name = discord.File(f"asset/deepfry/deepfryer_output/{client.name_only}.png")
-            await interaction.response.send_message(file=file_name)
+            path = f'asset/deepfry/deepfryer_output/{client.name_only}.png'
+            file_name = discord.File(path)
+            await interaction.edit_original_response(content=f"✅ **สร้างเสร็จแล้ว `({filesize.getsize(path)})`**")
         else:
-            file_name = discord.File(f"asset/deepfry/deepfryer_output/{client.name_only}_deepfryer.png")
-            await interaction.response.send_message(file=file_name)
+            path = f'asset/deepfry/deepfryer_output/{client.name_only}_deepfryer.png'
+            file_name = discord.File(path)
+            await interaction.edit_original_response(content=f"✅ **สร้างเสร็จแล้ว `({filesize.getsize(path)})`**")
+        
+        await interaction.followup.send(file=file_name)
     except:
-        await interaction.response.send_message(content="❌ **ไม่พบรูปภาพ**")
+        await interaction.edit_original_response(content="❌ **ไม่พบรูปภาพ**")
 
 
 ################################################# Spam Mentions #################################################
-stopSpam = False
 @client.tree.command(description="📢 สแปมคนไม่มา")
 @app_commands.describe(member="ผู้ใช้", message="ข้อความ", delay="การหน่วงเวลา", amount="จำนวนครั้ง")
 async def spam(interaction: discord.Interaction, member: discord.Member, *, message: str, delay: int = 2, amount: int = 5):
-    await SendLog.send(self=SendLog(interaction,str(member.id)))
+    await SendLog.send(self=SendLog(interaction,str(member.name) + " (" + str(member.id) + ")"))
+    client.stopSpam = False
 
     stop = discord.ui.Button(label="หยุดสแปม",emoji="⏹",style=discord.ButtonStyle.red)
     async def stop_callback(interaction):
-        global stopSpam 
-        stopSpam = True
-        await interaction.response.edit_message(content=f'⛔ **หยุดสแปม** {message} **กับ** <@{member.id}> **แล้ว**',view=None)
+        client.stopSpam = True
 
     stop.callback = stop_callback
     view = discord.ui.View()
     view.add_item(stop)
-    await interaction.response.send_message(content=f'📢 **กำลังสแปม** {message} **กับ** <@{member.id}>',ephemeral=True,view=view)
-    
-    global stopSpam 
+    await interaction.response.send_message(content=f'<a:LoadingGIF:1052561472263299133> **กำลังสแปม** {message} **กับ** <@{member.id}>',ephemeral=True,view=view)
     
     for i in range(amount):
-        if stopSpam == False:
+        if client.stopSpam == False:
             await asyncio.sleep(delay)
             await interaction.followup.send(f'{message} <@{member.id}>')
         else:
-            stopSpam = False
             break
-    await interaction.edit_original_response(content=f'✅ **สแปม** {message} **กับ** <@{member.id}> **จบแล้ว**',view=None)
-        
+    if client.stopSpam == False:
+        await interaction.edit_original_response(content=f'✅ **สแปม** {message} **กับ** <@{member.id}> **จบแล้ว**',view=None)    
+    else:
+        await interaction.edit_original_response(content=f'⛔ **หยุดสแปม** {message} **กับ** <@{member.id}> **แล้ว**',view=None)
+
 
 ################################################# Announcement #################################################
-@client.tree.command(description="📢 ประกาศ")
+@client.tree.command(description="📢 ประกาศ (เฉพาะผู้สร้าง)")
 @app_commands.describe(message="ข้อความที่จะประกาศ")
 async def announce(interaction: discord.Interaction, *, message: str):
     if interaction.user.id == 269000561255383040:

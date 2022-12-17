@@ -550,15 +550,17 @@ async def absent(interaction: discord.Interaction, role: Optional[discord.Role])
 async def getchat(interaction: discord.Interaction):
     await SendLog.send(self=SendLog(interaction))
     start_time = time.time()
-    await interaction.response.send_message(f"**<a:AppleLoadingGIF:1052465926487953428> 0% กำลังเริ่มต้น...**")
-    count_total = 0
     client.force_stop = False
+    client.time_out = False
+    channel_count = 0
+    channel_total = len(interaction.guild.text_channels)
+    await interaction.response.send_message(f"**<a:AppleLoadingGIF:1052465926487953428> 0% กำลังเริ่มต้น...ตรวจพบ {channel_total} ช่อง**")
 
     # LOOP CHANNEL
     for channel in interaction.guild.text_channels:
-        percent_total = round((count_total / len(interaction.guild.text_channels)) * 100, 1)
+        percent_total = round((channel_count / channel_total) * 100, 1)
 
-        stop_button = discord.ui.Button(label="หยุด",emoji="🛑",style=discord.ButtonStyle.red)
+        stop_button = discord.ui.Button(label="หยุด",emoji="❎",style=discord.ButtonStyle.red)
         
         async def stop_callback(interaction):
             client.force_stop = True
@@ -578,44 +580,61 @@ async def getchat(interaction: discord.Interaction):
         async for _ in channel.history(limit=None):
             msg_total += 1
 
+        # CHECK IF FILE ALREADY EXIST (SAME CHANNEL)
+        if os.path.exists(f"asset/chat/{channel.id}.txt") == True:
+            print(f"{percent_total}% ข้าม <#{channel.id}> ไปแล้ว (ไฟล์มีอยู่แล้ว)")
+            channel_count += 1
+            continue
+        else:
+            print(f"ไม่พบไฟล์ <#{channel.id}> เริ่มการดึงข้อความจากช่องนี้")
+
         # LOOP MESSAGE (SAVE TO FILE)
         with open(f"asset/chat/{channel.id}.txt", "w", encoding="utf-8") as f:
             async for message in channel.history(limit=None):
                 # BEFORE WRITE
+                
+                # SEND UPDATE PROGRESS (EVERY MORE THAN 1 SECOND)
+                percent_channel = round((current_msg / msg_total) * 100, 1)
+                if time.time() - start_channel_percent > 1: # 1 Second
+                    try:
+                        print(f"{percent_total}% ดึงข้อความจาก <#{channel.id}> ไปแล้ว {percent_channel}%")
+                        await interaction.edit_original_response(content=f"**<a:AppleLoadingGIF:1052465926487953428> {percent_total}% ดึงข้อความจาก <#{channel.id}> ไปแล้ว {percent_channel}%**",view=view)
+                        start_channel_percent = time.time()
+                    except:
+                        await interaction.channel.send(content=f"**⚠️ ใช้เวลามากเกินไป ลองใช้คำสั่งนี้อีกครั้งเพื่อดำเนินการต่อ**")
+                        client.time_out = True
+                        break
+                
+                # WARNING: TIME OUT IF MORE THAN 15 MINUTE
+                if time.time() - start_save > 10: # 14 Minute 840
+                    await interaction.followup.send(content=f"**⚠️ การดึงข้อความอาจใช้เวลามากกว่า 15 นาที**")
+                    start_save = time.time()
 
-                # f.write takes too much time for update progress in discord
-                # Means it will update every time a single line is written.
+                # WHILE WRITE
+                    # f.write takes too much time for update progress in discord
+                    # Means it will update every time a single line is written.
                 f.write(f"{message.content}\n") # Wrint line to file
 
                 # AFTER WRITE
-                current_time = time.time()
-                percent_channel = round((current_msg / msg_total) * 100, 1)
                 current_msg += 1
 
-                # GEN NEW TOKEN BECAUSE TOKEN EXPIRED
-                if current_time - start_save >= 720: # 12 Minutes
-                    await interaction.followup.send(content=f"**<a:AppleLoadingGIF:1052465926487953428> {percent_total}% ดึงข้อความจาก <#{channel.id}> ไปแล้ว {percent_channel}%**",view=view)
-                    start_save = time.time()
-
-                # SEND UPDATE PROGRESS (EVERY MORE THAN 1 SECOND)
-                if current_time - start_channel_percent > 1: # 1 Second
-                    print(f"{percent_total}% ดึงข้อความจาก <#{channel.id}> ไปแล้ว {percent_channel}%")
-                    await interaction.edit_original_response(content=f"**<a:AppleLoadingGIF:1052465926487953428> {percent_total}% ดึงข้อความจาก <#{channel.id}> ไปแล้ว {percent_channel}%**",view=view)
-                    start_channel_percent = time.time()
-                
                 # CHECK IF USER CLICK STOP BUTTON
-                if client.force_stop == True:
+                if client.force_stop == True or client.time_out == True:
                     break
-        
-        count_total += 1 # After finish save message in channel
-        
-        if client.force_stop == True:
-            break 
+            
+            channel_count += 1 # After finish save message in channel
+            
+            if client.force_stop == True or client.time_out == True:
+                break 
     
+    # END LOOP CHANNEL
+    if channel_total == channel_count:
+        await interaction.edit_original_response(content=f"**ℹ️ มีไฟล์ข้อความทั้งหมดอยู่แล้ว**",view=None)
+
     end_time = time.time()
-    if client.force_stop == False:
+    if client.force_stop == False and client.time_out == False:
         await interaction.edit_original_response(content=f"**✅ ดึงข้อความเสร็จสิ้น `({filesize.getfoldersize(f'asset/chat')})` ใช้เวลา `{sectobigger.sec(round(end_time - start_time, 2))}`**",view=None)
-    else:
+    elif client.force_stop == True:
         await interaction.edit_original_response(content=f"**🛑 การดึงข้อความถูกยกเลิก**",view=None)
 
 

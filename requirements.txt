@@ -8,3 +8,4 @@ opencv-python-headless==4.5.4.58
 pytz
 pyexcel
 pyexcel-xlsx
+ChatterBot==1.0.4

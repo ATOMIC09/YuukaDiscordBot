@@ -3,7 +3,7 @@ from discord import app_commands, ui
 from discord.ext import tasks
 import os
 import asyncio 
-from utils import countdown_fn, youtubedl_fn, sectobigger, shorten_url, imageprocess_fn, filesize
+from utils import countdown_fn, youtubedl_fn, sectobigger, shorten_url, imageprocess_fn, filesize, ai_core
 import requests
 import shutil
 import json
@@ -13,6 +13,7 @@ import pytz
 from pyexcel.cookbook import merge_all_to_a_book
 import glob
 from typing import Optional
+import time
 
 #MY_GUILD = discord.Object(id=720687175611580426) #CPRE 981567258222555186 # TESTER 720687175611580426
 
@@ -105,6 +106,11 @@ async def help(interaction: discord.Interaction):
     util.add_field(name="**📝 เช็คชื่อในช่องเสียง**", value="`/attendance`", inline=False)
     util.add_field(name="**🔎 เช็คคนขาดประชุม**", value="`/absent`", inline=False)
 
+    ai = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🤖 Artificial Intelligence*", color=0x03dffc)
+    ai.add_field(name="**🧠 คุยกับบอท**", value="`/ai`", inline=False)
+    ai.add_field(name="**🎒 รวมคำสั่งเกี่ยวกับการเทรน ตรวจสอบ และลบฐานข้อมูล**", value="`/train`", inline=False)
+    ai.add_field(name="**🗞️ บันทึกประวัติการส่งข้อความ**", value="`/getchat`", inline=False)
+
     update = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *📌 ประวัติการอัพเดท*", color=0xdcfa80)
     update.add_field(name="1️⃣ V 1.0 | 29/07/2022", value="• Add: Countdis\n• Add: Feedback")
     update.add_field(name="2️⃣ V 1.1 | 02/08/2022", value="• Add: Log\n• Add: Youtube\n• Add: Search by Image\n• Add: AutoDelete Temp\n• Add: Hosting Status\n• Improve: Embed Feedback")
@@ -112,11 +118,12 @@ async def help(interaction: discord.Interaction):
     update.add_field(name="4️⃣ V 1.3 | 02/10/2022", value="• Add: Deepfry command\n• Improve: Change Guild to Global Command")
     update.add_field(name="5️⃣ V 1.4 | 11/10/2022", value="• Add: Spam Mentions")
     update.add_field(name="6️⃣ V 1.5 | 24/10/2022", value="• Add: Announcement(For Dev Only)\n• Add: Attendance\n• Add: Absent\n• Add: Cancel\n• Hotfix: Spam Mentions")
-    update.add_field(name="7️⃣ V 1.6 | 14/12/2022", value="• Change: Emoji and Decoration")
+    update.add_field(name="7️⃣ V 1.6 | 14/12/2022", value="• Add: AI\n• Change: Emoji and Decoration")
 
 
     select = discord.ui.Select(placeholder="ตัวเลือกเมนู",options=[
     discord.SelectOption(label="เครื่องมืออรรถประโยชน์",emoji="🔧",description="คำสั่งการใช้งานทั่วไป",value="util",default=False),
+    discord.SelectOption(label="Artificial Intelligence",emoji="🤖",description="คำสั่งเกี่ยวกับ AI ของบอท",value="ai",default=False),
     discord.SelectOption(label="ประวัติการอัพเดท",emoji="📌",description="คำสั่งตรวจสอบเวอร์ชันของบอท",value="update",default=False)
     ])
 
@@ -126,7 +133,10 @@ async def help(interaction: discord.Interaction):
 
         elif select.values[0] == "update":
             await interaction.response.edit_message(embed=update)
-            
+
+        elif select.values[0] == "ai":
+            await interaction.response.edit_message(embed=ai)
+
     select.callback = my_callback
     view = discord.ui.View()
     view.add_item(select)
@@ -533,6 +543,115 @@ async def absent(interaction: discord.Interaction, role: Optional[discord.Role])
             await interaction.response.send_message(embed=absent,view=view)
     except:
         await interaction.response.send_message(f"**ต้องอยู่ในห้องเสียงก่อน ถึงจะหาคนขาดได้ ಠ⁠_⁠ಠ**")
+
+
+################################################ Save Chat History ################################################
+@client.tree.command(description="🗞️ บันทึกประวัติการส่งข้อความ")
+async def getchat(interaction: discord.Interaction):
+    await SendLog.send(self=SendLog(interaction))
+    start_time = time.time()
+    await interaction.response.send_message(f"**<a:AppleLoadingGIF:1052465926487953428> 0% กำลังเริ่มต้น**")
+    count_total = 0
+    client.force_stop = False
+
+    for channel in interaction.guild.text_channels: # Loop Channel
+        percent_total = round((count_total / len(interaction.guild.text_channels)) * 100)
+
+        stop_button = discord.ui.Button(label="หยุด",emoji="⏹️",style=discord.ButtonStyle.red)
+        
+        async def stop_callback(interaction):
+            client.force_stop = True
+
+        stop_button.callback = stop_callback
+        view = discord.ui.View()
+        view.add_item(stop_button)
+
+        with open(f"asset/chat/{channel.id}.txt", "w", encoding="utf-8") as f: # Write Message to file
+            async for message in channel.history(limit=None): # Loop Message in Channel
+                f.write(f"{message.content}\n")
+                if client.force_stop == True:
+                    break
+        
+        await interaction.edit_original_response(content=f"**<a:AppleLoadingGIF:1052465926487953428> {percent_total}% กำลังดึงข้อความจาก <#{channel.id}>**",view=view)
+        count_total += 1
+        if client.force_stop == True:
+            break 
+    
+    end_time = time.time()
+    if client.force_stop == False:
+        await interaction.edit_original_response(content=f"**✅ ดึงข้อความเสร็จสิ้น `({filesize.getfoldersize(f'asset/chat')})` ใช้เวลา `{sectobigger.sec(round(end_time - start_time, 2))}`**",view=None)
+    else:
+        await interaction.edit_original_response(content=f"**🛑 การดึงข้อความถูกยกเลิก**",view=None)
+
+
+################################################# AI #################################################
+@client.tree.command(description="🎒 รวมคำสั่งเกี่ยวกับการเทรน ตรวจสอบ และลบฐานข้อมูล")
+@app_commands.choices(mode=[
+    app_commands.Choice(name="🌍 Train with English Corpus",value="english"),
+    app_commands.Choice(name="🌾 Train with Thai Corpus",value="thai"),
+    app_commands.Choice(name="🗞️ Train with Chat history",value="chat"),
+    app_commands.Choice(name="📏 Check size of the chat in Database",value="checkchat"),
+    app_commands.Choice(name="📐 Check AI database size",value="checkdb"),
+    app_commands.Choice(name="🧹 Delete chat history in database",value="delchat"),
+    app_commands.Choice(name="❌ Delete AI database",value="deldb")
+    ])
+
+@app_commands.describe(mode="เลือกโหมดที่ต้องการ")
+async def train(interaction: discord.Interaction, mode: discord.app_commands.Choice[str]):
+    await SendLog.send(self=SendLog(interaction,mode.name))
+    await interaction.response.send_message(f"**<a:AppleLoadingGIF:1052465926487953428> กำลังทำงาน**")
+    if mode.value == "english":
+        ai_core.train_english() 
+        await interaction.edit_original_response(content=f"**✅ เทรนบอทเสร็จสิ้น `({filesize.getsize('db.sqlite3')})`**")
+    
+    elif mode.value == "thai":
+        ai_core.train_thai()
+        await interaction.edit_original_response(content=f"**✅ เทรนบอทเสร็จสิ้น `({filesize.getsize('db.sqlite3')})`**")
+    
+    elif mode.value == "chat":
+        contents = os.listdir("asset/chat")
+        if contents:
+            ai_core.train_from_chat()
+            await interaction.edit_original_response(content=f"**✅ เทรนบอทเสร็จสิ้น `({filesize.getsize('db.sqlite3')})`**")
+        else:
+            await interaction.edit_original_response(content=f"**❌ ยังไม่พบการดึงข้อมูลแชท ลองใช้ `/getchat`**")
+    
+    elif mode.value == "checkchat":
+        try:
+            await interaction.edit_original_response(content=f"**📏 ขนาดข้อมูลแชทใน Database `{filesize.getfoldersize(f'asset/chat')}`**")
+        except:
+            await interaction.edit_original_response(content=f"**❌ ยังไม่พบการดึงข้อมูลแชท ลองใช้ `/getchat`**")
+
+    elif mode.value == "checkdb":
+        try:
+            await interaction.edit_original_response(content=f"**📐 ขนาดข้อมูล AI database `{filesize.getsize('db.sqlite3')}`**")
+        except:
+            await interaction.edit_original_response(content=f"**❌ ไม่พบ AI database ลองเทรนบอทก่อน**")
+
+    elif mode.value == "delchat":
+        try:
+            ai_core.delete_chat()
+            await interaction.edit_original_response(content=f"**✅ ลบข้อมูลแชทใน Database เสร็จสิ้น**")
+        except:
+            await interaction.edit_original_response(content=f"**❌ ไม่พบข้อมูลแชทใน Database**")
+
+    elif mode.value == "deldb":
+        try:
+            ai_core.delete_db()
+            await interaction.edit_original_response(content=f"**✅ ลบ Database เสร็จสิ้น**")
+        except:
+            await interaction.edit_original_response(content=f"**❌ ไม่พบ AI database**")
+
+@client.tree.command(description="🧠 คุยกับบอท")
+@app_commands.describe(message="ข้อความ")
+async def ai(interaction: discord.Interaction, message: str):
+    await SendLog.send(self=SendLog(interaction,message))
+    if os.path.exists("db.sqlite3"):
+        await interaction.response.send_message(f"**<a:AppleLoadingGIF:1052465926487953428> กำลังส่งข้อความไปหาบอท**")
+        response = ai_core.get_response(message)
+        await interaction.edit_original_response(content=response)
+    else:
+        await interaction.response.send_message(f"**❌ ยังไม่มี Database ลองใช้ `/train`**")
 
 
 ################################################# Context Command #################################################

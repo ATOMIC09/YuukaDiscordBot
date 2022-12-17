@@ -550,14 +550,15 @@ async def absent(interaction: discord.Interaction, role: Optional[discord.Role])
 async def getchat(interaction: discord.Interaction):
     await SendLog.send(self=SendLog(interaction))
     start_time = time.time()
-    await interaction.response.send_message(f"**<a:AppleLoadingGIF:1052465926487953428> 0% กำลังเริ่มต้น**")
+    await interaction.response.send_message(f"**<a:AppleLoadingGIF:1052465926487953428> 0% กำลังเริ่มต้น...**")
     count_total = 0
     client.force_stop = False
 
-    for channel in interaction.guild.text_channels: # Loop Channel
-        percent_total = round((count_total / len(interaction.guild.text_channels)) * 100)
+    # LOOP CHANNEL
+    for channel in interaction.guild.text_channels:
+        percent_total = round((count_total / len(interaction.guild.text_channels)) * 100, 1)
 
-        stop_button = discord.ui.Button(label="หยุด",emoji="⏹️",style=discord.ButtonStyle.red)
+        stop_button = discord.ui.Button(label="หยุด",emoji="🛑",style=discord.ButtonStyle.red)
         
         async def stop_callback(interaction):
             client.force_stop = True
@@ -566,17 +567,48 @@ async def getchat(interaction: discord.Interaction):
         view = discord.ui.View()
         view.add_item(stop_button)
 
-        with open(f"asset/chat/{channel.id}.txt", "w", encoding="utf-8") as f: # Write Message to file
-            async for message in channel.history(limit=None): # Loop Message in Channel
-                f.write(f"{message.content}\n")
+
+        start_save = time.time()
+        start_channel_percent = time.time()
+        percent_channel = 0
+        msg_total = 0
+        current_msg = 0
+
+        # GET TOTAL MESSAGE IN CHANNEL
+        async for _ in channel.history(limit=None):
+            msg_total += 1
+
+        # LOOP MESSAGE (SAVE TO FILE)
+        with open(f"asset/chat/{channel.id}.txt", "w", encoding="utf-8") as f:
+            async for message in channel.history(limit=None):
+                # BEFORE WRITE
+
+                # f.write takes too much time for update progress in discord
+                # Means it will update every time a single line is written.
+                f.write(f"{message.content}\n") # Wrint line to file
+
+                # AFTER WRITE
+                current_time = time.time()
+                percent_channel = round((current_msg / msg_total) * 100, 1)
+                current_msg += 1
+
+                # GEN NEW TOKEN BECAUSE TOKEN EXPIRED
+                if current_time - start_save >= 720: # 12 Minutes
+                    await interaction.followup.send(content=f"**<a:AppleLoadingGIF:1052465926487953428> {percent_total}% ดึงข้อความจาก <#{channel.id}> ไปแล้ว {percent_channel}%**",view=view)
+                    start_save = time.time()
+
+                # SEND UPDATE PROGRESS (EVERY MORE THAN 1 SECOND)
+                if current_time - start_channel_percent > 1: # 1 Second
+                    print(f"{percent_total}% ดึงข้อความจาก <#{channel.id}> ไปแล้ว {percent_channel}%")
+                    await interaction.edit_original_response(content=f"**<a:AppleLoadingGIF:1052465926487953428> {percent_total}% ดึงข้อความจาก <#{channel.id}> ไปแล้ว {percent_channel}%**",view=view)
+                    start_channel_percent = time.time()
+                
+                # CHECK IF USER CLICK STOP BUTTON
                 if client.force_stop == True:
                     break
-        try:
-            await interaction.edit_original_response(content=f"**<a:AppleLoadingGIF:1052465926487953428> {percent_total}% กำลังดึงข้อความจาก <#{channel.id}>**",view=view)
-        except: # if over 15 min
-            await interaction.followup.send(f"**<a:AppleLoadingGIF:1052465926487953428> {percent_total}% กำลังดึงข้อความจาก <#{channel.id}> (เนื่องจากใช้เวลามากกว่า 15 นาที จึงเห็นข้อความนี้)**",view=view)
         
-        count_total += 1
+        count_total += 1 # After finish save message in channel
+        
         if client.force_stop == True:
             break 
     

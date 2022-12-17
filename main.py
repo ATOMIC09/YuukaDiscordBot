@@ -571,8 +571,11 @@ async def getchat(interaction: discord.Interaction):
                 f.write(f"{message.content}\n")
                 if client.force_stop == True:
                     break
+        try:
+            await interaction.edit_original_response(content=f"**<a:AppleLoadingGIF:1052465926487953428> {percent_total}% กำลังดึงข้อความจาก <#{channel.id}>**",view=view)
+        except: # if over 15 min
+            await interaction.response.send_message(f"**<a:AppleLoadingGIF:1052465926487953428> {percent_total}% กำลังดึงข้อความจาก <#{channel.id}> (เนื่องจากใช้เวลามากกว่า 15 นาที จึงเห็นข้อความนี้)**",view=view)
         
-        await interaction.edit_original_response(content=f"**<a:AppleLoadingGIF:1052465926487953428> {percent_total}% กำลังดึงข้อความจาก <#{channel.id}>**",view=view)
         count_total += 1
         if client.force_stop == True:
             break 

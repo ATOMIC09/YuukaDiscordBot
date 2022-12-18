@@ -15,7 +15,7 @@ import glob
 from typing import Optional
 import time
 
-MY_GUILD = discord.Object(id=720687175611580426) #CPRE 981567258222555186 # TESTER 720687175611580426
+#MY_GUILD = discord.Object(id=720687175611580426) #CPRE 981567258222555186 # TESTER 720687175611580426
 
 class MyClient(discord.Client):
     def __init__(self, *, intents: discord.Intents):
@@ -25,15 +25,15 @@ class MyClient(discord.Client):
     async def on_ready(self):
         if not host_status_change.is_running():
             host_status_change.start()
-    #    if not autodelete.is_running():
-    #        autodelete.start()
+        if not autodelete.is_running():
+            autodelete.start()
             
         await client.change_presence(activity=discord.Game(name="💤 Standby..."))
         print(f'Logged in as {self.user} (ID: {self.user.id})')
         print('------------------------------------------------')
     
     async def setup_hook(self):
-        await self.tree.sync(guild=MY_GUILD)
+        await self.tree.sync()
     
 
 intents = discord.Intents.all()
@@ -584,7 +584,7 @@ async def getchat(interaction: discord.Interaction):
         if os.path.exists(f"asset/chat/{channel.id}.txt") == True:
             channel_left = channel_total - channel_count
             print(f"{percent_total}% ข้าม <#{channel.id}> ไปแล้ว (ไฟล์มีอยู่แล้ว)")
-            print(f'TIME TICK: {time.time() - start_channel_percent}')
+            #print(f'TIME TICK: {time.time() - start_channel_percent}')
             if time.time() - start_channel_percent > 1: # 1 Second
                 await interaction.edit_original_response(content=f"**<a:AppleLoadingGIF:1052465926487953428> 0% กำลังเริ่มต้น...คงเหลือ {channel_left} ช่อง**")
             channel_count += 1
@@ -600,7 +600,7 @@ async def getchat(interaction: discord.Interaction):
                 # BEFORE WRITE
                 # SEND UPDATE PROGRESS (EVERY MORE THAN 1 SECOND)
                 percent_channel = round((current_msg / msg_total) * 100, 1)
-                print(f'TIME TICK: {time.time() - start_channel_percent}')
+                #print(f'TIME TICK: {time.time() - start_channel_percent}')
                 if time.time() - start_channel_percent > 1: # 1 Second
                     try:
                         elasp_time = time.time() - start_time
@@ -807,5 +807,5 @@ async def autodelete():
     for f in os.listdir(dir):
         os.remove(os.path.join(dir, f))
 
-Token = os.environ['YuukaTesterToken']
+Token = os.environ['YuukaToken']
 client.run(Token)

@@ -549,9 +549,10 @@ async def absent(interaction: discord.Interaction, role: Optional[discord.Role])
 @client.tree.command(description="🗞️ บันทึกประวัติการส่งข้อความ")
 async def getchat(interaction: discord.Interaction):
     await SendLog.send(self=SendLog(interaction))
+    channel = interaction.channel
     start_time = time.time()
     client.force_stop = False
-    client.time_out = False
+    client.overtime = False
     channel_count = 0
     channel_total = len(interaction.guild.text_channels)
     await interaction.response.send_message(f"**<a:AppleLoadingGIF:1052465926487953428> 0% กำลังเริ่มต้น...ตรวจพบ {channel_total} ช่อง**")
@@ -592,8 +593,6 @@ async def getchat(interaction: discord.Interaction):
         else:
             print(f"ไม่พบไฟล์ <#{channel.id}> เริ่มการดึงข้อความจากช่องนี้")
         
-        warning_15min = False
-
         # LOOP MESSAGE (SAVE TO FILE)
         with open(f"asset/chat/{channel.id}.txt", "w", encoding="utf-8") as f:
             async for message in channel.history(limit=None):
@@ -604,48 +603,44 @@ async def getchat(interaction: discord.Interaction):
                 if time.time() - start_channel_percent > 1: # 1 Second
                     try:
                         elasp_time = time.time() - start_time
-                        print(f"{percent_total}% ดึงข้อความจาก <#{channel.id}> ไปแล้ว {percent_channel}%")
-                        await interaction.edit_original_response(content=f"**<a:AppleLoadingGIF:1052465926487953428> {percent_total}% ดึงข้อความจาก <#{channel.id}> ไปแล้ว {percent_channel}% `{sectobigger.sec(elasp_time)}`**",view=view)
-                        start_channel_percent = time.time()
-                    except:
-                        await interaction.channel.send(content=f"**⚠️ ใช้เวลามากเกินไป ลองใช้คำสั่งนี้อีกครั้งเพื่อดำเนินการต่อ**")
-                        client.time_out = True
-                        break
-                
-                # DO ONCE
-                # WARNING: TIME OUT IF MORE THAN 15 MINUTE
-                if time.time() - start_save > 840: # 14 Minute 
-                    if warning_15min == False:
-                        await interaction.followup.send(content=f"**⚠️ การดึงข้อความจากช่อง <#{channel.id}> อาจใช้เวลามากกว่า 15 นาที**")
-                        warning_15min = True
+                        if time.time() - start_save < 840: # In 14 Minutes (840 Seconds)
+                            print(f"{percent_total}% ดึงข้อความจาก <#{channel.id}> ไปแล้ว {percent_channel}%")
+                            await interaction.edit_original_response(content=f"**<a:AppleLoadingGIF:1052465926487953428> {percent_total}% ดึงข้อความจาก <#{channel.id}> ไปแล้ว {percent_channel}% `{sectobigger.sec(elasp_time)}`**",view=view)
+                            start_channel_percent = time.time()
+                        else: # More than 14 Minutes
+                            print(f"{percent_total}% ดึงข้อความเบื้องหลังจาก <#{channel.id}> ไปแล้ว {percent_channel}%")
+                            await interaction.edit_original_response(content=f"**ℹ️ กำลังดึงข้อความในเบื้องหลัง...**",view=None)
+            
+                    except: # If interaction is timeout
+                        print("Interaction is timeout")
+                        client.overtime = True
 
                 # WHILE WRITE
                     # f.write takes too much time for update progress in discord
                     # Means it will update every time a single line is written.
                 f.write(f"{message.content}\n") # Wrint line to file
-                #print(f"{message.content}")
 
                 # AFTER WRITE
                 current_msg += 1
 
                 # CHECK IF USER CLICK STOP BUTTON
-                if client.force_stop == True or client.time_out == True:
+                if client.force_stop == True :
                     break
             
             channel_count += 1 # After finish save message in channel
             
-            if client.force_stop == True or client.time_out == True:
+            if client.force_stop == True :
                 break 
-    
-    # END LOOP CHANNEL
-    if channel_total == channel_count:
-        await interaction.edit_original_response(content=f"**ℹ️ มีไฟล์ข้อความทั้งหมดอยู่แล้ว**",view=None)
 
+    # END LOOP CHANNEL
     end_time = time.time()
-    if client.force_stop == False and client.time_out == False:
-        await interaction.edit_original_response(content=f"**✅ ดึงข้อความเสร็จสิ้น `({filesize.getfoldersize(f'asset/chat')})` ใช้เวลา `{sectobigger.sec(round(end_time - start_time, 2))}`**",view=None)
-    elif client.force_stop == True:
-        await interaction.edit_original_response(content=f"**🛑 การดึงข้อความถูกยกเลิก**",view=None)
+    if client.overtime == False:
+        if client.force_stop == False :
+            await interaction.edit_original_response(content=f"**✅ ดึงข้อความเสร็จสิ้น `({filesize.getfoldersize(f'asset/chat')})` ใช้เวลา `{sectobigger.sec(round(end_time - start_time, 2))}`**",view=None)
+        elif client.force_stop == True:
+            await interaction.edit_original_response(content=f"**🛑 การดึงข้อความถูกยกเลิก**",view=None)
+    elif client.overtime == True and client.force_stop == False:
+        await channel.send(content=f"**✅ ดึงข้อความเสร็จสิ้น `({filesize.getfoldersize(f'asset/chat')})` ใช้เวลา `{sectobigger.sec(round(end_time - start_time, 2))}`**",view=None)
 
 
 ################################################# AI #################################################

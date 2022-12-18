@@ -15,7 +15,7 @@ import glob
 from typing import Optional
 import time
 
-#MY_GUILD = discord.Object(id=720687175611580426) #CPRE 981567258222555186 # TESTER 720687175611580426
+MY_GUILD = discord.Object(id=720687175611580426) #CPRE 981567258222555186 # TESTER 720687175611580426
 
 class MyClient(discord.Client):
     def __init__(self, *, intents: discord.Intents):
@@ -25,15 +25,15 @@ class MyClient(discord.Client):
     async def on_ready(self):
         if not host_status_change.is_running():
             host_status_change.start()
-        if not autodelete.is_running():
-            autodelete.start()
+    #    if not autodelete.is_running():
+    #        autodelete.start()
             
         await client.change_presence(activity=discord.Game(name="💤 Standby..."))
         print(f'Logged in as {self.user} (ID: {self.user.id})')
         print('------------------------------------------------')
     
     async def setup_hook(self):
-        await self.tree.sync()
+        await self.tree.sync(guild=MY_GUILD)
     
 
 intents = discord.Intents.all()
@@ -582,38 +582,48 @@ async def getchat(interaction: discord.Interaction):
 
         # CHECK IF FILE ALREADY EXIST (SAME CHANNEL)
         if os.path.exists(f"asset/chat/{channel.id}.txt") == True:
+            channel_left = channel_total - channel_count
             print(f"{percent_total}% ข้าม <#{channel.id}> ไปแล้ว (ไฟล์มีอยู่แล้ว)")
+            print(f'TIME TICK: {time.time() - start_channel_percent}')
+            if time.time() - start_channel_percent > 1: # 1 Second
+                await interaction.edit_original_response(content=f"**<a:AppleLoadingGIF:1052465926487953428> 0% กำลังเริ่มต้น...คงเหลือ {channel_left} ช่อง**")
             channel_count += 1
             continue
         else:
             print(f"ไม่พบไฟล์ <#{channel.id}> เริ่มการดึงข้อความจากช่องนี้")
+        
+        warning_15min = False
 
         # LOOP MESSAGE (SAVE TO FILE)
         with open(f"asset/chat/{channel.id}.txt", "w", encoding="utf-8") as f:
             async for message in channel.history(limit=None):
                 # BEFORE WRITE
-                
                 # SEND UPDATE PROGRESS (EVERY MORE THAN 1 SECOND)
                 percent_channel = round((current_msg / msg_total) * 100, 1)
+                print(f'TIME TICK: {time.time() - start_channel_percent}')
                 if time.time() - start_channel_percent > 1: # 1 Second
                     try:
+                        elasp_time = time.time() - start_time
                         print(f"{percent_total}% ดึงข้อความจาก <#{channel.id}> ไปแล้ว {percent_channel}%")
-                        await interaction.edit_original_response(content=f"**<a:AppleLoadingGIF:1052465926487953428> {percent_total}% ดึงข้อความจาก <#{channel.id}> ไปแล้ว {percent_channel}%**",view=view)
+                        await interaction.edit_original_response(content=f"**<a:AppleLoadingGIF:1052465926487953428> {percent_total}% ดึงข้อความจาก <#{channel.id}> ไปแล้ว {percent_channel}% `{sectobigger.sec(elasp_time)}`**",view=view)
                         start_channel_percent = time.time()
                     except:
                         await interaction.channel.send(content=f"**⚠️ ใช้เวลามากเกินไป ลองใช้คำสั่งนี้อีกครั้งเพื่อดำเนินการต่อ**")
                         client.time_out = True
                         break
                 
+                # DO ONCE
                 # WARNING: TIME OUT IF MORE THAN 15 MINUTE
-                if time.time() - start_save > 10: # 14 Minute 840
-                    await interaction.followup.send(content=f"**⚠️ การดึงข้อความอาจใช้เวลามากกว่า 15 นาที**")
-                    start_save = time.time()
+                if time.time() - start_save > 840: # 14 Minute 
+                    if warning_15min == False:
+                        await interaction.followup.send(content=f"**⚠️ การดึงข้อความจากช่อง <#{channel.id}> อาจใช้เวลามากกว่า 15 นาที**")
+                        warning_15min = True
 
                 # WHILE WRITE
                     # f.write takes too much time for update progress in discord
                     # Means it will update every time a single line is written.
                 f.write(f"{message.content}\n") # Wrint line to file
+                #print(f"{message.content}")
 
                 # AFTER WRITE
                 current_msg += 1
@@ -797,5 +807,5 @@ async def autodelete():
     for f in os.listdir(dir):
         os.remove(os.path.join(dir, f))
 
-Token = os.environ['YuukaToken']
+Token = os.environ['YuukaTesterToken']
 client.run(Token)

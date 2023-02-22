@@ -1,4 +1,4 @@
-<h1 align="center">🌈 Welcome to YuukaDiscordBot - v1.7 Backend Update ✨</h1>
+<h1 align="center">🌈 YuukaDiscordBot - v1.7 Backend Update ✨</h1>
 <p align="center">
   <img alt="Version" src="https://img.shields.io/badge/version-1.7-blue.svg?cacheSeconds=2592000" />
   <a href="#" target="_blank">

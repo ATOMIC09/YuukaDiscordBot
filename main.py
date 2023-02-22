@@ -87,6 +87,7 @@ class InfomationLog():
 intents = discord.Intents.all()
 intents.members = True
 client = MyClient(intents=intents)
+client.IsAnnouncement = False
 
 
 @client.tree.command(name='help', description='❔ ความช่วยเหลือ')

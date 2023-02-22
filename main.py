@@ -3,7 +3,7 @@ from discord import app_commands, ui
 from discord.ext import tasks
 import os
 import asyncio 
-from utils import countdown_fn, youtubedl_fn, sectobigger, shorten_url, imageprocess_fn, filesize, ai_core
+from utils import countdown_fn, youtubedl_fn, sectobigger, shorten_url, imageprocess_fn, filesize, ai_core, gdrive_dl
 import requests
 import shutil
 import json
@@ -15,46 +15,47 @@ import glob
 from typing import Optional
 import time
 
-#MY_GUILD = discord.Object(id=720687175611580426) #CPRE 981567258222555186 # TESTER 720687175611580426
-
 class MyClient(discord.Client):
-    def __init__(self, *, intents: discord.Intents):
+    def __init__(self, intents: discord.Intents):
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
-    
+        self.countdis_except = {}
+        self.time_stop = {}
+        self.last_image = {}
+        self.last_image_url = {}
+        self.last_video = {}
+        self.last_video_url = {}
+        self.last_audio = {}
+        self.last_audio_url = {}
+        self.last_pdf = {}
+        self.last_pdf_url = {}
+        self.name_only = {}
+        self.stopSpam = {}
+        self.force_stop = {}
+        self.overtime = {}
+        self.talk_to_ai = {}
+        self.ai_active_channel = {}
+
     async def on_ready(self):
         if not host_status_change.is_running():
             host_status_change.start()
         if not autodelete.is_running():
             autodelete.start()
-            
-        await client.change_presence(activity=discord.Game(name="💤 Standby..."))
+        await self.tree.sync()
+        await self.setup_hook()
         print(f'Logged in as {self.user} (ID: {self.user.id})')
         print('------------------------------------------------')
-    
+
     async def setup_hook(self):
+        MY_GUILD = discord.Object(id=720687175611580426)  
         await self.tree.sync()
-    
 
-intents = discord.Intents.all()
-intents.members = True
-client = MyClient(intents=intents)
-client.IsAnnouncement = False
-
-class SendLog():
-    def __init__(self, interaction, arg="nodata", arg2="nodata"):
+class InfomationLog():
+    def __init__(self, interaction, log_data=""):
         self.interaction = interaction
-        if arg == "nodata":
-            self.arg = ""
-        else:
-            self.arg = arg
+        self.log_data = log_data
 
-        if arg2 == "nodata":
-            self.arg2 = ""
-        else:
-            self.arg2 = arg2
-
-    async def send(self):
+    async def sendlog(self):
         channel = client.get_channel(1003719893260185750)
         log = discord.Embed(title=f"**ID : **`{self.interaction.id}`", color=0x455EE8)
         log.set_author(name=self.interaction.user, icon_url=self.interaction.user.display_avatar.url)
@@ -63,14 +64,12 @@ class SendLog():
         log.add_field(name="หมวดหมู่",value=f"`{self.interaction.channel.category.name}` ({self.interaction.channel.category.id})")
         log.add_field(name="ช่อง",value=f"`{self.interaction.channel}` ({self.interaction.channel_id})")
         log.add_field(name="ผู้เขียน",value=f"`{self.interaction.user}` ({self.interaction.user.id})")
-        log.add_field(name="คำสั่ง",value=f"```/{self.interaction.command.name} {self.arg} {self.arg2}```")
-
+        log.add_field(name="คำสั่ง",value=f"```/{self.interaction.command.name} {self.log_data}```")
         url_view = discord.ui.View()
         url_view.add_item(discord.ui.Button(label='Go to Message', style=discord.ButtonStyle.url, url=f"https://discord.com/channels/{self.interaction.guild_id}/{self.interaction.channel_id}/{self.interaction.id}"))
-        
         await channel.send(embed=log,view=url_view)
     
-    async def context(self):
+    async def contextlog(self):
         channel = client.get_channel(1003719893260185750)
         log = discord.Embed(title=f"**ID : **`{self.interaction.id}`", color=0x455EE8)
         log.set_author(name=self.interaction.user, icon_url=self.interaction.user.display_avatar.url)
@@ -80,23 +79,24 @@ class SendLog():
         log.add_field(name="ช่อง",value=f"`{self.interaction.channel}` ({self.interaction.channel_id})")
         log.add_field(name="ผู้เขียน",value=f"`{self.interaction.user}` ({self.interaction.user.id})")
         log.add_field(name="คำสั่ง",value=f"```{self.interaction.command.name} กับรูปภาพ```")
-        log.set_image(url=self.arg.attachments[0])
-
+        log.set_image(url=self.log_data.attachments[0])
         url_view = discord.ui.View()
         url_view.add_item(discord.ui.Button(label='Go to Message', style=discord.ButtonStyle.url, url=f"https://discord.com/channels/{self.interaction.guild_id}/{self.interaction.channel_id}/{self.interaction.id}"))
-        
         await channel.send(embed=log,view=url_view)
+        
+intents = discord.Intents.all()
+intents.members = True
+client = MyClient(intents=intents)
 
 
-################################################# Help #################################################
-@client.tree.command(description="❔ ความช่วยเหลือ")
+@client.tree.command(name='help', description='❔ ความช่วยเหลือ')
 async def help(interaction: discord.Interaction):
-    await SendLog.send(self=SendLog(interaction))
-    # หน้าเมนู Embed
+    await InfomationLog.sendlog(self=InfomationLog(interaction))
+    
+    # Embed
     util = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🔧 เครื่องมืออรรถประโยชน์*", color=0x40eefd)
     util.add_field(name="**🔌 นับถอยหลังและตัดการเชื่อมต่อ**", value="`/countdis`", inline=False)
     util.add_field(name="**⛔ ยกเว้นคำสั่ง Countdis**", value="`/except`", inline=False)
-    util.add_field(name="**🛑 ยกเลิกการนับถอยหลัง**", value="`/cancel`", inline=False)
     util.add_field(name="**📨 ส่งข้อความหลังไมค์ไปหาผู้สร้าง**", value="`/feedback`", inline=False)
     util.add_field(name="**🎬 ขอไฟล์จาก Youtube**", value="`/youtube`", inline=False)
     util.add_field(name="**📨 ส่งข้อความ**", value="`/send`", inline=False)
@@ -107,19 +107,20 @@ async def help(interaction: discord.Interaction):
     util.add_field(name="**🔎 เช็คคนขาดประชุม**", value="`/absent`", inline=False)
 
     ai = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🤖 Artificial Intelligence*", color=0x03dffc)
-    ai.add_field(name="**🧠 คุยกับบอท**", value="`/ai`", inline=False)
+    ai.add_field(name="**🧠 เปิด/ปิดการคุยกับบอท**", value="`/ai`", inline=False)
     ai.add_field(name="**🎒 รวมคำสั่งเกี่ยวกับการเทรน ตรวจสอบ และลบฐานข้อมูล**", value="`/train`", inline=False)
     ai.add_field(name="**🗞️ บันทึกประวัติการส่งข้อความ**", value="`/getchat`", inline=False)
 
     update = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *📌 ประวัติการอัพเดท*", color=0xdcfa80)
-    update.add_field(name="1️⃣ V 1.0 | 29/07/2022", value="• Add: Countdis\n• Add: Feedback")
+    update.add_field(name="1️⃣ V 1.0 | 29/07/2022", value="• Add: Countdis command (countdown and disconnect all user in voice channel)\n• Add: Feedback")
     update.add_field(name="2️⃣ V 1.1 | 02/08/2022", value="• Add: Log\n• Add: Youtube\n• Add: Search by Image\n• Add: AutoDelete Temp\n• Add: Hosting Status\n• Improve: Embed Feedback")
     update.add_field(name="3️⃣ V 1.2 | 02/09/2022", value="• Add: Send command\n• Add: Kick member from voice chat")
-    update.add_field(name="4️⃣ V 1.3 | 02/10/2022", value="• Add: Deepfry command\n• Improve: Change Guild to Global Command")
+    update.add_field(name="4️⃣ V 1.3 | 02/10/2022", value="• Add: Deepfry command\n• Change: Private command to Global Command")
     update.add_field(name="5️⃣ V 1.4 | 11/10/2022", value="• Add: Spam Mentions")
-    update.add_field(name="6️⃣ V 1.5 | 24/10/2022", value="• Add: Announcement(For Dev Only)\n• Add: Attendance\n• Add: Absent\n• Add: Cancel\n• Hotfix: Spam Mentions")
+    update.add_field(name="6️⃣ V 1.5 | 24/10/2022", value="• Add: Announcement(For Bot Admin Only)\n• Add: Attendance\n• Add: Absent\n• Add: Cancel\n• Hotfix: Spam Mentions")
     update.add_field(name="7️⃣ V 1.6 | 14/12/2022", value="• Add: AI\n• Change: Emoji and Decoration")
-
+    update.add_field(name="8️⃣ V 1.7 | 22/02/2023", value="• Fix: The AI has pre-trained data and Chat without using the slash command.\n• Change: Fully open public bots. Cancel and Except is combined with the Countdis command and optimize some operations")
+    update.add_field(name="9️⃣ V 1.8 | TBA", value="• Add: Guild, User, Stats Information")
 
     select = discord.ui.Select(placeholder="ตัวเลือกเมนู",options=[
     discord.SelectOption(label="เครื่องมืออรรถประโยชน์",emoji="🔧",description="คำสั่งการใช้งานทั่วไป",value="util",default=False),
@@ -140,166 +141,91 @@ async def help(interaction: discord.Interaction):
     select.callback = my_callback
     view = discord.ui.View()
     view.add_item(select)
-
     await interaction.response.send_message(embed=util, view=view)
 
 
-################################################# Countdis #################################################
-client.timestop = 0
-client.member_except = []
-client.last_use = [0]
-
-@client.tree.command(description="⏱️ นับถอยหลังและตัดการเชื่อมต่อ")
-@app_commands.describe(time="ใส่เวลาเป็นหน่วยวินาที")
-async def countdis(interaction: discord.Interaction, time: str):
+@client.tree.command(name='countdis', description='🔌 นับถอยหลังและตัดการเชื่อมต่อ')
+@app_commands.describe(time='เวลาเป็นหน่วยวินาที')
+async def countdis(interaction: discord.Interaction, time: int):
     try:
-        members = interaction.user.voice.channel.members
-        await SendLog.send(self=SendLog(interaction,time))
-        people_counter = 0
+        all_member = interaction.user.voice.channel.members
+        await InfomationLog.sendlog(self=InfomationLog(interaction, str(time)))
 
-        time_int = int(time)
-        client.timestop = time_int
+        stop_button = discord.ui.Button(label="Stop", style=discord.ButtonStyle.red)
+        exceptme_button = discord.ui.Button(label="Except Me", style=discord.ButtonStyle.primary)
+        guild = interaction.guild_id
+        channel = interaction.user.voice.channel
+        member_count = 0
 
-        if time_int < 0:
+        if guild not in client.time_stop:
+            client.time_stop[guild] = False
+        if guild not in client.countdis_except: 
+            client.countdis_except[guild] = []
+        
+        if time < 0:
             await interaction.response.send_message("**เวลาไม่ถูกต้อง ❌**")
         else:
-            output = countdown_fn.countdown_fn(time_int)
-            await interaction.response.send_message(output)
-            for i in range(time_int):
-                output = countdown_fn.countdown_fn(time_int)
-                await interaction.edit_original_response(content=output)
-                await asyncio.sleep(1)
-                time_int -= 1
+            output = countdown_fn.countdown_fn(time)
+            view = discord.ui.View()
+            view.add_item(stop_button)
+            view.add_item(exceptme_button)
 
-                if client.timestop == -22052603:
-                    await interaction.edit_original_response(content="**การนับถอยหลังถูกยกเลิก 🛑**")
+            await interaction.response.send_message(output, view=view)
+            for i in range(time):
+                if client.time_stop[guild] == True:
+                    await interaction.edit_original_response(content="**ยกเลิกการนับถอยหลังแล้ว 🛑**", view=None)
                     break
-            if client.timestop != -22052603:
-                channel = interaction.user.voice.channel
-            
-                await interaction.edit_original_response(content="**หมดเวลา 🔔**")
+                await asyncio.sleep(1)
+                output = countdown_fn.countdown_fn(time - i - 1)
+                await interaction.edit_original_response(content=output)
+
+                # Except Me
+                async def exceptme(interaction: discord.Interaction):
+                    if interaction.user.id in client.countdis_except[guild]:
+                        client.countdis_except[guild].remove(interaction.user.id)
+                        await interaction.response.send_message(content=f"**<@{interaction.user.id}> ไม่ถูกยกเว้นแล้ว ❌**")
+                    else:
+                        client.countdis_except[guild].append(interaction.user.id)
+                        await interaction.response.send_message(content=f"**<@{interaction.user.id}> ถูกยกเว้นแล้ว ✅**")
                 
-                if client.member_except == []: # ไม่มีใครยกเว้น
-                    for member in members:
-                        await member.move_to(None)
-                        people_counter += 1
+                async def stop(interaction: discord.Interaction):
+                    client.time_stop[guild] = True
+                stop_button.callback = stop
+                exceptme_button.callback = exceptme
 
-                    client.member_except = []
-                    client.last_use = [0]
-                    await interaction.followup.send(f"⏏️  **ตัดการเชื่อมต่อจำนวน {people_counter} คน จาก `{channel}` สำเร็จแล้ว**")
+            if client.time_stop[guild] == False:
+                await interaction.edit_original_response(content="**หมดเวลา 🔔**", view=None)
+                for member in all_member:
+                    if member.id in client.countdis_except[guild]:
+                        continue
+                    await member.move_to(None)
+                    member_count += 1
+                
+                await interaction.followup.send(f"⏏️  **ตัดการเชื่อมต่อจำนวน {member_count} คน จาก `{channel}` สำเร็จแล้ว**")
 
-                else:
-                    for member in members:
-                        if member not in client.member_except: # เช็คว่าใครไม่ออก
-                            await member.move_to(None)
-                            people_counter += 1
+            # Reset
+            client.countdis_except[guild] = []
+            client.time_stop[guild] = False
+    
+    except AttributeError:
+        await interaction.response.send_message(content="**ถีบใคร? ไม่มีใครให้ถีบอะดิ (●'◡'●)**")
 
-                    client.member_except = []
-                    client.last_use = [0]
-                    await interaction.followup.send(f"⏏️  **ตัดการเชื่อมต่อจำนวน {people_counter} คน จาก `{channel}` สำเร็จแล้ว**")
-                    
-    except:
-        await interaction.response.send_message(content="**ไม่เข้าห้องเสียงแล้วจะให้ถีบยังไงอะ (●'◡'●)**")
-
-
-################################################# Except #################################################
-@client.tree.command(name="except",description="⛔ ยกเว้นคำสั่ง Countdis")
-async def except_def(interaction: discord.Interaction):
-    await SendLog.send(self=SendLog(interaction))
-    user = interaction.user
-    if user.id not in client.last_use:
-        client.member_except.append(user) # คนที่จะไม่ออก
-        client.last_use.pop(0)
-        client.last_use.append(user.id)
-        await interaction.response.send_message(content=f"**<@{user.id}> ได้รับการยกเว้น <:Approve:921703512382009354>**")
-    else:
-        client.member_except.remove(user) # คนที่จะออก
-        client.last_use.pop(0)
-        client.last_use.append(0)
-        await interaction.response.send_message(content=f"**<@{user.id}> ถูกลบออกจากรายการที่ยกเว้น <:Deny:921703523111022642>**")
-
-
-################################################# Cancel #################################################
-@client.tree.command(name="cancel",description="❌ ยกเลิกการนับถอยหลัง")
-async def cancel(interaction: discord.Interaction):
-    await SendLog.send(self=SendLog(interaction))
-    client.timestop = -22052603
-    await interaction.response.send_message(content="**✅ ยกเลิกการนับถอยหลังแล้ว**")
-
-
-################################################# Youtube #################################################
-@client.tree.command(name="youtube",description="🎬 ขอไฟล์จาก Youtube")
-@app_commands.describe(url="ใส่ URL ของคลิปใน Youtube")
-async def youtube_def(interaction: discord.Interaction, url: str):
-    await SendLog.send(self=SendLog(interaction,url))
-    await interaction.response.send_message(f"<a:MagnifierGIF:1052563354910216252> **กำลังหา** `{url}`")
-
-    # เก็บข้อมูลดิบ
-    title = youtubedl_fn.yt_title(url)
-    ext = youtubedl_fn.yt_ext(url)
-    upload_date = youtubedl_fn.yt_upload_date(url)
-    channel, channel_id = youtubedl_fn.yt_channel(url)
-    duration = youtubedl_fn.yt_duration(url)
-    view_count = youtubedl_fn.yt_view_count(url)
-    try:
-        like_count = youtubedl_fn.yt_like_count(url)
-    except:
-        like_count = "Null"
-    dislike_count = youtubedl_fn.yt_dislike_count(url)
-    comment_count = youtubedl_fn.yt_comment_count(url)
-    filesize_approx = youtubedl_fn.yt_filesize_approx(url)
-
-    # ข้อมูลสำคัญ
-    videolink = youtubedl_fn.yt_video(url)
-    audiolink = youtubedl_fn.yt_audio(url)
-    thumbnail = youtubedl_fn.yt_thumbnail(url)
-
-    # ข้อมูลสุก
-    videolinknew = shorten_url.shortenmylink(videolink)
-    audiolinknew = shorten_url.shortenmylink(audiolink)
-    durationnew = sectobigger.sec(duration)
-    upload_datenew = sectobigger.datenumbeautiful(upload_date)
-
-    dl = discord.Embed(title = f"**{title}**", color = 0xff80c9)
-    dl.timestamp = interaction.created_at
-    dl.add_field(name="🔐 นามสกุลไฟล์", value=f"`{ext}`", inline=False)
-    dl.add_field(name="🥼 ช่อง", value=f"`{channel}` `({channel_id})`", inline=False)
-    dl.add_field(name="📆 วันที่อัพโหลด", value=f"`{upload_datenew}`", inline=False)
-    dl.add_field(name="🕒 ระยะเวลา", value=f"`{durationnew}`", inline=False)
-    dl.add_field(name="👀 จำนวนคนดู", value=f"`{view_count} คน`", inline=False)
-    dl.add_field(name="👍🏻 จำนวนคน Like", value=f"`{like_count} คน`", inline=False)
-    dl.add_field(name="👎🏻 จำนวนคน Dislike", value=f"`{dislike_count} คน`", inline=False)
-    dl.add_field(name="💬 จำนวน Comment", value=f"`{comment_count} คน`", inline=False)
-    dl.add_field(name="📦 ขนาดไฟล์", value=f"`{filesize_approx}`", inline=False)
-    dl.set_image(url=thumbnail)
-
-    url_view = discord.ui.View()
-    url_view.add_item(discord.ui.Button(label='Video',emoji="🎬" , style=discord.ButtonStyle.url, url=videolinknew))
-    url_view.add_item(discord.ui.Button(label='Audio',emoji="🔊" , style=discord.ButtonStyle.url, url=audiolinknew))
-
-    await interaction.edit_original_response(content="",embed=dl,view=url_view)
-
-
-################################################# Send Message #################################################
-@client.tree.command(description="📨 ส่งข้อความด้วยบอท")
+@client.tree.command(name='send', description="📨 ส่งข้อความด้วยบอท")
 @app_commands.describe(channel="ช่องข้อความที่จะส่ง",message="ข้อความ")
 async def send(interaction: discord.Interaction, channel: discord.TextChannel, *, message: str):
     combine_arg = str(channel.id) + " " + message
-    await SendLog.send(self=SendLog(interaction,combine_arg))
+    await InfomationLog.sendlog(self=InfomationLog(interaction,combine_arg))
     await interaction.response.send_message(f'"{message}" ถูกส่งไปยัง {channel.mention}',ephemeral=True)
     await channel.send(message)
 
-
-################################################# Kick member from VC #################################################
-@client.tree.command(description="🦵 เตะสมาชิกจากช่องเสียง")
+@client.tree.command(name='kick', description="🦵 เตะสมาชิกจากช่องเสียง")
 @app_commands.describe(member="ผู้ใช้")
 async def kick(interaction: discord.Interaction, member: discord.Member):
-    await SendLog.send(self=SendLog(interaction,str(member.name) + " (" + str(member.id) + ")"))
+    await InfomationLog.sendlog(self=InfomationLog(interaction,str(member.name) + " (" + str(member.id) + ")"))
     await interaction.response.send_message(f'<@{member.id}> ถูกเตะออกจาก `{member.voice.channel}`',ephemeral=True)
     await member.move_to(None)
 
 
-################################################# Feedback #################################################
 class FeedbackModal(ui.Modal, title='มีอะไรอยากบอก?'):
     message = ui.TextInput(label='Answer', style=discord.TextStyle.paragraph)
     
@@ -318,42 +244,41 @@ class FeedbackModal(ui.Modal, title='มีอะไรอยากบอก?'):
 
 @client.tree.command(name="feedback",description="📨 ส่งข้อความหลังไมค์ไปหาผู้สร้าง")
 async def feedback(interaction: discord.Interaction):
-    await SendLog.send(self=SendLog(interaction))
+    await InfomationLog.sendlog(self=InfomationLog(interaction))
     await interaction.response.send_modal(FeedbackModal())
 
-################################################### Deepfry ###################################################
-@client.tree.command(description="🍟 ทอดกรอบภาพ")
+@client.tree.command(name='deepfry', description="🍟 ทอดกรอบภาพ")
 async def deepfry(interaction: discord.Interaction):
+    guild = interaction.guild_id
     try:
         await interaction.response.send_message("<a:AppleLoadingGIF:1052465926487953428> **กำลังสร้าง...**")
-        shutil.copy(f"temp/autosave/{client.last_image}", f"asset/deepfry/deepfryer_input/{client.last_image}")
-        imageprocess_fn.deepfry(f"asset/deepfry/deepfryer_input/{client.last_image}")
-        await SendLog.send(self=SendLog(interaction))
+        shutil.copy(f"temp/autosave/{client.last_image[guild]}", f"asset/deepfry/deepfryer_input/{client.last_image[guild]}")
+        imageprocess_fn.deepfry(f"asset/deepfry/deepfryer_input/{client.last_image[guild]}")
+        await InfomationLog.sendlog(self=InfomationLog(interaction))
 
-        if "_deepfryer" in client.name_only:
-            path = f'asset/deepfry/deepfryer_output/{client.name_only}.png'
+        if "_deepfryer" in client.name_only[guild]:
+            path = f'asset/deepfry/deepfryer_output/{client.name_only[guild]}.png'
             file_name = discord.File(path)
             await interaction.edit_original_response(content=f"✅ **สร้างเสร็จแล้ว `({filesize.getsize(path)})`**")
         else:
-            path = f'asset/deepfry/deepfryer_output/{client.name_only}_deepfryer.png'
+            path = f'asset/deepfry/deepfryer_output/{client.name_only[guild]}_deepfryer.png'
             file_name = discord.File(path)
             await interaction.edit_original_response(content=f"✅ **สร้างเสร็จแล้ว `({filesize.getsize(path)})`**")
         
         await interaction.followup.send(file=file_name)
-    except:
+    except KeyError:
         await interaction.edit_original_response(content="❌ **ไม่พบรูปภาพ**")
 
-
-################################################# Spam Mentions #################################################
-@client.tree.command(description="📢 สแปมคนไม่มา")
+@client.tree.command(name='spam', description="📢 สแปมคนไม่มา")
 @app_commands.describe(member="ผู้ใช้", message="ข้อความ", delay="การหน่วงเวลา", amount="จำนวนครั้ง")
 async def spam(interaction: discord.Interaction, member: discord.Member, *, message: str, delay: int = 2, amount: int = 5):
-    await SendLog.send(self=SendLog(interaction,str(member.name) + " (" + str(member.id) + ")"))
-    client.stopSpam = False
+    await InfomationLog.sendlog(self=InfomationLog(interaction,str(member.name) + " (" + str(member.id) + ")"))
+    guild = interaction.guild_id
+    client.stopSpam[guild] = False
 
     stop = discord.ui.Button(label="หยุดสแปม",emoji="⏹",style=discord.ButtonStyle.red)
     async def stop_callback(interaction):
-        client.stopSpam = True
+        client.stopSpam[guild] = True
 
     stop.callback = stop_callback
     view = discord.ui.View()
@@ -361,24 +286,22 @@ async def spam(interaction: discord.Interaction, member: discord.Member, *, mess
     await interaction.response.send_message(content=f'<a:LoadingGIF:1052561472263299133> **กำลังสแปม** {message} **กับ** <@{member.id}>',ephemeral=True,view=view)
     
     for i in range(amount):
-        if client.stopSpam == False:
+        if client.stopSpam[guild] == False:
             await asyncio.sleep(delay)
             await interaction.followup.send(f'{message} <@{member.id}>')
         else:
             break
-    if client.stopSpam == False:
+    if client.stopSpam[guild] == False:
         await interaction.edit_original_response(content=f'✅ **สแปม** {message} **กับ** <@{member.id}> **จบแล้ว**',view=None)    
     else:
         await interaction.edit_original_response(content=f'⛔ **หยุดสแปม** {message} **กับ** <@{member.id}> **แล้ว**',view=None)
 
-
-################################################# Announcement #################################################
-@client.tree.command(description="📢 ประกาศ (เฉพาะผู้สร้าง)")
-@app_commands.describe(message="ข้อความที่จะประกาศ")
+@client.tree.command(name='announce', description="📢 ประกาศ (เฉพาะผู้ดูแล)")
+@app_commands.describe(message="ข้อความประกาศ")
 async def announce(interaction: discord.Interaction, *, message: str):
     if interaction.user.id == 269000561255383040:
         if client.IsAnnouncement == False:
-            await SendLog.send(self=SendLog(interaction, message))
+            await InfomationLog.sendlog(self=InfomationLog(interaction, message))
             client.IsAnnouncement = True
             await client.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=message))
             await interaction.response.send_message(f'✅ **ประกาศ** {message} **เรียบร้อย**',ephemeral=True)
@@ -386,9 +309,7 @@ async def announce(interaction: discord.Interaction, *, message: str):
             client.IsAnnouncement = False
             await interaction.response.send_message(f'⏹ **หยุดประกาศเรียบร้อย**',ephemeral=True)
 
-
-################################################# Attendance #################################################
-@client.tree.command(description="📝 บันทึกการเข้าประชุม")
+@client.tree.command(name='attendance', description="📝 บันทึกการเข้าประชุม")
 async def attendance(interaction: discord.Interaction):
     try:
         vc = interaction.user.voice.channel
@@ -400,7 +321,7 @@ async def attendance(interaction: discord.Interaction):
                 member += f'> {user.display_name}\n'
                 count += 1
 
-        await SendLog.send(self=SendLog(interaction))
+        await InfomationLog.sendlog(self=InfomationLog(interaction))
         log = discord.Embed(title="📝 บันทึกการเข้าประชุม",color=0x0A50C8)
         log.add_field(name="🔊 ช่องเสียง",value=f'`{vc.name}`',inline=False)
         log.add_field(name="👥 จำนวนผู้เข้าร่วม",value=f'`{count} คน`',inline=False)
@@ -456,11 +377,9 @@ async def attendance(interaction: discord.Interaction):
         await interaction.response.send_message(embed=log,view=view)
 
     except:
-        await interaction.response.send_message(f"**ต้องอยู่ในห้องเสียงก่อน ถึงจะเช็คชื่อได้ ┐⁠(⁠ ⁠˘⁠_⁠˘⁠)⁠┌**")
+        await interaction.response.send_message(f"**คุณต้องอยู่ในห้องเสียงก่อน ถึงจะเช็คชื่อได้ ┐⁠(⁠ ⁠˘⁠_⁠˘⁠)⁠┌**")
 
-
-################################################# Absent #################################################
-@client.tree.command(description="🔎 หาผู้ขาดการประชุม")
+@client.tree.command(name='absent', description="🔎 หาผู้ขาดการประชุม")
 @app_commands.describe(role="ใส่บทบาทที่ต้องการหาผู้ขาดการประชุม")
 async def absent(interaction: discord.Interaction, role: Optional[discord.Role]):
     try:
@@ -483,10 +402,11 @@ async def absent(interaction: discord.Interaction, role: Optional[discord.Role])
                         count += 1
                         data.append([count,member.display_name,role.name])
         if role == None:
-            await SendLog.send(self=SendLog(interaction))
+            await InfomationLog.sendlog(self=InfomationLog(interaction))
         else:
-            await SendLog.send(self=SendLog(interaction,role))
-        data.append([""])
+            await InfomationLog.sendlog(self=InfomationLog(interaction,role))
+        
+            data.append([""])
         data.append([f"Time: {interaction.created_at.astimezone(tz=pytz.timezone('Asia/Bangkok')).strftime('%H:%M:%S')}"])
         data.append([f"Executed by {interaction.user.display_name}"])
 
@@ -544,15 +464,65 @@ async def absent(interaction: discord.Interaction, role: Optional[discord.Role])
     except:
         await interaction.response.send_message(f"**ต้องอยู่ในห้องเสียงก่อน ถึงจะหาคนขาดได้ ಠ⁠_⁠ಠ**")
 
+@client.tree.command(name="youtube",description="🎬 ขอไฟล์จาก Youtube")
+@app_commands.describe(url="ใส่ URL ของคลิปใน Youtube")
+async def youtube_def(interaction: discord.Interaction, url: str):
+    await InfomationLog.sendlog(self=InfomationLog(interaction,url))
+    await interaction.response.send_message(f"<a:MagnifierGIF:1052563354910216252> **กำลังหา** `{url}`")
 
-################################################ Save Chat History ################################################
-@client.tree.command(description="🗞️ บันทึกประวัติการส่งข้อความ")
+    # เก็บข้อมูลดิบ
+    title = youtubedl_fn.yt_title(url)
+    ext = youtubedl_fn.yt_ext(url)
+    upload_date = youtubedl_fn.yt_upload_date(url)
+    channel, channel_id = youtubedl_fn.yt_channel(url)
+    duration = youtubedl_fn.yt_duration(url)
+    view_count = youtubedl_fn.yt_view_count(url)
+    try:
+        like_count = youtubedl_fn.yt_like_count(url)
+    except:
+        like_count = "Null"
+    dislike_count = youtubedl_fn.yt_dislike_count(url)
+    comment_count = youtubedl_fn.yt_comment_count(url)
+    filesize_approx = youtubedl_fn.yt_filesize_approx(url)
+
+    # ข้อมูลสำคัญ
+    videolink = youtubedl_fn.yt_video(url)
+    audiolink = youtubedl_fn.yt_audio(url)
+    thumbnail = youtubedl_fn.yt_thumbnail(url)
+
+    # ข้อมูลสุก
+    videolinknew = shorten_url.shortenmylink(videolink)
+    audiolinknew = shorten_url.shortenmylink(audiolink)
+    durationnew = sectobigger.sec(duration)
+    upload_datenew = sectobigger.datenumbeautiful(upload_date)
+
+    dl = discord.Embed(title = f"**{title}**", color = 0xff80c9)
+    dl.timestamp = interaction.created_at
+    dl.add_field(name="🔐 นามสกุลไฟล์", value=f"`{ext}`", inline=False)
+    dl.add_field(name="🥼 ช่อง", value=f"`{channel}` `({channel_id})`", inline=False)
+    dl.add_field(name="📆 วันที่อัพโหลด", value=f"`{upload_datenew}`", inline=False)
+    dl.add_field(name="🕒 ระยะเวลา", value=f"`{durationnew}`", inline=False)
+    dl.add_field(name="👀 จำนวนคนดู", value=f"`{view_count} คน`", inline=False)
+    dl.add_field(name="👍🏻 จำนวนคน Like", value=f"`{like_count} คน`", inline=False)
+    dl.add_field(name="👎🏻 จำนวนคน Dislike", value=f"`{dislike_count} คน`", inline=False)
+    dl.add_field(name="💬 จำนวน Comment", value=f"`{comment_count} คน`", inline=False)
+    dl.add_field(name="📦 ขนาดไฟล์", value=f"`{filesize_approx}`", inline=False)
+    dl.set_image(url=thumbnail)
+
+    url_view = discord.ui.View()
+    url_view.add_item(discord.ui.Button(label='Video',emoji="🎬" , style=discord.ButtonStyle.url, url=videolinknew))
+    url_view.add_item(discord.ui.Button(label='Audio',emoji="🔊" , style=discord.ButtonStyle.url, url=audiolinknew))
+
+    await interaction.edit_original_response(content="",embed=dl,view=url_view)
+
+@client.tree.command(name='getchat', description="🗞️ บันทึกประวัติการส่งข้อความ")
 async def getchat(interaction: discord.Interaction):
-    await SendLog.send(self=SendLog(interaction))
+    await InfomationLog.sendlog(self=InfomationLog(interaction))
     channel = interaction.channel
     start_time = time.time()
-    client.force_stop = False
-    client.overtime = False
+    guild = interaction.guild_id
+    client.force_stop[guild] = False
+    client.overtime[guild] = False
     channel_count = 0
     channel_total = len(interaction.guild.text_channels)
     await interaction.response.send_message(f"**<a:AppleLoadingGIF:1052465926487953428> 0% กำลังเริ่มต้น...ตรวจพบ {channel_total} ช่อง**")
@@ -564,7 +534,7 @@ async def getchat(interaction: discord.Interaction):
         stop_button = discord.ui.Button(label="หยุด",emoji="❎",style=discord.ButtonStyle.red)
         
         async def stop_callback(interaction):
-            client.force_stop = True
+            client.force_stop[guild] = True
 
         stop_button.callback = stop_callback
         view = discord.ui.View()
@@ -610,42 +580,37 @@ async def getchat(interaction: discord.Interaction):
                         else: # More than 14 Minutes
                             print(f"{percent_total}% ดึงข้อความเบื้องหลังจาก <#{channel.id}> ไปแล้ว {percent_channel}%")
                             await interaction.edit_original_response(content=f"**ℹ️ กำลังดึงข้อความในเบื้องหลัง...**",view=None)
-            
                     except: # If interaction is timeout
                         print("Interaction is timeout")
-                        client.overtime = True
-
+                        client.overtime[guild] = True
                 # WHILE WRITE
                     # f.write takes too much time for update progress in discord
                     # Means it will update every time a single line is written.
                 f.write(f"{message.content}\n") # Wrint line to file
-
+                
                 # AFTER WRITE
                 current_msg += 1
-
                 # CHECK IF USER CLICK STOP BUTTON
-                if client.force_stop == True :
+                if client.force_stop[guild] == True :
                     break
-            
             channel_count += 1 # After finish save message in channel
-            
-            if client.force_stop == True :
+            if client.force_stop[guild] == True :
                 break 
 
     # END LOOP CHANNEL
     end_time = time.time()
-    if client.overtime == False:
-        if client.force_stop == False :
+    if client.overtime[guild] == False:
+        if client.force_stop[guild] == False :
             await interaction.edit_original_response(content=f"**✅ ดึงข้อความเสร็จสิ้น `({filesize.getfoldersize(f'asset/chat')})` ใช้เวลา `{sectobigger.sec(round(end_time - start_time, 2))}`**",view=None)
-        elif client.force_stop == True:
+        elif client.force_stop[guild] == True:
             await interaction.edit_original_response(content=f"**🛑 การดึงข้อความถูกยกเลิก**",view=None)
-    elif client.overtime == True and client.force_stop == False:
+    elif client.overtime[guild] == True and client.force_stop[guild] == False:
         await channel.send(content=f"**✅ ดึงข้อความเสร็จสิ้น `({filesize.getfoldersize(f'asset/chat')})` ใช้เวลา `{sectobigger.sec(round(end_time - start_time, 2))}`**",view=None)
 
-
-################################################# AI #################################################
-@client.tree.command(description="🎒 รวมคำสั่งเกี่ยวกับการเทรน ตรวจสอบ และลบฐานข้อมูล")
+# AI Training Command
+@client.tree.command(name='train', description="🎒 รวมคำสั่งเกี่ยวกับการเทรน ตรวจสอบ และลบฐานข้อมูล")
 @app_commands.choices(mode=[
+    app_commands.Choice(name="🗣️ Use Reddit Comment Model (Large models take a lot of time to process!)",value="reddit"),
     app_commands.Choice(name="🌍 Train with English Corpus",value="english"),
     app_commands.Choice(name="🌾 Train with Thai Corpus",value="thai"),
     app_commands.Choice(name="🗞️ Train with Chat history",value="chat"),
@@ -657,7 +622,7 @@ async def getchat(interaction: discord.Interaction):
 
 @app_commands.describe(mode="เลือกโหมดที่ต้องการ")
 async def train(interaction: discord.Interaction, mode: discord.app_commands.Choice[str]):
-    await SendLog.send(self=SendLog(interaction,mode.name))
+    await InfomationLog.sendlog(self=InfomationLog(interaction,mode.name))
     await interaction.response.send_message(f"**<a:AppleLoadingGIF:1052465926487953428> กำลังทำงาน**")
     if mode.value == "english":
         ai_core.train_english() 
@@ -701,24 +666,40 @@ async def train(interaction: discord.Interaction, mode: discord.app_commands.Cho
         except:
             await interaction.edit_original_response(content=f"**❌ ไม่พบ AI database**")
 
-@client.tree.command(description="🧠 คุยกับบอท")
-@app_commands.describe(message="ข้อความ")
-async def ai(interaction: discord.Interaction, message: str):
-    await SendLog.send(self=SendLog(interaction,message))
-    if os.path.exists("db.sqlite3"):
-        await interaction.response.send_message(f"**<a:AppleLoadingGIF:1052465926487953428> กำลังส่งข้อความไปหาบอท**")
-        response = ai_core.get_response(message)
-        await interaction.edit_original_response(content=response)
+    elif mode.value == "reddit":
+        await interaction.edit_original_response(content=f"**<a:AppleLoadingGIF:1052465926487953428> กำลังดาวน์โหลด**")
+        gdrive_dl.download_file_from_google_drive("1HjTi21b9iFuWtpfI1TzN1lMyTZKkxTTz", "db.sqlite3")
+        await interaction.edit_original_response(content=f"**✅ ดาวน์โหลดเสร็จสิ้น `({filesize.getsize('db.sqlite3')})`**")
+
+
+@client.tree.command(name='ai', description="🧠 เปิด/ปิดการคุยกับบอท")
+async def ai(interaction: discord.Interaction):
+    await InfomationLog.sendlog(self=InfomationLog(interaction))
+    guild = interaction.guild_id
+    if guild not in client.talk_to_ai:
+        client.talk_to_ai[guild] = False
+        client.ai_active_channel[guild] = 0
+    
+    if client.talk_to_ai[guild] == True:
+        client.talk_to_ai[guild] = False
+        client.ai_active_channel[guild] = 0
+        await interaction.response.send_message("**❌ ปิดการใช้งาน AI แล้ว**")
     else:
-        await interaction.response.send_message(f"**❌ ยังไม่มี Database ลองใช้ `/train`**")
+        if os.path.exists("db.sqlite3"):
+            client.talk_to_ai[guild] = True
+            client.ai_active_channel[guild] = interaction.channel_id
+            await interaction.response.send_message(f"**✅ พร้อมคุยใน <#{interaction.channel_id}> แล้ว ถ้าต้องการปิดให้ใช้งานคำสั่งนี้อีกครั้ง**")
+        else:
+            await interaction.response.send_message(f"**❌ ยังไม่มี Database ลองใช้ `/train`**")
 
-
-################################################# Context Command #################################################
+    
+# Context Menu
 @client.tree.context_menu(name='Search by Image')
 async def searchbyimage(interaction: discord.Interaction, message: discord.Message):
     try:
-        await SendLog.context(self=SendLog(interaction,message))
-        filePath = f"temp/autosave/{client.last_image}"
+        await InfomationLog.sendlog(self=InfomationLog(interaction,message))
+        guild = interaction.guild
+        filePath = f"temp/autosave/{client.last_image[guild]}"
         searchUrl = 'https://yandex.com/images/search'
         files = {'upfile': ('blob', open(filePath, 'rb'), 'image/jpeg')}
         params = {'rpt': 'imageview', 'format': 'json', 'request': '{"blocks":[{"block":"b-page_type_search-by-image__link"}]}'}
@@ -727,7 +708,7 @@ async def searchbyimage(interaction: discord.Interaction, message: discord.Messa
         img_search_url= searchUrl + '?' + query_string
 
         search = discord.Embed(title = "**🔎 ค้นหาภาพคล้าย**", color = 0x5be259)
-        search.set_thumbnail(url=client.last_image_url)
+        search.set_thumbnail(url=client.last_image_url[guild])
         search.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
         search.timestamp = interaction.created_at
 
@@ -739,14 +720,15 @@ async def searchbyimage(interaction: discord.Interaction, message: discord.Messa
         await interaction.response.send_message("**❌ ไฟล์หมดอายุแล้ว**")
 
 
-################################################# Auto Save Attachment #################################################
+# Auto Command
 @client.event
 async def on_message(message):
+    guild = message.guild.id
     # Auto Save Attachments with name
-    extension = ""
-    url = ""
-
     try:
+        extension = ""
+        url = ""
+
         attachment_url = message.attachments[0]
         url = str(attachment_url.url)
         splitedbydot = url.split(".")
@@ -755,40 +737,46 @@ async def on_message(message):
         extension = splitedbydot[len(splitedbydot)-1]
 
         FileName = name+"."+extension
-        client.name_only = name
+        client.name_only[guild] = name
         r = requests.get(url, stream=True)
         with open(FileName, 'wb') as out_file:
             shutil.copyfileobj(r.raw, out_file)
         shutil.move(FileName, f"temp/autosave/{FileName}")
-        if client.IsAnnouncement == False:
-            await client.change_presence(activity=discord.Game(name=f"💾 {FileName}"))
         print('Saving : ' + FileName)
-
+        
         if extension == "png" or extension == "jpg" or extension == "jpeg" or extension == "webp":
-            client.last_image = FileName
-            client.last_image_url = url
-            print(f"Saved {FileName} to Last Image")
+            client.last_image[guild] = FileName
+            client.last_image_url[guild] = url
+            print(f"Saved {FileName} to Last Image ({guild})")
         elif extension == "mp4" or extension == "webm" or extension == "mkv" or extension == "avi" or extension == "mov" or extension == "flv" or extension == "wmv" or extension == "mpg" or extension == "mpeg":
-            client.last_video = FileName
-            client.last_video_url = url
-            print(f"Saved {FileName} to Last Video")
+            client.last_video[guild] = FileName
+            client.last_video_url[guild] = url
+            print(f"Saved {FileName} to Last Video ({guild})")
         elif extension == "mp3" or extension == "wav" or extension == "m4a" or extension == "flac" or extension == "ogg":
-            client.last_audio = FileName
-            client.last_audio_url = url
-            print(f"Saved {FileName} to Last Audio")
+            client.last_audio[guild] = FileName
+            client.last_audio_url[guild] = url
+            print(f"Saved {FileName} to Last Audio ({guild})")
         elif extension == "pdf":
-            client.last_pdf = FileName
-            client.last_pdf_url = url
-            print(f"Saved {FileName} to Last PDF")
-    
+            client.last_pdf[guild] = FileName
+            client.last_pdf_url[guild] = url
+            print(f"Saved {FileName} to Last PDF ({guild})")
     except:
-        print("No attachment")
+        pass
 
+    # Check if guild is in the talk_to_ai dictionary, and add it if not
+    if guild not in client.talk_to_ai:
+        client.talk_to_ai[guild] = False
+        client.ai_active_channel[guild] = 0
 
+    # Talk to AI
+    if client.talk_to_ai[guild] == True and message.author.id != client.user.id and message.channel.id == client.ai_active_channel[guild]:
+        response = ai_core.get_response(message.content)
+        #channel = message.channel
+        await message.channel.send(response)
+    
 @tasks.loop(seconds=30)
 async def host_status_change():
     # Check Heroku Status
-
     if client.IsAnnouncement == False:
         cpu = psutil.cpu_percent()
         ram = psutil.virtual_memory()[2]

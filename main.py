@@ -3,7 +3,7 @@ from discord import app_commands, ui
 from discord.ext import tasks
 import os
 import asyncio 
-from utils import countdown_fn, youtubedl_fn, sectobigger, shorten_url, imageprocess_fn, filesize, ai_core, gdrive_dl
+from utils import countdown_fn, youtubedl_fn, sectobigger, shorten_url, imageprocess_fn, filesize, chatgpt, speech_synthesis, tts_language_check
 import requests
 import shutil
 import json
@@ -35,6 +35,9 @@ class MyClient(discord.Client):
         self.overtime = {}
         self.talk_to_ai = {}
         self.ai_active_channel = {}
+        self.chat_history = {}
+        self.voice = {}
+        self.voice_language = {}
 
     async def on_ready(self):
         if not host_status_change.is_running():
@@ -51,9 +54,10 @@ class MyClient(discord.Client):
         await self.tree.sync()
 
 class InfomationLog():
-    def __init__(self, interaction, log_data=""):
+    def __init__(self, interaction="", log_data="", message=None):
         self.interaction = interaction
         self.log_data = log_data
+        self.message = message
 
     async def sendlog(self):
         channel = client.get_channel(1003719893260185750)
@@ -84,6 +88,26 @@ class InfomationLog():
         url_view.add_item(discord.ui.Button(label='Go to Message', style=discord.ButtonStyle.url, url=f"https://discord.com/channels/{self.interaction.guild_id}/{self.interaction.channel_id}/{self.interaction.id}"))
         await channel.send(embed=log,view=url_view)
         
+    async def openailog(self):
+        channel = client.get_channel(1003719893260185750)
+        log = discord.Embed(title=f"**ID : **`{self.message.id}`", color=0x11a37f)
+        log.set_author(name=self.message.author, icon_url=self.message.author.display_avatar.url)
+        log.timestamp = self.message.created_at
+        log.add_field(name="Prompt",value=f"`{self.log_data['prompt']}`")
+        log.add_field(name="Response",value=f"`{self.log_data['response']}`")
+        log.add_field(name="Total Tokens", value=f"`{self.log_data['total_tokens']}`")
+        log.add_field(name="Prompt Token", value=f"`{self.log_data['prompt_tokens']}`")
+        log.add_field(name="Completion Token", value=f"`{self.log_data['completion_tokens']}`")
+        log.add_field(name="Finish Reason", value=f"`{self.log_data['finish_reason']}`")
+        log.add_field(name="Create", value=f"`{self.log_data['created']}`")
+        log.add_field(name="id", value=f"`{self.log_data['id']}`")
+        log.add_field(name="Model", value=f"`{self.log_data['model']}`")
+        log.add_field(name="Object", value=f"`{self.log_data['object']}`")
+        log.add_field(name="Chat History", value=f"```{self.log_data['chat_history']}```")
+        url_view = discord.ui.View()
+        url_view.add_item(discord.ui.Button(label='Go to Message', style=discord.ButtonStyle.url, url=f"https://discord.com/channels/{self.message.guild.id}/{self.message.channel.id}/{self.message.id}"))
+        await channel.send(embed=log,view=url_view)
+
 intents = discord.Intents.all()
 intents.members = True
 client = MyClient(intents=intents)
@@ -109,7 +133,6 @@ async def help(interaction: discord.Interaction):
 
     ai = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🤖 Artificial Intelligence*", color=0x03dffc)
     ai.add_field(name="**🧠 เปิด/ปิดการคุยกับบอท**", value="`/ai`", inline=False)
-    ai.add_field(name="**🎒 รวมคำสั่งเกี่ยวกับการเทรน ตรวจสอบ และลบฐานข้อมูล**", value="`/train`", inline=False)
     ai.add_field(name="**🗞️ บันทึกประวัติการส่งข้อความ**", value="`/getchat`", inline=False)
 
     update = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *📌 ประวัติการอัพเดท*", color=0xdcfa80)
@@ -121,7 +144,8 @@ async def help(interaction: discord.Interaction):
     update.add_field(name="6️⃣ V 1.5 | 24/10/2022", value="• Add: Announcement(For Bot Admin Only)\n• Add: Attendance\n• Add: Absent\n• Add: Cancel\n• Hotfix: Spam Mentions")
     update.add_field(name="7️⃣ V 1.6 | 14/12/2022", value="• Add: AI\n• Change: Emoji and Decoration")
     update.add_field(name="8️⃣ V 1.7 | 22/02/2023", value="• Fix: The AI has pre-trained data and Chat without using the slash command.\n• Change: Fully open public bots. Cancel and Except is combined with the Countdis command and optimize some operations")
-    update.add_field(name="9️⃣ V 1.8 | TBA", value="• Add: Guild, User, Stats Information")
+    update.add_field(name="9️⃣ V 1.8 | 14/03/2023", value="• Add: AI that powered by GPT-3.5 Turbo from OpenAI\n• Add: I can speak English, Thai, and Japanese right now! or you can use custom language code as well. But still can't listen to you :(\n• Remove: ChatterBot training menu")
+    update.add_field(name="🔟 V ??? | TBA", value="• Add: Guild, User, Stats Information")
 
     select = discord.ui.Select(placeholder="ตัวเลือกเมนู",options=[
     discord.SelectOption(label="เครื่องมืออรรถประโยชน์",emoji="🔧",description="คำสั่งการใช้งานทั่วไป",value="util",default=False),
@@ -608,97 +632,74 @@ async def getchat(interaction: discord.Interaction):
     elif client.overtime[guild] == True and client.force_stop[guild] == False:
         await channel.send(content=f"**✅ ดึงข้อความเสร็จสิ้น `({filesize.getfoldersize(f'asset/chat')})` ใช้เวลา `{sectobigger.sec(round(end_time - start_time, 2))}`**",view=None)
 
-# AI Training Command
-@client.tree.command(name='train', description="🎒 รวมคำสั่งเกี่ยวกับการเทรน ตรวจสอบ และลบฐานข้อมูล")
-@app_commands.choices(mode=[
-    app_commands.Choice(name="🗣️ Use Reddit Comment Model (Large models take a lot of time to process!)",value="reddit"),
-    app_commands.Choice(name="🌍 Train with English Corpus",value="english"),
-    app_commands.Choice(name="🌾 Train with Thai Corpus",value="thai"),
-    app_commands.Choice(name="🗞️ Train with Chat history",value="chat"),
-    app_commands.Choice(name="📏 Check size of the chat in Database",value="checkchat"),
-    app_commands.Choice(name="📐 Check AI database size",value="checkdb"),
-    app_commands.Choice(name="🧹 Delete chat history in database",value="delchat"),
-    app_commands.Choice(name="❌ Delete AI database",value="deldb")
-    ])
 
-@app_commands.describe(mode="เลือกโหมดที่ต้องการ")
-async def train(interaction: discord.Interaction, mode: discord.app_commands.Choice[str]):
-    await InfomationLog.sendlog(self=InfomationLog(interaction,mode.name))
-    await interaction.response.send_message(f"**<a:AppleLoadingGIF:1052465926487953428> กำลังทำงาน**")
-    if mode.value == "english":
-        ai_core.train_english() 
-        await interaction.edit_original_response(content=f"**✅ เทรนบอทเสร็จสิ้น `({filesize.getsize('db.sqlite3')})`**")
-    
-    elif mode.value == "thai":
-        ai_core.train_thai()
-        await interaction.edit_original_response(content=f"**✅ เทรนบอทเสร็จสิ้น `({filesize.getsize('db.sqlite3')})`**")
-    
-    elif mode.value == "chat":
-        contents = os.listdir("asset/chat")
-        if contents:
-            ai_core.train_from_chat()
-            await interaction.edit_original_response(content=f"**✅ เทรนบอทเสร็จสิ้น `({filesize.getsize('db.sqlite3')})`**")
-        else:
-            await interaction.edit_original_response(content=f"**❌ ยังไม่พบการดึงข้อมูลแชท ลองใช้ `/getchat`**")
-    
-    elif mode.value == "checkchat":
-        try:
-            await interaction.edit_original_response(content=f"**📏 ขนาดข้อมูลแชทใน Database `{filesize.getfoldersize(f'asset/chat')}`**")
-        except:
-            await interaction.edit_original_response(content=f"**❌ ยังไม่พบการดึงข้อมูลแชท ลองใช้ `/getchat`**")
-
-    elif mode.value == "checkdb":
-        try:
-            await interaction.edit_original_response(content=f"**📐 ขนาดข้อมูล AI database `{filesize.getsize('db.sqlite3')}`**")
-        except:
-            await interaction.edit_original_response(content=f"**❌ ไม่พบ AI database ลองเทรนบอทก่อน**")
-
-    elif mode.value == "delchat":
-        try:
-            ai_core.delete_chat()
-            await interaction.edit_original_response(content=f"**✅ ลบข้อมูลแชทใน Database เสร็จสิ้น**")
-        except:
-            await interaction.edit_original_response(content=f"**❌ ไม่พบข้อมูลแชทใน Database**")
-
-    elif mode.value == "deldb":
-        try:
-            ai_core.delete_db()
-            await interaction.edit_original_response(content=f"**✅ ลบ Database เสร็จสิ้น**")
-        except:
-            await interaction.edit_original_response(content=f"**❌ ไม่พบ AI database**")
-
-    elif mode.value == "reddit":
-        await interaction.edit_original_response(content=f"**<a:AppleLoadingGIF:1052465926487953428> กำลังดาวน์โหลด**")
-        gdrive_dl.download_file_from_google_drive("1HjTi21b9iFuWtpfI1TzN1lMyTZKkxTTz", "db.sqlite3")
-        await interaction.edit_original_response(content=f"**✅ ดาวน์โหลดเสร็จสิ้น `({filesize.getsize('db.sqlite3')})`**")
-
-
+# AI COMMAND
 @client.tree.command(name='ai', description="🧠 เปิด/ปิดการคุยกับบอท")
-async def ai(interaction: discord.Interaction):
-    await InfomationLog.sendlog(self=InfomationLog(interaction))
+@app_commands.choices(mode=[
+    app_commands.Choice(name="Speak (Voice chat is not yet supported)",value="speak"),
+    app_commands.Choice(name="Chat",value="chat"),
+    app_commands.Choice(name="Turn Off ❌",value="off"),])
+
+@app_commands.describe(mode="เลือกโหมดที่ต้องการ", language="เลือกภาษาที่ต้องการให้พูด (Only neural voices is supported)")
+async def ai(interaction: discord.Interaction, mode: discord.app_commands.Choice[str], language: Optional[str]):
+    await InfomationLog.sendlog(self=InfomationLog(interaction, mode.name)) # ขี้เกียจเก็บภาษา
     guild = interaction.guild_id
     if guild not in client.talk_to_ai:
-        client.talk_to_ai[guild] = False
+        client.talk_to_ai[guild] = 0
         client.ai_active_channel[guild] = 0
     
-    if client.talk_to_ai[guild] == True:
-        client.talk_to_ai[guild] = False
+    if mode.value == 'chat':
+        if client.talk_to_ai[guild] != 1:
+            client.talk_to_ai[guild] = 1
+            client.ai_active_channel[guild] = interaction.channel_id
+            client.chat_history[guild] = "" # Clear chat history
+            await interaction.response.send_message(f"**✅ พร้อมคุยใน <#{interaction.channel_id}> แล้ว**")
+        elif client.talk_to_ai[guild] == 1:
+            await interaction.response.send_message(f"**ℹ️ บอทกำลังคุยอยู่ใน <#{client.ai_active_channel[guild]}>**")
+
+    elif mode.value == 'speak':
+        if client.talk_to_ai[guild] != 2:
+            try:
+                voice_channel = interaction.user.voice.channel
+                voice = discord.utils.get(client.voice_clients, guild=interaction.guild)
+                client.talk_to_ai[guild] = 2
+                client.ai_active_channel[guild] = interaction.channel_id
+                if language != None and tts_language_check.check(language):
+                    client.voice_language[guild] = language
+                    await interaction.response.send_message(f"**✅ พร้อมพูดใน <#{voice_channel.id}> ด้วยเสียง `{language}` แล้ว**")
+                else:
+                    await interaction.response.send_message(f"**✅ พร้อมพูดใน <#{voice_channel.id}> แล้ว**")
+
+                client.chat_history[guild] = "" # Clear chat history
+                
+                if voice and voice.is_connected():
+                    await voice.move_to(voice_channel)
+                else:
+                    voice = await voice_channel.connect()
+                client.voice[guild] = voice
+            
+            except:
+                await interaction.response.send_message("**จะให้พูดกับใคร U_U**")
+                return
+        elif client.talk_to_ai[guild] == 2:
+            voice_channel = interaction.user.voice.channel
+            await interaction.response.send_message(f"**ℹ️ บอทกำลังคุยอยู่ใน <#{voice_channel.id}>**")
+
+    elif mode.value == 'off':
+        if client.talk_to_ai[guild] == 2:
+            voice_client = interaction.guild.voice_client
+            await voice_client.disconnect()
+        client.talk_to_ai[guild] = 0
         client.ai_active_channel[guild] = 0
         await interaction.response.send_message("**❌ ปิดการใช้งาน AI แล้ว**")
-    else:
-        if os.path.exists("db.sqlite3"):
-            client.talk_to_ai[guild] = True
-            client.ai_active_channel[guild] = interaction.channel_id
-            await interaction.response.send_message(f"**✅ พร้อมคุยใน <#{interaction.channel_id}> แล้ว ถ้าต้องการปิดให้ใช้งานคำสั่งนี้อีกครั้ง**")
-        else:
-            await interaction.response.send_message(f"**❌ ยังไม่มี Database ลองใช้ `/train`**")
 
-    
+
 # Context Menu
 @client.tree.context_menu(name='Search by Image')
 async def searchbyimage(interaction: discord.Interaction, message: discord.Message):
+    # Only for last image (Fix later)
     try:
-        await InfomationLog.sendlog(self=InfomationLog(interaction,message))
+        await InfomationLog.contextlog(self=InfomationLog(interaction,message))
         guild = interaction.guild
         filePath = f"temp/autosave/{client.last_image[guild]}"
         searchUrl = 'https://yandex.com/images/search'
@@ -766,14 +767,27 @@ async def on_message(message):
 
     # Check if guild is in the talk_to_ai dictionary, and add it if not
     if guild not in client.talk_to_ai:
-        client.talk_to_ai[guild] = False
+        client.talk_to_ai[guild] = 0
         client.ai_active_channel[guild] = 0
+        client.chat_history[guild] = ""
+        client.voice[guild] = ""
+        client.voice_language[guild] = ""
 
     # Talk to AI
-    if client.talk_to_ai[guild] == True and message.author.id != client.user.id and message.channel.id == client.ai_active_channel[guild]:
-        response = ai_core.get_response(message.content)
-        #channel = message.channel
-        await message.channel.send(response)
+    if message.author.id != client.user.id and message.channel.id == client.ai_active_channel[guild]:
+        if client.talk_to_ai[guild] == 1: # Chat
+            async with message.channel.typing():
+                response, client.chat_history[guild], log = chatgpt.generate_response(message.content, client.chat_history[guild])
+                await InfomationLog.openailog(self=InfomationLog(None, log, message))
+                await message.channel.send(response)
+        elif client.talk_to_ai[guild] == 2: # Speak
+            voice = client.voice[guild]
+            response, client.chat_history[guild],log = chatgpt.generate_response(message.content, client.chat_history[guild])
+            await InfomationLog.openailog(self=InfomationLog(None, log, message))
+            print("client.voice_language[guild]:", client.voice_language[guild])
+            speech_synthesis.tts(response, client.voice_language[guild])
+            voice.play(discord.FFmpegPCMAudio("temp/output.wav", executable="ffmpeg.exe"))
+
     
 @tasks.loop(seconds=30)
 async def host_status_change():
@@ -782,7 +796,7 @@ async def host_status_change():
         cpu = psutil.cpu_percent()
         ram = psutil.virtual_memory()[2]
         await client.change_presence(activity=discord.Game(name=f"CPU {cpu}% RAM {ram}%"))
-    
+
 
 @tasks.loop(minutes=10)
 async def autodelete():

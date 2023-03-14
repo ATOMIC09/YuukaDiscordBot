@@ -698,28 +698,28 @@ async def ai(interaction: discord.Interaction, mode: discord.app_commands.Choice
 @client.tree.context_menu(name='Search by Image')
 async def searchbyimage(interaction: discord.Interaction, message: discord.Message):
     # Only for last image (Fix later)
-    try:
-        await InfomationLog.contextlog(self=InfomationLog(interaction,message))
-        guild = interaction.guild
-        filePath = f"temp/autosave/{client.last_image[guild]}"
-        searchUrl = 'https://yandex.com/images/search'
-        files = {'upfile': ('blob', open(filePath, 'rb'), 'image/jpeg')}
-        params = {'rpt': 'imageview', 'format': 'json', 'request': '{"blocks":[{"block":"b-page_type_search-by-image__link"}]}'}
-        response = requests.post(searchUrl, params=params, files=files)
-        query_string = json.loads(response.content)['blocks'][0]['params']['url']
-        img_search_url= searchUrl + '?' + query_string
+    #try:
+    await InfomationLog.contextlog(self=InfomationLog(interaction,message))
+    guild = interaction.guild.id
+    filePath = f"temp/autosave/{client.last_image[guild]}"
+    searchUrl = 'https://yandex.com/images/search'
+    files = {'upfile': ('blob', open(filePath, 'rb'), 'image/jpeg')}
+    params = {'rpt': 'imageview', 'format': 'json', 'request': '{"blocks":[{"block":"b-page_type_search-by-image__link"}]}'}
+    response = requests.post(searchUrl, params=params, files=files)
+    query_string = json.loads(response.content)['blocks'][0]['params']['url']
+    img_search_url= searchUrl + '?' + query_string
 
-        search = discord.Embed(title = "**🔎 ค้นหาภาพคล้าย**", color = 0x5be259)
-        search.set_thumbnail(url=client.last_image_url[guild])
-        search.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
-        search.timestamp = interaction.created_at
+    search = discord.Embed(title = "**🔎 ค้นหาภาพคล้าย**", color = 0x5be259)
+    search.set_thumbnail(url=client.last_image_url[guild])
+    search.set_author(name=interaction.user.display_name, icon_url=interaction.user.display_avatar.url)
+    search.timestamp = interaction.created_at
 
-        url_view = discord.ui.View()
-        url_view.add_item(discord.ui.Button(label='ผลการค้นหา',emoji="🔎",style=discord.ButtonStyle.url, url=img_search_url))
+    url_view = discord.ui.View()
+    url_view.add_item(discord.ui.Button(label='ผลการค้นหา',emoji="🔎",style=discord.ButtonStyle.url, url=img_search_url))
 
-        await interaction.response.send_message(embed=search, view=url_view)
-    except:
-        await interaction.response.send_message("**❌ ไฟล์หมดอายุแล้ว**")
+    await interaction.response.send_message(embed=search, view=url_view)
+    #except:
+    #    await interaction.response.send_message("**❌ ไฟล์หมดอายุแล้ว**")
 
 
 # Auto Command
@@ -786,7 +786,7 @@ async def on_message(message):
             await InfomationLog.openailog(self=InfomationLog(None, log, message))
             print("client.voice_language[guild]:", client.voice_language[guild])
             speech_synthesis.tts(response, client.voice_language[guild])
-            voice.play(discord.FFmpegPCMAudio("temp/output.wav", executable="ffmpeg.exe"))
+            voice.play(discord.FFmpegPCMAudio("temp/output.wav"))
 
     
 @tasks.loop(seconds=30)

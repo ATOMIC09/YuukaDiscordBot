@@ -647,6 +647,15 @@ async def ai(interaction: discord.Interaction, mode: discord.app_commands.Choice
         client.ai_active_channel[guild] = 0
     
     if mode.value == 'chat':
+        # Disconnect voice
+        if client.talk_to_ai[guild] == 2:
+            voice_client = interaction.guild.voice_client
+            try:
+                await voice_client.disconnect()
+            except:
+                print("Error to disconnect voice")
+
+        # Start chat
         if client.talk_to_ai[guild] != 1:
             client.talk_to_ai[guild] = 1
             client.ai_active_channel[guild] = interaction.channel_id

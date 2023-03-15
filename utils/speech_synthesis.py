@@ -2,7 +2,7 @@ import os
 import azure.cognitiveservices.speech as speechsdk
 from langdetect import detect
 
-def tts(text, language_voice_code=""):
+def tts(text, language_voice_code="", active_channel=0):
     # This example requires environment variables named "SPEECH_KEY" and "SPEECH_REGION"
     speech_config = speechsdk.SpeechConfig(subscription=os.environ.get('SPEECH_KEY'), region=os.environ.get('SPEECH_REGION'))
     language = ""
@@ -20,7 +20,7 @@ def tts(text, language_voice_code=""):
 
 
     # Set output file name
-    output_file = "temp/output.wav"
+    output_file = f"temp/{active_channel}_output.wav"
     audio_config = speechsdk.audio.AudioOutputConfig(filename=output_file)
     speech_synthesizer = speechsdk.SpeechSynthesizer(speech_config=speech_config, audio_config=audio_config)
     speech_synthesis_result = speech_synthesizer.speak_text_async(text).get()
@@ -35,6 +35,7 @@ def tts(text, language_voice_code=""):
             if cancellation_details.error_details:
                 print("Error details: {}".format(cancellation_details.error_details))
                 print("Did you set the speech resource key and region values?")
+                
 
 if __name__ == "__main__":
     tts("こんにちは",language_voice_code="") # Hello

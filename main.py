@@ -785,9 +785,8 @@ async def on_message(message):
             voice = client.voice[guild]
             response, client.chat_history[guild],log = chatgpt.generate_response(message.content, client.chat_history[guild])
             await InfomationLog.openailog(self=InfomationLog(None, log, message))
-            print("client.voice_language[guild]:", client.voice_language[guild])
-            speech_synthesis.tts(response, client.voice_language[guild])
-            voice.play(discord.FFmpegPCMAudio("temp/output.wav"))
+            speech_synthesis.tts(response, client.voice_language[guild], client.ai_active_channel[guild])
+            voice.play(discord.FFmpegPCMAudio(f"temp/{client.ai_active_channel[guild]}_output.wav"))
 
     
 @tasks.loop(seconds=30)

@@ -44,13 +44,12 @@ class MyClient(discord.Client):
             host_status_change.start()
         if not autodelete.is_running():
             autodelete.start()
-        await self.tree.sync()
         await self.setup_hook()
         print(f'Logged in as {self.user} (ID: {self.user.id})')
         print('------------------------------------------------')
 
     async def setup_hook(self):
-        MY_GUILD = discord.Object(id=720687175611580426)  
+        #MY_GUILD = discord.Object(id=720687175611580426)  
         await self.tree.sync()
 
 class InfomationLog():
@@ -121,7 +120,6 @@ async def help(interaction: discord.Interaction):
     # Embed
     util = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🔧 เครื่องมืออรรถประโยชน์*", color=0x40eefd)
     util.add_field(name="**🔌 นับถอยหลังและตัดการเชื่อมต่อ**", value="`/countdis`", inline=False)
-    util.add_field(name="**⛔ ยกเว้นคำสั่ง Countdis**", value="`/except`", inline=False)
     util.add_field(name="**📨 ส่งข้อความหลังไมค์ไปหาผู้สร้าง**", value="`/feedback`", inline=False)
     util.add_field(name="**🎬 ขอไฟล์จาก Youtube**", value="`/youtube`", inline=False)
     util.add_field(name="**📨 ส่งข้อความ**", value="`/send`", inline=False)
@@ -155,13 +153,13 @@ async def help(interaction: discord.Interaction):
 
     async def my_callback(interaction):
         if select.values[0] == "util":
-            await interaction.response.edit_message(embed=util)
+            await interaction.response.edit_message(embed=util, view=view)
 
         elif select.values[0] == "update":
-            await interaction.response.edit_message(embed=update)
+            await interaction.response.edit_message(embed=update, view=view)
 
         elif select.values[0] == "ai":
-            await interaction.response.edit_message(embed=ai)
+            await interaction.response.edit_message(embed=ai, view=view)
 
     select.callback = my_callback
     view = discord.ui.View()
@@ -688,7 +686,10 @@ async def ai(interaction: discord.Interaction, mode: discord.app_commands.Choice
     elif mode.value == 'off':
         if client.talk_to_ai[guild] == 2:
             voice_client = interaction.guild.voice_client
-            await voice_client.disconnect()
+            try:
+                await voice_client.disconnect()
+            except:
+                print("Error to disconnect voice")
         client.talk_to_ai[guild] = 0
         client.ai_active_channel[guild] = 0
         await interaction.response.send_message("**❌ ปิดการใช้งาน AI แล้ว**")

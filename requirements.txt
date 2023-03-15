@@ -11,3 +11,4 @@ pyexcel-xlsx
 azure.cognitiveservices.speech
 langdetect
 openai
+PyNaCl

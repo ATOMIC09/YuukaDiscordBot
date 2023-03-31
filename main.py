@@ -781,7 +781,7 @@ async def on_message(message):
         client.talk_to_ai[guild] = 0
         client.ai_active_channel[guild] = 0
         client.chat_history[guild] = "Yuuka: Hayase Yuuka (from Blue Archive) is a 16-year-old mathematical genius and treasurer at the Millennium Science School. She has a calm and professional demeanor, but can be strict with money. In combat, she is a Tank/Front with an Explosive damage type and Heavy armor. Her appearance includes navy blue hair tied in pigtails, bright blue eyes, and a standard uniform with black guns. (Doing human-like as well and don't ever mention about AI or language model. And you will talk to many people with different name because you are in a group chat. And username is in front of the sentence.)"
-        client.voice[guild] = ""
+        client.voice[guild] = None
         client.voice_language[guild] = ""
 
     # Talk to AI
@@ -799,7 +799,7 @@ async def on_message(message):
             voice.play(discord.FFmpegPCMAudio(f"temp/{client.ai_active_channel[guild]}_output.wav"))
 
 @client.event
-async def on_error(error):
+async def on_error(interaction, error):
     channel = client.get_channel(1003719893260185750)
     error_log = discord.Embed(title=f"**Error**", color=0xff0000)
     error_log.add_field(name="ข้อผิดพลาด",value=f"```{error}```")

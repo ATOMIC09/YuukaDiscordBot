@@ -539,7 +539,7 @@ async def youtube_def(interaction: discord.Interaction, url: str):
 
     await interaction.edit_original_response(content="",embed=dl,view=url_view)
 
-@client.tree.command(name='getchat', description="🗞️ บันทึกประวัติการส่งข้อความ")
+@client.tree.command(name='getchat', description="🗞️ บันทึกประวัติการส่งข้อความ (Not functional)")
 async def getchat(interaction: discord.Interaction):
     await InfomationLog.sendlog(self=InfomationLog(interaction))
     channel = interaction.channel
@@ -732,9 +732,6 @@ async def searchbyimage(interaction: discord.Interaction, message: discord.Messa
     #except:
     #    await interaction.response.send_message("**❌ ไฟล์หมดอายุแล้ว**")
 
-@client.tree.command(name="testerror")
-async def testerror(interaction: discord.Interaction):
-    raise Exception("Test Error")
 
 # Auto Command
 @client.event

@@ -805,7 +805,7 @@ async def on_error(interaction, error):
     error_log.add_field(name="ข้อผิดพลาด",value=f"```{error}```")
     await channel.send(embed=error_log)
     raise error
-    # Why it doesn't work?
+    # Why it does work?
     
 @tasks.loop(seconds=30)
 async def host_status_change():

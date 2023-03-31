@@ -1,3 +1,4 @@
+# Rebuild in v2.0
 import discord
 from discord import app_commands, ui
 from discord.ext import tasks
@@ -487,7 +488,7 @@ async def absent(interaction: discord.Interaction, role: Optional[discord.Role])
     except:
         await interaction.response.send_message(f"**ต้องอยู่ในห้องเสียงก่อน ถึงจะหาคนขาดได้ ಠ⁠_⁠ಠ**")
 
-@client.tree.command(name="youtube",description="🎬 ขอไฟล์จาก Youtube")
+@client.tree.command(name="youtube",description="🎬 ขอไฟล์จาก Youtube (Not functional)")
 @app_commands.describe(url="ใส่ URL ของคลิปใน Youtube")
 async def youtube_def(interaction: discord.Interaction, url: str):
     await InfomationLog.sendlog(self=InfomationLog(interaction,url))
@@ -659,7 +660,7 @@ async def ai(interaction: discord.Interaction, mode: discord.app_commands.Choice
         if client.talk_to_ai[guild] != 1:
             client.talk_to_ai[guild] = 1
             client.ai_active_channel[guild] = interaction.channel_id
-            client.chat_history[guild] = "" # Clear chat history
+            client.chat_history[guild] = "Yuuka: Hayase Yuuka (from Blue Archive) is a 16-year-old mathematical genius and treasurer at the Millennium Science School. She has a calm and professional demeanor, but can be strict with money. In combat, she is a Tank/Front with an Explosive damage type and Heavy armor. Her appearance includes navy blue hair tied in pigtails, bright blue eyes, and a standard uniform with black guns. (Doing human-like as well and don't ever mention about AI or language model. And you will talk to many people with different name because you are in a group chat. And username is in front of the sentence.)" # Clear chat history
             await interaction.response.send_message(f"**✅ พร้อมคุยใน <#{interaction.channel_id}> แล้ว**")
         elif client.talk_to_ai[guild] == 1:
             await interaction.response.send_message(f"**ℹ️ บอทกำลังคุยอยู่ใน <#{client.ai_active_channel[guild]}>**")
@@ -677,7 +678,7 @@ async def ai(interaction: discord.Interaction, mode: discord.app_commands.Choice
                 else:
                     await interaction.response.send_message(f"**✅ พร้อมพูดใน <#{voice_channel.id}> แล้ว**")
 
-                client.chat_history[guild] = "" # Clear chat history
+                client.chat_history[guild] = "Yuuka: Hayase Yuuka (from Blue Archive) is a 16-year-old mathematical genius and treasurer at the Millennium Science School. She has a calm and professional demeanor, but can be strict with money. In combat, she is a Tank/Front with an Explosive damage type and Heavy armor. Her appearance includes navy blue hair tied in pigtails, bright blue eyes, and a standard uniform with black guns. (Doing human-like as well and don't ever mention about AI or language model. And you will talk to many people with different name because you are in a group chat. And username is in front of the sentence.)" # Clear chat history
                 
                 if voice and voice.is_connected():
                     await voice.move_to(voice_channel)
@@ -731,6 +732,9 @@ async def searchbyimage(interaction: discord.Interaction, message: discord.Messa
     #except:
     #    await interaction.response.send_message("**❌ ไฟล์หมดอายุแล้ว**")
 
+@client.tree.command(name="testerror")
+async def testerror(interaction: discord.Interaction):
+    raise Exception("Test Error")
 
 # Auto Command
 @client.event
@@ -779,7 +783,7 @@ async def on_message(message):
     if guild not in client.talk_to_ai:
         client.talk_to_ai[guild] = 0
         client.ai_active_channel[guild] = 0
-        client.chat_history[guild] = ""
+        client.chat_history[guild] = "Yuuka: Hayase Yuuka (from Blue Archive) is a 16-year-old mathematical genius and treasurer at the Millennium Science School. She has a calm and professional demeanor, but can be strict with money. In combat, she is a Tank/Front with an Explosive damage type and Heavy armor. Her appearance includes navy blue hair tied in pigtails, bright blue eyes, and a standard uniform with black guns. (Doing human-like as well and don't ever mention about AI or language model. And you will talk to many people with different name because you are in a group chat. And username is in front of the sentence.)"
         client.voice[guild] = ""
         client.voice_language[guild] = ""
 
@@ -787,16 +791,24 @@ async def on_message(message):
     if message.author.id != client.user.id and message.channel.id == client.ai_active_channel[guild]:
         if client.talk_to_ai[guild] == 1: # Chat
             async with message.channel.typing():
-                response, client.chat_history[guild], log = chatgpt.generate_response(message.content, client.chat_history[guild])
+                response, client.chat_history[guild], log = chatgpt.generate_response(message.content, client.chat_history[guild], message.author.display_name)
                 await InfomationLog.openailog(self=InfomationLog(None, log, message))
-                await message.channel.send(response)
+                await message.channel.send(response.replace("Yuuka: ", ""))
         elif client.talk_to_ai[guild] == 2: # Speak
             voice = client.voice[guild]
-            response, client.chat_history[guild],log = chatgpt.generate_response(message.content, client.chat_history[guild])
+            response, client.chat_history[guild],log = chatgpt.generate_response(message.content, client.chat_history[guild], message.author.display_name)
             await InfomationLog.openailog(self=InfomationLog(None, log, message))
-            speech_synthesis.tts(response, client.voice_language[guild], client.ai_active_channel[guild])
+            speech_synthesis.tts(response.replace("Yuuka: ", ""), client.voice_language[guild], client.ai_active_channel[guild])
             voice.play(discord.FFmpegPCMAudio(f"temp/{client.ai_active_channel[guild]}_output.wav"))
 
+@client.event
+async def on_error(error):
+    channel = client.get_channel(1003719893260185750)
+    error_log = discord.Embed(title=f"**Error**", color=0xff0000)
+    error_log.add_field(name="ข้อผิดพลาด",value=f"```{error}```")
+    await channel.send(embed=error_log)
+    raise error
+    # Why it doesn't work?
     
 @tasks.loop(seconds=30)
 async def host_status_change():

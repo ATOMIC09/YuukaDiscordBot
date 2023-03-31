@@ -4,14 +4,15 @@ import os
 openai.api_key = os.getenv("OPENAI_API_KEY")
 model_engine = "gpt-3.5-turbo"
 
-def generate_response(prompt, chat_history = ""):
-    prompt_with_history = {"role": "assistant", "content": chat_history+"\n"+prompt}
+def generate_response(prompt, chat_history = "", name = "User"):
+    username = name+": "
+    prompt_with_history = {"role": "assistant", "content": chat_history+"\n"+username+prompt+"\n"}
     response = openai.ChatCompletion.create(
         model=model_engine,
         messages=[prompt_with_history],
     )
     generated_text = response['choices'][0]['message']['content'].replace("\n\n", "")
-    chat_history += f"{prompt}\n{generated_text}"
+    chat_history += f"\n{username}{prompt}\n{generated_text}"
     finish_reason = response['choices'][0]['finish_reason']
     created = response['created']
     id = response['id']
@@ -30,13 +31,17 @@ def generate_response(prompt, chat_history = ""):
            'id': id, 
            'model': model, 
            'object': object, 
-           'chat_history': chat_history, 
+           'chat_history': chat_history.split("\n")[-2:][0]+"\n"+chat_history.split("\n")[-2:][1], 
            }
 
-    print(f"chat_history :\n {chat_history}")
+    print(f"chat_history :\n{chat_history}")
     return generated_text, chat_history, log
 
 if __name__ == "__main__":
-    prompt = "Hello"
-    chat_history = ""
-    generate_response(prompt, chat_history)
+    yuuka_info = "Hayase Yuuka (from Blue Archive) is a 16-year-old mathematical genius and treasurer at the Millennium Science School. She has a calm and professional demeanor, but can be strict with money. Her appearance includes navy blue hair tied in pigtails, bright blue eyes, and a standard uniform with black guns. (Doing human-like as well and don't ever mention about AI or language model.)"
+    chat_history = f"Yuuka: {yuuka_info}"
+    while True:
+        user = input("You: ")
+        prompt = f"User: {user}"
+        response, chat_history = generate_response(prompt, chat_history)
+        #print(f"{response}")

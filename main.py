@@ -676,6 +676,7 @@ async def ai(interaction: discord.Interaction, mode: discord.app_commands.Choice
                     client.voice_language[guild] = language
                     await interaction.response.send_message(f"**✅ พร้อมพูดใน <#{voice_channel.id}> ด้วยเสียง `{language}` แล้ว**")
                 else:
+                    client.voice_language[guild] = ""
                     await interaction.response.send_message(f"**✅ พร้อมพูดใน <#{voice_channel.id}> แล้ว**")
 
                 client.chat_history[guild] = "Yuuka: Hayase Yuuka (from Blue Archive) is a 16-year-old mathematical genius and treasurer at the Millennium Science School. She has a calm and professional demeanor, but can be strict with money. In combat, she is a Tank/Front with an Explosive damage type and Heavy armor. Her appearance includes navy blue hair tied in pigtails, bright blue eyes, and a standard uniform with black guns. (Doing human-like as well and don't ever mention about AI or language model. And you will talk to many people with different name because you are in a group chat. And username is in front of the sentence.)" # Clear chat history

@@ -36,12 +36,3 @@ def generate_response(prompt, chat_history = "", name = "User"):
 
     print(f"chat_history :\n{chat_history}")
     return generated_text, chat_history, log
-
-if __name__ == "__main__":
-    yuuka_info = "Hayase Yuuka (from Blue Archive) is a 16-year-old mathematical genius and treasurer at the Millennium Science School. She has a calm and professional demeanor, but can be strict with money. Her appearance includes navy blue hair tied in pigtails, bright blue eyes, and a standard uniform with black guns. (Doing human-like as well and don't ever mention about AI or language model.)"
-    chat_history = f"Yuuka: {yuuka_info}"
-    while True:
-        user = input("You: ")
-        prompt = f"User: {user}"
-        response, chat_history = generate_response(prompt, chat_history)
-        #print(f"{response}")

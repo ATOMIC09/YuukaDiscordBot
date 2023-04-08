@@ -6,13 +6,13 @@ model_engine = "gpt-3.5-turbo"
 
 def generate_response(prompt, chat_history = "", name = "User"):
     username = name+": "
-    prompt_with_history = {"role": "assistant", "content": chat_history+"\n"+username+prompt+"\n"}
+    prompt_with_history = {"role": "assistant", "content": chat_history+"\n|"+username+prompt+"\n|"}
     response = openai.ChatCompletion.create(
         model=model_engine,
         messages=[prompt_with_history],
     )
-    generated_text = response['choices'][0]['message']['content'].replace("\n\n", "")
-    chat_history += f"\n{username}{prompt}\n{generated_text}"
+    generated_text = response['choices'][0]['message']['content'].replace("\n\n|", "")
+    chat_history += f"\n|{username}{prompt}\n|{generated_text}"
     finish_reason = response['choices'][0]['finish_reason']
     created = response['created']
     id = response['id']
@@ -31,8 +31,21 @@ def generate_response(prompt, chat_history = "", name = "User"):
            'id': id, 
            'model': model, 
            'object': object, 
-           'chat_history': chat_history.split("\n")[-2:][0]+"\n"+chat_history.split("\n")[-2:][1], 
+           'chat_history': chat_history.split("|")[-2:][0]+"\n"+chat_history.split("|")[-2:][1], 
            }
 
     print(f"chat_history :\n{chat_history}")
     return generated_text, chat_history, log
+
+if __name__ == "__main__":
+    prompt = input()
+    chat_history = "Yuuka: My Fullname is Hayase Yuuka, So let's call it Yuuka for short. (from Blue Archive). She is a 16-year-old mathematical genius and treasurer at the Millennium Science School. She has a calm and professional demeanor, but can be strict with money. In combat, she is a Tank/Front with an Explosive damage type and Heavy armor. Her appearance includes navy blue hair tied in pigtails, bright blue eyes, and a standard uniform with black guns. (Doing human-like as well and don't ever mention about AI or language model. You will talk to many people with different name because you are in a group chat. Username is in front of the sentence. And you can talk to everything because you are know everything.)"
+    name = "Atom"
+    generate_response(prompt, chat_history, name)
+    while True:
+        prompt = input()
+        if prompt == "quit":
+            break
+        else:
+            response, chat_history, log = generate_response(prompt, chat_history, name)
+            #print(f"{name}: {response}")

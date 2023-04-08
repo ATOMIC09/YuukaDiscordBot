@@ -110,9 +110,10 @@ class InfomationLog():
 
 intents = discord.Intents.all()
 intents.members = True
+intents.presences = True
 client = MyClient(intents=intents)
 client.IsAnnouncement = False
-client.first_yuuka_prompt = "Yuuka: My Fullname is Hayase Yuuka, So let's call it Yuuka for short. (from Blue Archive). She is a 16-year-old mathematical genius and treasurer at the Millennium Science School. She has a calm and professional demeanor, but can be strict with money. In combat, she is a Tank/Front with an Explosive damage type and Heavy armor. Her appearance includes navy blue hair tied in pigtails, bright blue eyes, and a standard uniform with black guns. (Doing human-like as well and don't ever mention about AI or language model. You will talk to many people with different name because you are in a group chat. Username is in front of the sentence. And you can talk to everything because you are know everything.)"
+client.first_yuuka_prompt = "|Yuuka: She is Hayase Yuuka, So let's call it Yuuka for short. (from Blue Archive). She is a 16-year-old mathematical genius and treasurer at the Millennium Science School. She has a calm and professional demeanor, but can be strict with money. Her appearance includes navy blue hair tied in pigtails, bright blue eyes, and a standard uniform with black guns. (Doing human-like as well and don't ever mention about AI or language model. She will talk to many people with different name because she is in a group chat. Username is in front of the sentence. And she can talk to everything because she is know everything.)"
 
 @client.tree.command(name='help', description='❔ ความช่วยเหลือ')
 async def help(interaction: discord.Interaction):
@@ -129,6 +130,7 @@ async def help(interaction: discord.Interaction):
     util.add_field(name="**📢 สแปมคนไม่มา**", value="`/spam`", inline=False) 
     util.add_field(name="**📝 เช็คชื่อในช่องเสียง**", value="`/attendance`", inline=False)
     util.add_field(name="**🔎 เช็คคนขาดประชุม**", value="`/absent`", inline=False)
+    util.add_field(name="**👤 ดูข้อมูลของผู้ใช้**", value="`/user`", inline=False)
 
     ai = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🤖 Artificial Intelligence*", color=0x03dffc)
     ai.add_field(name="**🧠 เปิด/ปิดการคุยกับบอท**", value="`/ai`", inline=False)
@@ -143,8 +145,8 @@ async def help(interaction: discord.Interaction):
     update.add_field(name="6️⃣ V 1.5 | 24/10/2022", value="• Add: Announcement(For Bot Admin Only)\n• Add: Attendance\n• Add: Absent\n• Add: Cancel\n• Hotfix: Spam Mentions")
     update.add_field(name="7️⃣ V 1.6 | 14/12/2022", value="• Add: AI\n• Change: Emoji and Decoration")
     update.add_field(name="8️⃣ V 1.7 | 22/02/2023", value="• Fix: The AI has pre-trained data and Chat without using the slash command.\n• Change: Fully open public bots. Cancel and Except is combined with the Countdis command and optimize some operations")
-    update.add_field(name="9️⃣ V 1.8 | 14/03/2023", value="• Add: AI that powered by GPT-3.5 Turbo from OpenAI\n• Add: I can speak English, Thai, and Japanese right now! or you can use custom language code as well. But still can't listen to you :(\n• Remove: ChatterBot training menu")
-    update.add_field(name="🔟 V ??? | TBA", value="• Add: Guild, User, Stats Information")
+    update.add_field(name="9️⃣ V 1.8 | 14/03/2023", value="• Add: AI that powered by GPT-3.5 Turbo from OpenAI\n• Add: \"I can speak English, Thai, and Japanese right now! or you can use custom language code as well. But still can't listen to you :(\"\n• Remove: ChatterBot training menu")
+    update.add_field(name="🔟 V 1.9 | 08/04/2023", value="• Add: User command for checking profile and status\n• Add: Split the message by | instead of \\n and make the prompt more human-like. And make a reset button for chat.")
 
     select = discord.ui.Select(placeholder="ตัวเลือกเมนู",options=[
     discord.SelectOption(label="เครื่องมืออรรถประโยชน์",emoji="🔧",description="คำสั่งการใช้งานทั่วไป",value="util",default=False),
@@ -632,11 +634,109 @@ async def getchat(interaction: discord.Interaction):
         await channel.send(content=f"**✅ ดึงข้อความเสร็จสิ้น `({filesize.getfoldersize(f'asset/chat')})` ใช้เวลา `{sectobigger.sec(round(end_time - start_time, 2))}`**",view=None)
 
 
+# Get Info
+@client.tree.command(name='user', description="👤 ดูข้อมูลของผู้ใช้")
+async def user(interaction: discord.Interaction, member: Optional[discord.User]):
+    if member == None:
+        await InfomationLog.sendlog(self=InfomationLog(interaction))
+    else:
+        await InfomationLog.sendlog(self=InfomationLog(interaction, member))
+
+    user = interaction.guild.get_member(interaction.user.id)
+    if member != None:
+        user = interaction.guild.get_member(member.id)
+
+    # Separate guilds by comma
+    if user.bot == False:
+        mutual_guilds = "\n> ".join([f"`{guild.name}`" for guild in user.mutual_guilds])
+        len_mutual_guilds = len(user.mutual_guilds)
+    else:
+        mutual_guilds = "`ไม่มี`"
+        len_mutual_guilds = "-"
+
+    # Status
+    status = "ออฟไลน์"
+    if user.status == discord.Status.online:
+        status = "<:Online:1094241869183074404> ออนไลน์"
+    elif user.status == discord.Status.idle:
+        status = "<:Away:1094241859418722405> ไม่อยู่"
+    elif user.status == discord.Status.dnd:
+        status = "<:DND:1094241861394251787> ห้ามรบกวน"
+    elif user.status == discord.Status.offline:
+        status = "<:Offline:1094241865773092914> ออฟไลน์"
+        
+    # Activity
+    if user.activity != None:
+        if user.activity.type == discord.ActivityType.playing:
+            activity = f"`กำลังเล่น {user.activity.name}`"
+        elif user.activity.type == discord.ActivityType.streaming:
+            activity = f"`กำลังสตรีม {user.activity.name}`"
+        elif user.activity.type == discord.ActivityType.listening:
+            activity = f"`กำลังฟัง {user.activity.name}`"
+        elif user.activity.type == discord.ActivityType.watching:
+            activity = f"`กำลังดู {user.activity.name}`"
+        elif user.activity.type == discord.ActivityType.custom:
+            activity = f"`กำลังทำอะไรบางอย่าง`"
+    else:
+        activity = "`ไม่มีกิจกรรม`"
+
+    # Check client status
+    client_status1 = "<:Offline:1094241865773092914>  ออฟไลน์บน : 📱 อุปกรณ์พกพา"
+    client_status2 = "<:Offline:1094241865773092914>  ออฟไลน์บน : 🖥️ เดสก์ท็อป"
+    client_status3 = "<:Offline:1094241865773092914>  ออฟไลน์บน : 🌐 เว็บ"
+    if user.mobile_status == discord.Status.online or user.mobile_status == discord.Status.idle or user.mobile_status == discord.Status.dnd:
+        client_status1 = "<:Online:1094241869183074404>  ออนไลน์บน : 📱 อุปกรณ์พกพา"
+    if user.desktop_status == discord.Status.online or user.desktop_status == discord.Status.idle or user.desktop_status == discord.Status.dnd:
+        client_status2 = "<:Online:1094241869183074404>  ออนไลน์บน : 🖥️ เดสก์ท็อป"
+    if user.web_status == discord.Status.online or user.web_status == discord.Status.idle or user.web_status == discord.Status.dnd:
+        client_status3 = "<:Online:1094241869183074404>  ออนไลน์บน : 🌐 เว็บ"
+
+    # Extract flags
+    user_flags = user.public_flags.value
+    badge_info = [
+        ("<:staff:1094257629531996250>Discord Staff", discord.PublicUserFlags.staff.flag),
+        ("<:icon_partneredserverowner:1094258897482690590> `Discord Partner`", discord.PublicUserFlags.partner.flag),
+        ("<:Badge_HypeSquadEvents:1094259133571682507> `HypeSquad Events`", discord.PublicUserFlags.hypesquad.flag),
+        ("<:discord_bughunterlv1:1094259250936696873> `Bug Hunter Level 1`", discord.PublicUserFlags.bug_hunter.flag),
+        ("<:icon_hypesquadbravery:1094259446609350736> `House Bravery`", discord.PublicUserFlags.hypesquad_bravery.flag),
+        ("<:icon_hypesquadbrilliance:1094259551831855204> `House Brilliance`", discord.PublicUserFlags.hypesquad_brilliance.flag),
+        ("<:icon_hypesquadbalance:1094259581544312923> `House Balance`", discord.PublicUserFlags.hypesquad_balance.flag),
+        ("<:Badge_EarlySupporter:1094259813472551013> `Early Supporter`", discord.PublicUserFlags.early_supporter.flag),
+        ("`Team User`", discord.PublicUserFlags.team_user.flag),
+        ("`System`", discord.PublicUserFlags.system.flag),
+        ("<:BugHunterLvl2:1094259304212742234> `Bug Hunter Level 2`", discord.PublicUserFlags.bug_hunter_level_2.flag),
+        ("`Verified Bot`", discord.PublicUserFlags.verified_bot.flag),
+        ("<:Early_Verified_Bot_Developer:1094260288712355931> `Verified Bot Developer`", discord.PublicUserFlags.verified_bot_developer.flag),
+        ("<:Certified_Moderator:1094260591490764962> `Discord Certified Moderator`", discord.PublicUserFlags.discord_certified_moderator.flag),
+        ("`Bot HTTP Interactions`", discord.PublicUserFlags.bot_http_interactions.flag),
+        ("`Spammer`", discord.PublicUserFlags.spammer.flag),
+        ("<:Active_Developer_Badge:1094260754686935070> `Active Developer`", discord.PublicUserFlags.active_developer.flag),
+    ]
+    badges = [name for name, flag in badge_info if user_flags & flag]
+    message = "\n> ".join(badges)
+    if message == "":
+        message = "`ไม่มี`"
+
+    # Create embed
+    embed = discord.Embed(title=f"ข้อมูลของ {user.name}#{user.discriminator}", color=0x0091ff)
+    embed.set_thumbnail(url=user.display_avatar.url)
+    embed.description = f"ไอดีของบัญชี : `{user.id}`\nข้อมูลจากเซิร์ฟเวอร์ : `{interaction.guild.name} ({interaction.guild_id})`"
+    embed.add_field(name="**ชื่อเล่น**", value=f"`{user.display_name}`")
+    embed.add_field(name="**สร้างบัญชีเมื่อ**", value=f'{user.created_at.strftime("`วันที่ %d/%m/%Y` `เวลา %H:%M:%S`")}')
+    embed.add_field(name="**เข้าร่วมเซิร์ฟเวอร์เมื่อ**", value=f'{user.joined_at.strftime("`วันที่ %d/%m/%Y` `เวลา %H:%M:%S`")}')
+    embed.add_field(name="**กิจกรรม**", value=activity)
+    embed.add_field(name=f"**เซิร์ฟเวอร์ร่วมกับบอท : {len_mutual_guilds} เซิร์ฟเวอร์**", value=f"> {mutual_guilds}")
+    embed.add_field(name="**เหรียญตรา**", value=f"> {message}")
+    embed.add_field(name=f"**สถานะ :  {status}**", value=f"**{client_status1}\n{client_status2}\n{client_status3}**")
+    embed.timestamp = interaction.created_at
+    await interaction.response.send_message(embed=embed)
+
 # AI COMMAND
 @client.tree.command(name='ai', description="🧠 เปิด/ปิดการคุยกับบอท")
 @app_commands.choices(mode=[
-    app_commands.Choice(name="Speak (Voice chat is not yet supported)",value="speak"),
+    app_commands.Choice(name="Speak (Voice listening is not yet supported)",value="speak"),
     app_commands.Choice(name="Chat",value="chat"),
+    app_commands.Choice(name="Reset the chat history",value="reset"),
     app_commands.Choice(name="Turn Off ❌",value="off"),])
 
 @app_commands.describe(mode="เลือกโหมดที่ต้องการ", language="เลือกภาษาที่ต้องการให้พูด (Only neural voices is supported)")
@@ -694,6 +794,13 @@ async def ai(interaction: discord.Interaction, mode: discord.app_commands.Choice
             voice_channel = interaction.user.voice.channel
             await interaction.response.send_message(f"**ℹ️ บอทกำลังคุยอยู่ใน <#{voice_channel.id}>**")
 
+    elif mode.value == 'reset':
+        if client.chat_history[guild] != client.first_yuuka_prompt:
+            client.chat_history[guild] = client.first_yuuka_prompt
+            await interaction.response.send_message("**✅ ล้างประวัติการคุยแล้ว**")
+        else:
+            await interaction.response.send_message("**❌ ไม่มีประวัติการคุย**")
+    
     elif mode.value == 'off':
         if client.talk_to_ai[guild] == 2:
             voice_client = interaction.guild.voice_client
@@ -796,6 +903,9 @@ async def on_message(message):
             voice = client.voice[guild]
             response, client.chat_history[guild],log = chatgpt.generate_response(message.content, client.chat_history[guild], message.author.display_name)
             await InfomationLog.openailog(self=InfomationLog(None, log, message))
+            # If the bot is already speaking, stop it
+            if voice.is_playing():
+                voice.stop()
             speech_synthesis.tts(response.replace("Yuuka: ", ""), client.voice_language[guild], client.ai_active_channel[guild])
             voice.play(discord.FFmpegPCMAudio(f"temp/{client.ai_active_channel[guild]}_output.wav"))
 
@@ -804,7 +914,9 @@ async def on_error(interaction, error):
     channel = client.get_channel(1003719893260185750)
     error_log = discord.Embed(title=f"⚠️ **Error**", color=0xff0000)
     error_log.add_field(name="ข้อผิดพลาด",value=f"```{error}```")
-    await channel.send(embed=error_log)
+    log_button = discord.ui.View()
+    log_button.add_item(discord.ui.Button(label='Log',emoji="📝",style=discord.ButtonStyle.url, url="https://dashboard.heroku.com/apps/yuuka-discordbot/logs"))
+    await channel.send(embed=error_log, view=log_button)
     raise error
     # Why it does work?
     

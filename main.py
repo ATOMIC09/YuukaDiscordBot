@@ -78,7 +78,7 @@ class InfomationLog():
     
     async def contextlog(self):
         channel = client.get_channel(1003719893260185750)
-        log = discord.Embed(title=f"**ID : **`{self.interaction.id}`", color=0x455EE8)
+        log = discord.Embed(title=f"**ID : **`{self.interaction.id}`", color=0x5be259)
         log.set_author(name=self.interaction.user, icon_url=self.interaction.user.display_avatar.url)
         log.timestamp = self.interaction.created_at
         log.add_field(name="เซิร์ฟเวอร์",value=f"`{self.interaction.guild}` ({self.interaction.guild_id})")
@@ -93,7 +93,7 @@ class InfomationLog():
         
     async def openailog(self):
         channel = client.get_channel(1003719893260185750)
-        log = discord.Embed(title=f"**ID : **`{self.message.id}`", color=0x11a37f)
+        log = discord.Embed(title=f"**ID : **`{self.message.id}`", color=0x10a37f)
         log.set_author(name=self.message.author, icon_url=self.message.author.display_avatar.url)
         log.timestamp = self.message.created_at
         log.add_field(name="Prompt",value=f"`{self.log_data['prompt']}`")
@@ -132,21 +132,24 @@ async def help(interaction: discord.Interaction):
     # Embed
     util = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🔧 เครื่องมืออรรถประโยชน์*", color=0x40eefd)
     util.add_field(name="**🔌 นับถอยหลังและตัดการเชื่อมต่อ**", value="`/countdis`", inline=False)
-    util.add_field(name="**📨 ส่งข้อความหลังไมค์ไปหาผู้สร้าง**", value="`/feedback`", inline=False)
-    util.add_field(name="**🎬 ขอไฟล์จาก Youtube**", value="`/youtube`", inline=False)
+    util.add_field(name="**🎙️ ส่งข้อความหลังไมค์ไปหาผู้สร้าง**", value="`/feedback`", inline=False)
     util.add_field(name="**📨 ส่งข้อความ**", value="`/send`", inline=False)
     util.add_field(name="**🦵 เตะคนออกจากแชทเสียง**", value="`/kick`", inline=False)
-    util.add_field(name="**🍟 ทอดกรอบภาพ**", value="`/deepfry`", inline=False)
     util.add_field(name="**📢 สแปมคนไม่มา**", value="`/spam`", inline=False) 
+    util.add_field(name="**🗞️ บันทึกประวัติการส่งข้อความ**", value="`/getchat`", inline=False)
     util.add_field(name="**📝 เช็คชื่อในช่องเสียง**", value="`/attendance`", inline=False)
-    util.add_field(name="**🔎 เช็คคนขาดประชุม**", value="`/absent`", inline=False)
+    util.add_field(name="**😶‍🌫️ เช็คคนขาดประชุม**", value="`/absent`", inline=False)
     util.add_field(name="**👤 ดูข้อมูลของผู้ใช้**", value="`/user`", inline=False)
+    util.add_field(name="**🍟 ทอดกรอบภาพ**", value="`/deepfry`", inline=False)
+    util.add_field(name="**🧠 เปิด/ปิดการคุยกับบอท**", value="`/ai`", inline=False)
 
-    ai = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🤖 Artificial Intelligence*", color=0x03dffc)
-    ai.add_field(name="**🧠 เปิด/ปิดการคุยกับบอท**", value="`/ai`", inline=False)
-    ai.add_field(name="**🗞️ บันทึกประวัติการส่งข้อความ**", value="`/getchat`", inline=False)
+    contextmenu = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🖱️ Apps (Context Menu)*", color=0x2cd453)
+    contextmenu.add_field(name="**🔎 ค้นหาด้วยรูปภาพ**", value="`Search by Image`", inline=False)
 
-    update = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *📌 ประวัติการอัพเดท*", color=0xdcfa80)
+    unstable = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *⚠️ คำสั่งที่ยังไม่เสถียร*", color=0xff6c17)
+    unstable.add_field(name="**🎬 ขอไฟล์จาก Youtube**", value="`/youtube`", inline=False)
+
+    update = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *📌 ประวัติการอัปเดต*", color=0xdcfa80)
     update.add_field(name="1️⃣ V 1.0 | 29/07/2022", value="• Add: Countdis command (countdown and disconnect all user in voice channel)\n• Add: Feedback")
     update.add_field(name="2️⃣ V 1.1 | 02/08/2022", value="• Add: Log\n• Add: Youtube\n• Add: Search by Image\n• Add: AutoDelete Temp\n• Add: Hosting Status\n• Improve: Embed Feedback")
     update.add_field(name="3️⃣ V 1.2 | 02/09/2022", value="• Add: Send command\n• Add: Kick member from voice chat")
@@ -156,23 +159,27 @@ async def help(interaction: discord.Interaction):
     update.add_field(name="7️⃣ V 1.6 | 14/12/2022", value="• Add: AI\n• Change: Emoji and Decoration")
     update.add_field(name="8️⃣ V 1.7 | 22/02/2023", value="• Fix: The AI has pre-trained data and Chat without using the slash command.\n• Change: Fully open public bots. Cancel and Except is combined with the Countdis command and optimize some operations")
     update.add_field(name="9️⃣ V 1.8 | 14/03/2023", value="• Add: AI that powered by GPT-3.5 Turbo from OpenAI\n• Add: \"I can speak English, Thai, and Japanese right now! or you can use custom language code as well. But still can't listen to you :(\"\n• Remove: ChatterBot training menu")
-    update.add_field(name="🔟 V 1.9 | 08/04/2023", value="• Add: User command for checking profile and status\n• Add: Split the message by | instead of \\n and make the prompt more human-like. And make a reset button for chat.")
+    update.add_field(name="🔟 V 1.9 | 08/04/2023", value="• Add: User command for checking profile and status\n• Add: Split the message by | instead of \\n and make the prompt more human-like and make a reset button for chat. And getchat download is now available")
 
     select = discord.ui.Select(placeholder="ตัวเลือกเมนู",options=[
     discord.SelectOption(label="เครื่องมืออรรถประโยชน์",emoji="🔧",description="คำสั่งการใช้งานทั่วไป",value="util",default=False),
-    discord.SelectOption(label="Artificial Intelligence",emoji="🤖",description="คำสั่งเกี่ยวกับ AI ของบอท",value="ai",default=False),
-    discord.SelectOption(label="ประวัติการอัพเดท",emoji="📌",description="คำสั่งตรวจสอบเวอร์ชันของบอท",value="update",default=False)
+    discord.SelectOption(label="Apps",emoji="🖱️",description="คำสั่งที่ใช้งานผ่านการ คลิกขวาที่ข้อความ -> Apps",value="contextmenu",default=False),
+    discord.SelectOption(label="คำสั่งที่ยังไม่เสถียร",emoji="⚠️",description="คำสั่งที่ยังไม่เสถียร",value="unstable",default=False),
+    discord.SelectOption(label="ประวัติการอัปเดต",emoji="📌",description="คำสั่งตรวจสอบเวอร์ชันของบอท",value="update",default=False)
     ])
 
     async def my_callback(interaction):
         if select.values[0] == "util":
             await interaction.response.edit_message(embed=util, view=view)
 
+        elif select.values[0] == "contextmenu":
+            await interaction.response.edit_message(embed=contextmenu, view=view)
+
+        elif select.values[0] == "unstable":
+            await interaction.response.edit_message(embed=unstable, view=view)
+
         elif select.values[0] == "update":
             await interaction.response.edit_message(embed=update, view=view)
-
-        elif select.values[0] == "ai":
-            await interaction.response.edit_message(embed=ai, view=view)
 
     select.callback = my_callback
     view = discord.ui.View()
@@ -561,7 +568,7 @@ async def youtube_def(interaction: discord.Interaction, url: str):
     dl.timestamp = interaction.created_at
     dl.add_field(name="🔐 นามสกุลไฟล์", value=f"`{ext}`", inline=False)
     dl.add_field(name="🥼 ช่อง", value=f"`{channel}` `({channel_id})`", inline=False)
-    dl.add_field(name="📆 วันที่อัพโหลด", value=f"`{upload_datenew}`", inline=False)
+    dl.add_field(name="📆 วันที่อัปโหลด", value=f"`{upload_datenew}`", inline=False)
     dl.add_field(name="🕒 ระยะเวลา", value=f"`{durationnew}`", inline=False)
     dl.add_field(name="👀 จำนวนคนดู", value=f"`{view_count} คน`", inline=False)
     dl.add_field(name="👍🏻 จำนวนคน Like", value=f"`{like_count} คน`", inline=False)
@@ -591,11 +598,20 @@ async def getchat(interaction: discord.Interaction):
     client.force_stop[guild] = False
     client.overtime[guild] = False
     channel_count = 0
-    channel_total = len(interaction.guild.text_channels)
-    await interaction.response.send_message(f"**<a:AppleLoadingGIF:1052465926487953428> 0% กำลังเริ่มต้น...ตรวจพบ {channel_total} ช่อง**")
+    has_permission_to_channel = []
 
+    # GET TOTAL CHANNEL WITH PERMISSION
+    channel_total = 0
+    for i in range(len(interaction.guild.text_channels)):
+        if interaction.guild.text_channels[i].permissions_for(interaction.user).read_messages:
+            channel_total += 1
+            has_permission_to_channel.append(interaction.guild.text_channels[i])
+
+    await interaction.response.send_message(f"**<a:AppleLoadingGIF:1052465926487953428> 0% กำลังเริ่มต้น...ตรวจพบ {channel_total} ช่อง**")
+    print(f"ดึงข้อความโดย {interaction.user.name} ตรวจพบ {channel_total} ช่อง")
     # LOOP CHANNEL
-    for channel in interaction.guild.text_channels:
+    for channel in has_permission_to_channel:
+        print(f"กำลังดึงข้อมูลจาก {channel}")
         percent_total = round((channel_count / channel_total) * 100, 1)
 
         stop_button = discord.ui.Button(label="Stop",style=discord.ButtonStyle.red)
@@ -666,15 +682,15 @@ async def getchat(interaction: discord.Interaction):
     if client.force_stop[guild] == False :
         await interaction.edit_original_response(content=f"**<a:AppleLoadingGIF:1052465926487953428> กำลังบีบอัดไฟล์...**")
         print("Making zip file...")
-        shutil.make_archive(str(interaction.guild_id), 'zip', 'asset/chat')
-        shutil.move(f"{interaction.guild_id}.zip", f"asset/chat/{interaction.guild_id}.zip")
+        shutil.make_archive(f"{interaction.guild_id}_{interaction.user.id}", 'zip', 'asset/chat')
+        shutil.move(f"{interaction.guild_id}_{interaction.user.id}.zip", f"asset/chat/{interaction.guild_id}_{interaction.user.id}.zip")
         print("Zip file complete")
 
         # DOWNLOAD BUTTON
         download_button = discord.ui.Button(label="Download",emoji="📥",style=discord.ButtonStyle.green)
         async def download_callback(interaction):
             try:
-                file = discord.File(f"asset/chat/{interaction.guild_id}.zip")
+                file = discord.File(f"asset/chat/{interaction.guild_id}_{interaction.user.id}.zip")
                 await interaction.response.send_message(file=file)
             except:
                 await interaction.response.send_message("❌ **ไฟล์หมดอายุแล้ว ต้องใช้คำสั่งใหม่อีกครั้ง**")

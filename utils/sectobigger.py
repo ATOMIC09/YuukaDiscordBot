@@ -34,7 +34,8 @@ def sec(time):
     elif time >= 31556926:
         return f"{year}:{month}:{day}:{hour}:{minute_zfill}:{second_zfill} ปี"
 
-def datenumbeautiful(datenum):
+def datenumbeautiful(datenumint):
+    datenum = str(datenumint)
     year = datenum[:4]
     month = datenum[4:6]
     day = datenum[6:8]

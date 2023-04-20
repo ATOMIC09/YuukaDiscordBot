@@ -131,23 +131,24 @@ async def help(interaction: discord.Interaction):
     
     # Embed
     util = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🔧 เครื่องมืออรรถประโยชน์*", color=0x40eefd)
-    util.add_field(name="**🔌 นับถอยหลังและตัดการเชื่อมต่อ**", value="`/countdis`", inline=False)
-    util.add_field(name="**🎙️ ส่งข้อความหลังไมค์ไปหาผู้สร้าง**", value="`/feedback`", inline=False)
-    util.add_field(name="**📨 ส่งข้อความ**", value="`/send`", inline=False)
-    util.add_field(name="**🦵 เตะคนออกจากแชทเสียง**", value="`/kick`", inline=False)
-    util.add_field(name="**📢 สแปมคนไม่มา**", value="`/spam`", inline=False) 
-    util.add_field(name="**🗞️ บันทึกประวัติการส่งข้อความ**", value="`/getchat`", inline=False)
-    util.add_field(name="**📝 เช็คชื่อในช่องเสียง**", value="`/attendance`", inline=False)
-    util.add_field(name="**😶‍🌫️ เช็คคนขาดประชุม**", value="`/absent`", inline=False)
-    util.add_field(name="**👤 ดูข้อมูลของผู้ใช้**", value="`/user`", inline=False)
-    util.add_field(name="**🍟 ทอดกรอบภาพ**", value="`/deepfry`", inline=False)
-    util.add_field(name="**🧠 เปิด/ปิดการคุยกับบอท**", value="`/ai`", inline=False)
+    util.add_field(name="**🔌 นับถอยหลังและตัดการเชื่อมต่อ**", value="`/countdis`", inline=True)
+    util.add_field(name="**🎙️ ส่งข้อความหลังไมค์ไปหาผู้สร้าง**", value="`/feedback`", inline=True)
+    util.add_field(name="**📨 ส่งข้อความ**", value="`/send`", inline=True)
+    util.add_field(name="**🦵 เตะคนออกจากแชทเสียง**", value="`/kick`", inline=True)
+    util.add_field(name="**📢 สแปมคนไม่มา**", value="`/spam`", inline=True) 
+    util.add_field(name="**🗞️ บันทึกประวัติการส่งข้อความ**", value="`/getchat`", inline=True)
+    util.add_field(name="**📝 เช็คชื่อในช่องเสียง**", value="`/attendance`", inline=True)
+    util.add_field(name="**😶‍🌫️ เช็คคนขาดประชุม**", value="`/absent`", inline=True)
+    util.add_field(name="**👤 ดูข้อมูลของผู้ใช้**", value="`/user`", inline=True)
+    util.add_field(name="**🍟 ทอดกรอบภาพ**", value="`/deepfry`", inline=True)
+    util.add_field(name="**🧠 เปิด/ปิดการคุยกับบอท**", value="`/ai`", inline=True)
+    util.add_field(name="**🎬 ขอไฟล์จาก Youtube**", value="`/youtube`", inline=True)
 
     contextmenu = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🖱️ Apps (Context Menu)*", color=0x2cd453)
-    contextmenu.add_field(name="**🔎 ค้นหาด้วยรูปภาพ**", value="`Search by Image`", inline=False)
+    contextmenu.add_field(name="**🔎 ค้นหาด้วยรูปภาพ**", value="`Search by Image`", inline=True)
 
-    unstable = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *⚠️ คำสั่งที่ยังไม่เสถียร*", color=0xff6c17)
-    unstable.add_field(name="**🎬 ขอไฟล์จาก Youtube**", value="`/youtube`", inline=False)
+    #unstable = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *⚠️ คำสั่งที่ยังไม่เสถียร*", color=0xff6c17)
+    #unstable.add_field(name="****", value="`/youtube`", inline=True)
 
     update = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *📌 ประวัติการอัปเดต*", color=0xdcfa80)
     update.add_field(name="1️⃣ V 1.0 | 29/07/2022", value="• Add: Countdis command (countdown and disconnect all user in voice channel)\n• Add: Feedback")
@@ -164,7 +165,7 @@ async def help(interaction: discord.Interaction):
     select = discord.ui.Select(placeholder="ตัวเลือกเมนู",options=[
     discord.SelectOption(label="เครื่องมืออรรถประโยชน์",emoji="🔧",description="คำสั่งการใช้งานทั่วไป",value="util",default=False),
     discord.SelectOption(label="Apps",emoji="🖱️",description="คำสั่งที่ใช้งานผ่านการ คลิกขวาที่ข้อความ -> Apps",value="contextmenu",default=False),
-    discord.SelectOption(label="คำสั่งที่ยังไม่เสถียร",emoji="⚠️",description="คำสั่งที่ยังไม่เสถียร",value="unstable",default=False),
+    #discord.SelectOption(label="คำสั่งที่ยังไม่เสถียร",emoji="⚠️",description="คำสั่งที่ยังไม่เสถียร",value="unstable",default=False),
     discord.SelectOption(label="ประวัติการอัปเดต",emoji="📌",description="คำสั่งตรวจสอบเวอร์ชันของบอท",value="update",default=False)
     ])
 
@@ -175,8 +176,8 @@ async def help(interaction: discord.Interaction):
         elif select.values[0] == "contextmenu":
             await interaction.response.edit_message(embed=contextmenu, view=view)
 
-        elif select.values[0] == "unstable":
-            await interaction.response.edit_message(embed=unstable, view=view)
+        #elif select.values[0] == "unstable":
+        #    await interaction.response.edit_message(embed=unstable, view=view)
 
         elif select.values[0] == "update":
             await interaction.response.edit_message(embed=update, view=view)
@@ -534,52 +535,57 @@ async def youtube_def(interaction: discord.Interaction, url: str):
     log_msg = await InfomationLog.sendlog(self=InfomationLog(interaction,url))
     await interaction.response.send_message(f"<a:MagnifierGIF:1052563354910216252> **กำลังหา** `{url}`")
 
-    try:
-        # เก็บข้อมูลดิบ
-        title = youtubedl_fn.yt_title(url)
-        ext = youtubedl_fn.yt_ext(url)
-        upload_date = youtubedl_fn.yt_upload_date(url)
-        channel, channel_id = youtubedl_fn.yt_channel(url)
-        duration = youtubedl_fn.yt_duration(url)
-        view_count = youtubedl_fn.yt_view_count(url)
-        try:
-            like_count = youtubedl_fn.yt_like_count(url)
-        except:
-            like_count = "Null"
-        dislike_count = youtubedl_fn.yt_dislike_count(url)
-        comment_count = youtubedl_fn.yt_comment_count(url)
-        filesize_approx = youtubedl_fn.yt_filesize_approx(url)
+    info = youtubedl_fn.get_video_info(url)
+    title = info['title']
+    ext = info['ext']
+    upload_date = info['upload_date']
+    uploader = info['uploader']
+    uploader_id = info['uploader_id']
+    channel_id = info['channel_id']
+    channel_follower_count = info['channel_follower_count']
+    duration = info['duration']
+    view_count = info['view_count']
+    like_count = info['like_count']
+    comment_count = info['comment_count']
+    filesize_approx = info['filesize_approx']
+    resolution = info['resolution']
+    fps = info['fps']
+    original_url = info['original_url']
 
-        # ข้อมูลสำคัญ
-        videolink = youtubedl_fn.yt_video(url)
-        audiolink = youtubedl_fn.yt_audio(url)
-        thumbnail = youtubedl_fn.yt_thumbnail(url)
-    except:
-        await interaction.edit_original_response(content=f"❌ **เกิดข้อผิดพลาด**")
-        await InfomationLog.runcomplete(self=InfomationLog(interaction, log_msg=log_msg, log_data="⚠️"))
+    videolink = youtubedl_fn.get_video_url(url)
+    audiolink = youtubedl_fn.get_audio_url(url)
+    thumbnail = info['thumbnail']
 
-    # ข้อมูลสุก
     videolinknew = shorten_url.shortenmylink(videolink)
     audiolinknew = shorten_url.shortenmylink(audiolink)
     durationnew = sectobigger.sec(duration)
     upload_datenew = sectobigger.datenumbeautiful(upload_date)
+    if comment_count == None:
+        comment_count = "ไม่มี"
+    else:
+        comment_count = comment_count + " ความคิดเห็น"
 
     dl = discord.Embed(title = f"**{title}**", color = 0xff80c9)
     dl.timestamp = interaction.created_at
-    dl.add_field(name="🔐 นามสกุลไฟล์", value=f"`{ext}`", inline=False)
-    dl.add_field(name="🥼 ช่อง", value=f"`{channel}` `({channel_id})`", inline=False)
-    dl.add_field(name="📆 วันที่อัปโหลด", value=f"`{upload_datenew}`", inline=False)
-    dl.add_field(name="🕒 ระยะเวลา", value=f"`{durationnew}`", inline=False)
-    dl.add_field(name="👀 จำนวนคนดู", value=f"`{view_count} คน`", inline=False)
-    dl.add_field(name="👍🏻 จำนวนคน Like", value=f"`{like_count} คน`", inline=False)
-    dl.add_field(name="👎🏻 จำนวนคน Dislike", value=f"`{dislike_count} คน`", inline=False)
-    dl.add_field(name="💬 จำนวน Comment", value=f"`{comment_count} คน`", inline=False)
-    dl.add_field(name="📦 ขนาดไฟล์", value=f"`{filesize_approx}`", inline=False)
+    dl.add_field(name="🔐 นามสกุลไฟล์", value=f"`{ext}`", inline=True)
+    dl.add_field(name="📐 ความละเอียด", value=f"`{resolution}`", inline=True)
+    dl.add_field(name="🖼️ เฟรมเรท", value=f"`{fps} FPS`", inline=True)
+    dl.add_field(name="🧑 ผู้อัปโหลด", value=f"`{uploader}` `({uploader_id})`", inline=True)
+    dl.add_field(name="📺 ไอดีช่อง", value=f"`{channel_id}`", inline=True)
+    dl.add_field(name="👀 ผู้ติดตาม", value=f"`{channel_follower_count} คน`", inline=True)
+    dl.add_field(name="📆 วันที่อัปโหลด", value=f"`{upload_datenew}`", inline=True)
+    dl.add_field(name="🕒 ระยะเวลา", value=f"`{durationnew}`", inline=True)
+    dl.add_field(name="👀 จำนวนคนดู", value=f"`{view_count} คน`", inline=True)
+    dl.add_field(name="👍🏻 จำนวนคน Like", value=f"`{like_count} คน`", inline=True)
+    dl.add_field(name="💬 จำนวน Comment", value=f"`{comment_count}`", inline=True)
+    dl.add_field(name="📦 ขนาดไฟล์", value=f"`{filesize_approx}`", inline=True)
     dl.set_image(url=thumbnail)
 
     url_view = discord.ui.View()
     url_view.add_item(discord.ui.Button(label='Video',emoji="🎬" , style=discord.ButtonStyle.url, url=videolinknew))
     url_view.add_item(discord.ui.Button(label='Audio',emoji="🔊" , style=discord.ButtonStyle.url, url=audiolinknew))
+    url_view.add_item(discord.ui.Button(label='Play on Youtube',emoji="▶️" , style=discord.ButtonStyle.url, url=original_url))
+    url_view.add_item(discord.ui.Button(label='Subscribe',emoji="🔔" , style=discord.ButtonStyle.url, url=f"https://www.youtube.com/channel/{channel_id}?sub_confirmation=1"))
 
     await interaction.edit_original_response(content="",embed=dl,view=url_view)
     await InfomationLog.runcomplete(self=InfomationLog(interaction, log_msg=log_msg, log_data="<:Approve:921703512382009354>"))

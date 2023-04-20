@@ -1,17 +1,19 @@
 import os
+import math
 
-def getsize(path):
-    byte = os.path.getsize(path) 
+def prefix(byte):
     if byte < 1024:
         return str(byte) + ' B'
-    elif byte < 1024**2:
-        return str(round(byte/1024, 2)) + ' KB'
-    elif byte < 1024**3:
-        return str(round(byte/1024**2, 2)) + ' MB'
-    elif byte < 1024**4:
-        return str(round(byte/1024**3, 2)) + ' GB'
     else:
-        return str(round(byte/1024**4, 2)) + ' TB'
+        exp = min(int(math.log(byte, 1024)), 4)
+        size = byte / (1024 ** exp)
+        size_str = "{:.2f}".format(size)
+        units = ['KB', 'MB', 'GB', 'TB']
+        return size_str + ' ' + units[exp - 1]
+
+def getsize(path):
+    byte = os.path.getsize(path)
+    return prefix(byte)
 
 def getfoldersize(folder):
     total_size = 0
@@ -20,13 +22,4 @@ def getfoldersize(folder):
             fp = os.path.join(path, f)
             total_size += os.path.getsize(fp)
 
-    if total_size < 1024:
-        return str(total_size) + ' B'
-    elif total_size < 1024**2:
-        return str(round(total_size/1024, 2)) + ' KB'
-    elif total_size < 1024**3:
-        return str(round(total_size/1024**2, 2)) + ' MB'
-    elif total_size < 1024**4:
-        return str(round(total_size/1024**3, 2)) + ' GB'
-    else:
-        return str(round(total_size/1024**4, 2)) + ' TB'
+    return prefix(total_size)

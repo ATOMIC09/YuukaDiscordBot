@@ -1,6 +1,6 @@
 discord.py
 requests
-youtube_dl
+yt_dlp
 pyshorteners
 psutil
 numpy

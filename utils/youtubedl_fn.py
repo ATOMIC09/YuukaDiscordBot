@@ -16,7 +16,10 @@ def get_video_info(url):
     video_info['uploader_id'] = info['uploader_id']
     video_info['duration'] = info['duration']
     video_info['view_count'] = info['view_count']
-    video_info['like_count'] = info['like_count']
+    try:
+        video_info['like_count'] = info['like_count']
+    except KeyError:
+        video_info['like_count'] = "N/A"
     video_info['comment_count'] = info['comment_count']
     video_info['filesize_approx'] = filesize.prefix(info['filesize_approx'])
     thumbnail_dict = info['thumbnails']
@@ -24,7 +27,6 @@ def get_video_info(url):
     video_info['thumbnail'] = thumbnail
     video_info['resolution'] = info['resolution']
     video_info['fps'] = info['fps']
-    print(video_info)
     return video_info
 
 def get_video_url(url):

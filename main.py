@@ -561,9 +561,11 @@ async def youtube_def(interaction: discord.Interaction, url: str):
     durationnew = sectobigger.sec(duration)
     upload_datenew = sectobigger.datenumbeautiful(upload_date)
     if comment_count == None:
-        comment_count = "ไม่มี"
+        comment_count = "N/A"
     else:
-        comment_count = comment_count + " ความคิดเห็น"
+        comment_count = str(comment_count) + " ความคิดเห็น"
+    if like_count != "N/A":
+        like_count = str(like_count) + " คน"
 
     dl = discord.Embed(title = f"**{title}**", color = 0xff80c9)
     dl.timestamp = interaction.created_at
@@ -576,7 +578,7 @@ async def youtube_def(interaction: discord.Interaction, url: str):
     dl.add_field(name="📆 วันที่อัปโหลด", value=f"`{upload_datenew}`", inline=True)
     dl.add_field(name="🕒 ระยะเวลา", value=f"`{durationnew}`", inline=True)
     dl.add_field(name="👀 จำนวนคนดู", value=f"`{view_count} คน`", inline=True)
-    dl.add_field(name="👍🏻 จำนวนคน Like", value=f"`{like_count} คน`", inline=True)
+    dl.add_field(name="👍🏻 จำนวนคน Like", value=f"`{like_count}`", inline=True)
     dl.add_field(name="💬 จำนวน Comment", value=f"`{comment_count}`", inline=True)
     dl.add_field(name="📦 ขนาดไฟล์", value=f"`{filesize_approx}`", inline=True)
     dl.set_image(url=thumbnail)

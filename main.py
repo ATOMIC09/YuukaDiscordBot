@@ -4,7 +4,7 @@ from discord import app_commands, ui
 from discord.ext import tasks
 import os
 import asyncio 
-from utils import countdown_fn, youtubedl_fn, sectobigger, shorten_url, imageprocess_fn, filesize, chatgpt, speech_synthesis, tts_language_check
+from utils import countdown_fn, youtubedl_fn, sectobigger, shorten_url, imageprocess_fn, filesize, chatgpt, speech_synthesis, tts_language_check, get_meme, video_combine
 import requests
 import shutil
 import json
@@ -143,6 +143,7 @@ async def help(interaction: discord.Interaction):
     util.add_field(name="**🍟 ทอดกรอบภาพ**", value="`/deepfry`", inline=True)
     util.add_field(name="**🧠 เปิด/ปิดการคุยกับบอท**", value="`/ai`", inline=True)
     util.add_field(name="**🎬 ขอไฟล์จาก Youtube**", value="`/youtube`", inline=True)
+    util.add_field(name="**😂 สุ่มวิดีโอมีม**", value="`/meme`", inline=True)
 
     contextmenu = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🖱️ Apps (Context Menu)*", color=0x2cd453)
     contextmenu.add_field(name="**🔎 ค้นหาด้วยรูปภาพ**", value="`Search by Image`", inline=True)
@@ -160,7 +161,7 @@ async def help(interaction: discord.Interaction):
     update.add_field(name="7️⃣ V 1.6 | 14/12/2022", value="• Add: AI\n• Change: Emoji and Decoration")
     update.add_field(name="8️⃣ V 1.7 | 22/02/2023", value="• Fix: The AI has pre-trained data and Chat without using the slash command.\n• Change: Fully open public bots. Cancel and Except is combined with the Countdis command and optimize some operations")
     update.add_field(name="9️⃣ V 1.8 | 14/03/2023", value="• Add: AI that powered by GPT-3.5 Turbo from OpenAI\n• Add: \"I can speak English, Thai, and Japanese right now! or you can use custom language code as well. But still can't listen to you :(\"\n• Remove: ChatterBot training menu")
-    update.add_field(name="🔟 V 1.9 | 08/04/2023", value="• Add: User command for checking profile and status\n• Add: Split the message by | instead of \\n and make the prompt more human-like and make a reset button for chat. And getchat download is now available")
+    update.add_field(name="🔟 V 1.9 | 08/04/2023", value="• Add: User command for checking profile and status\n• Add: Split the message by | instead of \\n and make the prompt more human-like and make a reset button for chat. And getchat download is now available\n• Add: Random meme generator")
 
     select = discord.ui.Select(placeholder="ตัวเลือกเมนู",options=[
     discord.SelectOption(label="เครื่องมืออรรถประโยชน์",emoji="🔧",description="คำสั่งการใช้งานทั่วไป",value="util",default=False),
@@ -819,6 +820,23 @@ async def user(interaction: discord.Interaction, member: Optional[discord.User])
     embed.timestamp = interaction.created_at
     await interaction.response.send_message(embed=embed)
     await InfomationLog.runcomplete(self=InfomationLog(interaction, log_msg=log_msg, log_data="<:Approve:921703512382009354>"))
+
+
+# Get Video Meme
+@client.tree.command(name='meme', description="😂 สุ่มวิดีโอมีม")
+async def meme(interaction: discord.Interaction):
+    await interaction.response.send_message("<a:AppleLoadingGIF:1052465926487953428> **กำลังหาวิดีโอ...**")
+    video_url, audio_url, video_name, post_link = await get_meme.get_reddit()
+    await interaction.edit_original_response(content=f"<a:AppleLoadingGIF:1052465926487953428> **กำลังโหลดวิดีโอ...** {video_name}")
+    log_msg = await InfomationLog.sendlog(self=InfomationLog(interaction, log_data=f"\n{video_name}\n{video_url}\n{audio_url}"))
+    video_combine.mix(video_url, audio_url, video_name)
+    await interaction.followup.send(file=discord.File(f"temp/{video_name}.mp4"))
+    await interaction.edit_original_response(content="**Original link:** post_link")
+    await InfomationLog.runcomplete(self=InfomationLog(interaction, log_msg=log_msg, log_data="<:Approve:921703512382009354>"))
+
+
+
+
 
 # AI COMMAND
 @client.tree.command(name='ai', description="🧠 เปิด/ปิดการคุยกับบอท")

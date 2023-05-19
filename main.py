@@ -831,7 +831,7 @@ async def meme(interaction: discord.Interaction):
     log_msg = await InfomationLog.sendlog(self=InfomationLog(interaction, log_data=f"\n{video_name}\n{video_url}\n{audio_url}"))
     video_combine.mix(video_url, audio_url, video_name)
     await interaction.followup.send(file=discord.File(f"temp/{video_name}.mp4"))
-    await interaction.edit_original_response(content="**Original link:** post_link")
+    await interaction.edit_original_response(content=f"**Original link:** {post_link}")
     await InfomationLog.runcomplete(self=InfomationLog(interaction, log_msg=log_msg, log_data="<:Approve:921703512382009354>"))
 
 

@@ -825,13 +825,17 @@ async def user(interaction: discord.Interaction, member: Optional[discord.User])
 # Get Video Meme
 @client.tree.command(name='meme', description="😂 สุ่มวิดีโอมีม")
 async def meme(interaction: discord.Interaction):
-    await interaction.response.send_message("<a:AppleLoadingGIF:1052465926487953428> **กำลังหาวิดีโอ...**")
+    await interaction.response.send_message("<a:AppleLoadingGIF:1052465926487953428> **กำลังหามีม...**")
     video_url, audio_url, video_name, post_link = await get_meme.get_reddit()
-    await interaction.edit_original_response(content=f"<a:AppleLoadingGIF:1052465926487953428> **กำลังโหลดวิดีโอ...** {video_name}")
-    log_msg = await InfomationLog.sendlog(self=InfomationLog(interaction, log_data=f"\n{video_name}\n{video_url}\n{audio_url}"))
+    await interaction.edit_original_response(content=f"<a:AppleLoadingGIF:1052465926487953428> **กำลังโหลดมีม...** {video_name}")
+    log_msg = await InfomationLog.sendlog(self=InfomationLog(interaction, log_data=f"{video_name}\n\n{post_link}"))
     video_combine.mix(video_url, audio_url, video_name)
     await interaction.followup.send(file=discord.File(f"temp/{video_name}.mp4"))
-    await interaction.edit_original_response(content=f"**Original link:** {post_link}")
+
+    url = discord.ui.View()
+    url.add_item(discord.ui.Button(label="Source", emoji="🔗", style=discord.ButtonStyle.url, url=post_link))
+
+    await interaction.edit_original_response(content=f"✅ **ส่งมีมแล้ว...** {video_name}", view=url)
     await InfomationLog.runcomplete(self=InfomationLog(interaction, log_msg=log_msg, log_data="<:Approve:921703512382009354>"))
 
 

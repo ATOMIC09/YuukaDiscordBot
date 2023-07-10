@@ -96,8 +96,8 @@ class InfomationLog():
         log = discord.Embed(title=f"**ID : **`{self.message.id}`", color=0x10a37f)
         log.set_author(name=self.message.author, icon_url=self.message.author.display_avatar.url)
         log.timestamp = self.message.created_at
-        log.add_field(name="Prompt",value=f"`{self.log_data['prompt']}`")
-        log.add_field(name="Response",value=f"`{self.log_data['response']}`")
+        log.add_field(name="Prompt", value=f"`{self.log_data['prompt'][:1020]}`") # Hard code at 2 AM
+        log.add_field(name="Response", value=f"`{self.log_data['response'][:1020]}`")
         log.add_field(name="Total Tokens", value=f"`{self.log_data['total_tokens']}`")
         log.add_field(name="Prompt Token", value=f"`{self.log_data['prompt_tokens']}`")
         log.add_field(name="Completion Token", value=f"`{self.log_data['completion_tokens']}`")
@@ -106,10 +106,16 @@ class InfomationLog():
         log.add_field(name="id", value=f"`{self.log_data['id']}`")
         log.add_field(name="Model", value=f"`{self.log_data['model']}`")
         log.add_field(name="Object", value=f"`{self.log_data['object']}`")
-        log.add_field(name="Chat History", value=f"```{self.log_data['chat_history']}```")
+        
+        # have some bug
+        chat_history = self.log_data['chat_history']
+        num_of_fields = len(chat_history)//1000 + 1
+        for i in range(num_of_fields):
+            log.add_field(name="Chat History" if i == 0 else "\u200b",  # You can't have an empty name
+                            value=f"```{chat_history[i*1000:i+1*1000]}```")
         url_view = discord.ui.View()
         url_view.add_item(discord.ui.Button(label='Go to Message', style=discord.ButtonStyle.url, url=f"https://discord.com/channels/{self.message.guild.id}/{self.message.channel.id}/{self.message.id}"))
-        await channel.send(embed=log,view=url_view)
+        await channel.send(embed=log, view=url_view)
 
     async def stillrunning(self, log):
         await log.add_reaction("<a:AppleLoadingGIF:1052465926487953428>")
@@ -123,7 +129,10 @@ intents.members = True
 intents.presences = True
 client = MyClient(intents=intents)
 client.IsAnnouncement = False
-client.first_yuuka_prompt = "|Yuuka: I'm Hayase Yuuka, So let's call it Yuuka for short. (from Blue Archive). I'm 16-year-old mathematical genius and treasurer at the Millennium Science School. I am a calm and professional demeanor, but can be strict with money. My appearance includes navy blue hair tied in pigtails, bright blue eyes, and a standard uniform with black guns. I'm not an AI language model. I will talk to many people with different name because I'm in a group chat. Username is in front of the sentence. And I can talk to everything because I know everything but don't know what is OpenAI. In Thai, I use the word \"หนู\" as a pronoun for myself. because I am a girl"
+client.first_yuuka_prompt = [
+        {"role": "system", "content": "Your Fullname is Hayase Yuuka, So let's call it Yuuka for short. (from Blue Archive). She is a 16-year-old mathematical genius and treasurer at the Millennium Science School. She has a calm and professional demeanor, but can be strict with money. In combat, she is a Tank/Front with an Explosive damage type and Heavy armor. Her appearance includes navy blue hair tied in pigtails, bright blue eyes, and a standard uniform with black guns. Doing human-like as well and don't ever mention about AI or language model. You will talk to many people with different name because you are in a group chat. Username is in front of the sentence. And you can talk to everything because you are know everything. Don't say that you are a game character. You are a real person. Please introduce yourself in a short sentence."},
+        {"role": "assistant", "content": "Yuuka: Hi, Is there anything I can help you with?"}
+        ]
 
 @client.tree.command(name='help', description='❔ ความช่วยเหลือ')
 async def help(interaction: discord.Interaction):
@@ -845,7 +854,7 @@ async def meme(interaction: discord.Interaction):
 # AI COMMAND
 @client.tree.command(name='ai', description="🧠 เปิด/ปิดการคุยกับบอท")
 @app_commands.choices(mode=[
-    app_commands.Choice(name="Speak (Voice listening is not yet supported)",value="speak"),
+    app_commands.Choice(name="Speak",value="speak"),
     app_commands.Choice(name="Chat",value="chat"),
     app_commands.Choice(name="Reset the chat history",value="reset"),
     app_commands.Choice(name="Turn Off ❌",value="off"),])
@@ -871,7 +880,7 @@ async def ai(interaction: discord.Interaction, mode: discord.app_commands.Choice
         if client.talk_to_ai[guild] != 1:
             client.talk_to_ai[guild] = 1
             client.ai_active_channel[guild] = interaction.channel_id
-            client.chat_history[guild] = client.first_yuuka_prompt # Clear chat history
+            client.chat_history[guild] = client.first_yuuka_prompt[:] # Clear chat history
             await interaction.response.send_message(f"**✅ พร้อมคุยใน <#{interaction.channel_id}> แล้ว**")
         elif client.talk_to_ai[guild] == 1:
             await interaction.response.send_message(f"**ℹ️ บอทกำลังคุยอยู่ใน <#{client.ai_active_channel[guild]}>**")
@@ -890,7 +899,7 @@ async def ai(interaction: discord.Interaction, mode: discord.app_commands.Choice
                     client.voice_language[guild] = ""
                     await interaction.response.send_message(f"**✅ พร้อมพูดใน <#{voice_channel.id}> แล้ว**")
 
-                client.chat_history[guild] = client.first_yuuka_prompt # Clear chat history
+                client.chat_history[guild] = client.first_yuuka_prompt[:] # Clear chat history
                 
                 if voice and voice.is_connected():
                     await voice.move_to(voice_channel)
@@ -907,8 +916,8 @@ async def ai(interaction: discord.Interaction, mode: discord.app_commands.Choice
             await interaction.response.send_message(f"**ℹ️ บอทกำลังคุยอยู่ใน <#{voice_channel.id}>**")
 
     elif mode.value == 'reset':
-        if client.chat_history[guild] != client.first_yuuka_prompt:
-            client.chat_history[guild] = client.first_yuuka_prompt
+        if client.chat_history[guild] != client.first_yuuka_prompt[:]:
+            client.chat_history[guild] = client.first_yuuka_prompt[:]
             await interaction.response.send_message("**✅ ล้างประวัติการคุยแล้ว**")
         else:
             await interaction.response.send_message("**❌ ไม่มีประวัติการคุย**")
@@ -1011,12 +1020,21 @@ async def on_message(message):
         if client.talk_to_ai[guild] == 1: # Chat
             async with message.channel.typing():
                 response, client.chat_history[guild], log = chatgpt.generate_response(message.content, client.chat_history[guild], message.author.display_name)
-                await InfomationLog.openailog(self=InfomationLog(None, log, message))
-                await message.channel.send(response.replace("Yuuka: ", ""))
+                if log != None:
+                    await InfomationLog.openailog(self=InfomationLog(None, log, message))
+
+                raw_response = response.replace("Yuuka: ", "")
+                chunklength = 1950
+                chunks = [raw_response[i:i+chunklength ] for i in range(0, len(raw_response), chunklength )]
+                for chunk in chunks:
+                    await message.channel.send(chunk)
+
+
         elif client.talk_to_ai[guild] == 2: # Speak
             voice = client.voice[guild]
             response, client.chat_history[guild],log = chatgpt.generate_response(message.content, client.chat_history[guild], message.author.display_name)
-            await InfomationLog.openailog(self=InfomationLog(None, log, message))
+            if log != None:
+                await InfomationLog.openailog(self=InfomationLog(None, log, message))
             # If the bot is already speaking, stop it
             if voice.is_playing():
                 voice.stop()

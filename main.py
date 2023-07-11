@@ -96,8 +96,17 @@ class InfomationLog():
         log = discord.Embed(title=f"**ID : **`{self.message.id}`", color=0x10a37f)
         log.set_author(name=self.message.author, icon_url=self.message.author.display_avatar.url)
         log.timestamp = self.message.created_at
-        log.add_field(name="Prompt", value=f"`{self.log_data['prompt'][:1020]}`") # Hard code at 2 AM
-        log.add_field(name="Response", value=f"`{self.log_data['response'][:1020]}`")
+
+        prompt = self.log_data['prompt'].replace('```', '')
+        prompt_segments = self.split_text(prompt, 1000)
+        for i, segment in enumerate(prompt_segments):
+            log.add_field(name="Prompt" if i == 0 else "\u200b", value=f"```{segment}```")
+
+        response = self.log_data['response'].replace('```', '')
+        response_segments = self.split_text(response, 1000)
+        for i, segment in enumerate(response_segments):
+            log.add_field(name="Response" if i == 0 else "\u200b", value=f"```{segment}```")
+
         log.add_field(name="Total Tokens", value=f"`{self.log_data['total_tokens']}`")
         log.add_field(name="Prompt Token", value=f"`{self.log_data['prompt_tokens']}`")
         log.add_field(name="Completion Token", value=f"`{self.log_data['completion_tokens']}`")
@@ -106,16 +115,20 @@ class InfomationLog():
         log.add_field(name="id", value=f"`{self.log_data['id']}`")
         log.add_field(name="Model", value=f"`{self.log_data['model']}`")
         log.add_field(name="Object", value=f"`{self.log_data['object']}`")
-        
-        # have some bug
-        chat_history = self.log_data['chat_history']
-        num_of_fields = len(chat_history)//1000 + 1
-        for i in range(num_of_fields):
-            log.add_field(name="Chat History" if i == 0 else "\u200b",  # You can't have an empty name
-                            value=f"```{chat_history[i*1000:i+1*1000]}```")
+
+        chat_history = self.log_data['chat_history'].replace('```', '')
+        chat_segments = self.split_text(chat_history, 1000)
+        for i, segment in enumerate(chat_segments):
+            log.add_field(name="Chat History" if i == 0 else "\u200b", value=f"```{segment}```")
+
         url_view = discord.ui.View()
         url_view.add_item(discord.ui.Button(label='Go to Message', style=discord.ButtonStyle.url, url=f"https://discord.com/channels/{self.message.guild.id}/{self.message.channel.id}/{self.message.id}"))
         await channel.send(embed=log, view=url_view)
+
+    @staticmethod
+    def split_text(text, chunk_size):
+        chunks = [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+        return chunks
 
     async def stillrunning(self, log):
         await log.add_reaction("<a:AppleLoadingGIF:1052465926487953428>")

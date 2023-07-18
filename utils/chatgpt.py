@@ -50,7 +50,7 @@ def generate_response(prompt, chat_history, name = "User"):
             'chat_history': userprompt+"\n\n"+generated_text
             }
 
-        print(f"chat_history :\n{prompt_with_history}")
+        #print(f"chat_history :\n{prompt_with_history}")
         return generated_text, prompt_with_history, log
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+# Still broken
 import discord
 from discord import ui
 from discord.ext import commands
@@ -11,6 +12,9 @@ class Feedback(commands.Cog):
     class FeedbackModal(ui.Modal, title='มีอะไรอยากบอก?'):
         def __init__(self):
             self.message = ui.TextInput(label='Answer', style=discord.TextStyle.paragraph)
+            self.custom_id = 'feedback'
+            self._children = [self.message]
+            self._View__stopped = False
 
         async def on_submit(self, interaction: discord.Interaction):
             channel = self.client.get_channel(1002616395495907328)

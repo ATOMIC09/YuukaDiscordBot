@@ -12,9 +12,7 @@ class Log(commands.Cog):
 
     # normal log
     async def sendlog(self, interaction, data={'content': ''}):
-        print('Logging')
-        print('interaction:', interaction)
-        print('data:', data)
+        print('log data:', data)
         channel = self.client.get_channel(1003719893260185750)
         sendlog = discord.Embed(title=f"**ID : **`{interaction.id}`", color=0x455EE8)
         sendlog.set_author(name=interaction.user, icon_url=interaction.user.display_avatar.url)

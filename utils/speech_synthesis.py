@@ -38,4 +38,4 @@ def tts(text, language_voice_code="", active_channel=0):
                 
 
 if __name__ == "__main__":
-    tts("こんにちは",language_voice_code="") # Hello
+    tts("สวัสดีค่ะ หนูชื่อฮายาเสะ ยูกะ ค่ะ หนูเป็นเด็กหญิงอายุ 16 ปีที่เป็นเจ้าหน้าที่สำหรับการจัดการเงินที่โรงเรียนวิทยาศาสตร์มิลเลนเนียมค่ะ มีอะไรให้หนูช่วยไหมคะ?",language_voice_code="th-TH-PremwadeeNeural") # Hello

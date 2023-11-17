@@ -1,0 +1,3 @@
+discord
+pyexcel
+pytz

@@ -11,7 +11,7 @@ class Ping(commands.Cog):
     async def on_ready(self):
         print("Ping cog loaded")
 
-    @app_commands.command(name="ping", description="Test Ping command")
+    @app_commands.command(name="ping", description="⌛ วัดความเร็วในการตอบสนองของบอท")
     async def ping(self, interaction: discord.Interaction):
         bot_latency = round(self.client.latency * 1000)
         await interaction.response.send_message(f"Pong! {bot_latency} ms.")

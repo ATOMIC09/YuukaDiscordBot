@@ -11,8 +11,6 @@ class Absent(commands.Cog):
     def __init__(self, client: commands.Bot):
         self.client = client
         self.log_cog = client.get_cog("Log")
-        self.member_absent = ""
-        self.count = 0
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -27,6 +25,8 @@ class Absent(commands.Cog):
             await self.log_cog.sendlog(interaction, data={'content': role})
         
         try:
+            member_absent = ""
+            count = 0
             vc = interaction.user.voice.channel
 
             data = [[f"บันทึกการขาดประชุม {vc.name}"]]
@@ -35,14 +35,14 @@ class Absent(commands.Cog):
             for member in interaction.guild.members:
                 if member.voice == None:
                     if role == None:
-                        self.member_absent += f'> {member.display_name}\n'
-                        self.count += 1
-                        data.append([self.count,member.display_name,"-"])
+                        member_absent += f'> {member.display_name}\n'
+                        count += 1
+                        data.append([count,member.display_name,"-"])
                     else:
                         if role in member.roles:
-                            self.member_absent += f'> {member.display_name}\n'
-                            self.count += 1
-                            data.append([self.count,member.display_name,role.name])
+                            member_absent += f'> {member.display_name}\n'
+                            count += 1
+                            data.append([count,member.display_name,role.name])
             
                 data.append([""])
             data.append([f"Time: {interaction.created_at.astimezone(tz=pytz.timezone('Asia/Bangkok')).strftime('%H:%M:%S')}"])
@@ -80,14 +80,14 @@ class Absent(commands.Cog):
             view.add_item(get_csv)
             view.add_item(get_xlsx)
 
-            if self.member_absent == "":
-                self.member_absent = "-"
+            if member_absent == "":
+                member_absent = "-"
 
             if role == None:
                 absent = discord.Embed(title="📝 บันทึกการขาดประชุม",color=0xFF3C5B)
                 absent.add_field(name="🔊 ช่องเสียง",value=f'`{vc.name}`',inline=False)
-                absent.add_field(name="👥 จำนวนผู้ขาด",value=f'`{self.count} คน`',inline=False)
-                absent.add_field(name="👤 รายชื่อ", value=f'{self.member_absent}', inline=False)
+                absent.add_field(name="👥 จำนวนผู้ขาด",value=f'`{count} คน`',inline=False)
+                absent.add_field(name="👤 รายชื่อ", value=f'{member_absent}', inline=False)
                 absent.timestamp = interaction.created_at
                 await interaction.response.send_message(embed=absent,view=view)
             
@@ -95,8 +95,8 @@ class Absent(commands.Cog):
                 absent = discord.Embed(title="📝 บันทึกการขาดประชุม",color=0xFF3C5B)
                 absent.add_field(name="🎩 บทบาท",value=f'`{role}`',inline=False)
                 absent.add_field(name="🔊 ช่องเสียง",value=f'`{vc.name}`',inline=False)
-                absent.add_field(name="👥 จำนวนผู้ขาด",value=f'`{self.count} คน`',inline=False)
-                absent.add_field(name="👤 รายชื่อ", value=f'{self.member_absent}', inline=False)
+                absent.add_field(name="👥 จำนวนผู้ขาด",value=f'`{count} คน`',inline=False)
+                absent.add_field(name="👤 รายชื่อ", value=f'{member_absent}', inline=False)
                 absent.timestamp = interaction.created_at
                 await interaction.response.send_message(embed=absent,view=view)
             await self.log_cog.runcomplete('<:Approve:921703512382009354>')

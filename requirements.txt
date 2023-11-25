@@ -1,6 +1,7 @@
 discord
 pyexcel
 pytz
+requests
 asyncpraw
 moviepy
 requests

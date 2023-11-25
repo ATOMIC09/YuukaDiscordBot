@@ -28,33 +28,33 @@ class Log(commands.Cog):
         await self.stillrunning(self.log_msg)
         return self.log_msg
     
-    async def openailog(self, interaction, data={'message': None}):
+    async def openailog(self, interaction, data={'message': None, 'log_data': None}):
         channel = self.client.get_channel(1003719893260185750)
         log = discord.Embed(title=f"**ID : **`{data['message'].id}`", color=0x10a37f)
         log.set_author(name=data['message'].author, icon_url=data['message'].author.display_avatar.url)
         log.timestamp = data['message'].created_at
 
-        prompt = data['context']['prompt'].replace('```', '')
-        prompt_segments = data['context'].split_text(prompt, 1000)
+        prompt = data['log_data']['prompt'].replace('```', '')
+        prompt_segments = self.split_text(prompt, 1000)
         for i, segment in enumerate(prompt_segments):
             log.add_field(name="Prompt" if i == 0 else "\u200b", value=f"```{segment}```")
 
-        response = data['context']['response'].replace('```', '')
-        response_segments = data['context'].split_text(response, 1000)
+        response = data['log_data']['response'].replace('```', '')
+        response_segments = self.split_text(response, 1000)
         for i, segment in enumerate(response_segments):
             log.add_field(name="Response" if i == 0 else "\u200b", value=f"```{segment}```")
 
-        log.add_field(name="Total Tokens", value=f"`{data['context']['total_tokens']}`")
-        log.add_field(name="Prompt Token", value=f"`{data['context']['prompt_tokens']}`")
-        log.add_field(name="Completion Token", value=f"`{data['context']['completion_tokens']}`")
-        log.add_field(name="Finish Reason", value=f"`{data['context']['finish_reason']}`")
-        log.add_field(name="Create", value=f"`{data['context']['created']}`")
-        log.add_field(name="id", value=f"`{data['context']['id']}`")
-        log.add_field(name="Model", value=f"`{data['context']['model']}`")
-        log.add_field(name="Object", value=f"`{data['context']['object']}`")
+        log.add_field(name="Total Tokens", value=f"`{data['log_data']['total_tokens']}`")
+        log.add_field(name="Prompt Token", value=f"`{data['log_data']['prompt_tokens']}`")
+        log.add_field(name="Completion Token", value=f"`{data['log_data']['completion_tokens']}`")
+        log.add_field(name="Finish Reason", value=f"`{data['log_data']['finish_reason']}`")
+        log.add_field(name="Create", value=f"`{data['log_data']['created']}`")
+        log.add_field(name="id", value=f"`{data['log_data']['id']}`")
+        log.add_field(name="Model", value=f"`{data['log_data']['model']}`")
+        log.add_field(name="Object", value=f"`{data['log_data']['object']}`")
 
-        chat_history = data['context']['chat_history'].replace('```', '')
-        chat_segments = data['context'].split_text(chat_history, 1000)
+        chat_history = data['log_data']['chat_history'].replace('```', '')
+        chat_segments = self.split_text(chat_history, 1000)
         for i, segment in enumerate(chat_segments):
             log.add_field(name="Chat History" if i == 0 else "\u200b", value=f"```{segment}```")
 

@@ -20,7 +20,7 @@ class SearchByImage(commands.Cog):
         print("SearchByImage cog loaded")
 
     async def searchbyimage(self, interaction: discord.Interaction, message: discord.Message):
-        await self.log_cog.sendlog(interaction)
+        await self.log_cog.sendlog(interaction, data={'content': message.attachments[0].filename})
         search_result = {}
         page_number = {}
         guild = interaction.guild.id
@@ -35,7 +35,6 @@ class SearchByImage(commands.Cog):
         response = requests.post(searchUrl, params=params, files=files)
         query_string = json.loads(response.content)['blocks'][0]['params']['url']
         img_search_url= searchUrl + '?' + query_string
-        print('img_search_url:', img_search_url)
 
         response = requests.get(img_search_url)
         if response.status_code == 200:
@@ -56,7 +55,6 @@ class SearchByImage(commands.Cog):
                         thumbnail_url = None
                     search_result[guild][index] = [title, link, description, thumbnail_url, picture_size]  
 
-                print(search_result)
         else:
             print('Failed to fetch the page')
 

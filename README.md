@@ -8,7 +8,7 @@
 </p>
 
 ## ❔ วิธีใช้งาน
-เพียงดึงบอทเข้าร่วมเซิร์ฟเวอร์ใน Discord [ผ่านลิ้งนี้](https://shorturl.at/agMX3)
+เพียงดึงบอทเข้าร่วมเซิร์ฟเวอร์ใน Discord [ผ่านลิ้งนี้](https://discord.com/api/oauth2/authorize?client_id=750733882374225940&permissions=8&scope=bot)
 
 และบอทนี้ขอใช้สิทธิ Administrator เพื่อใช้งานคำสั่งประเภทบังคับ ซึ่งจะมีผลกับทุกคนในเซิร์ฟเวอร์นั้น ๆ เช่น `/countdis`
 

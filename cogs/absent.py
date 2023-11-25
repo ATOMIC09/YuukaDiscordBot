@@ -49,12 +49,12 @@ class Absent(commands.Cog):
             data.append([f"Executed by {interaction.user.display_name}"])
 
             # Crate CSV file
-            with open(f'temp/{vc.id}_absent.csv', 'w', newline='', encoding='utf-8') as f:
+            with open(f'temp/sheets{vc.id}_absent.csv', 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 writer.writerows(data)
 
             # Create XLSX file
-            merge_all_to_a_book(glob.glob(f"temp/{vc.id}_absent.csv"), f"temp/{vc.id}_absent.xlsx")
+            merge_all_to_a_book(glob.glob(f"temp/sheets{vc.id}_absent.csv"), f"temp/sheets{vc.id}_absent.xlsx")
 
             # On Click Export
             get_csv = discord.ui.Button(label="Export to CSV",emoji="📤",style=discord.ButtonStyle.primary)
@@ -62,14 +62,14 @@ class Absent(commands.Cog):
 
             async def get_csv_callback(interaction):
                 try:
-                    file = discord.File(f"temp/{vc.id}_absent.csv")
+                    file = discord.File(f"temp/sheets{vc.id}_absent.csv")
                     await interaction.response.send_message(file=file)
                 except:
                     await interaction.response.send_message("❌ **ไฟล์หมดอายุแล้ว ต้องใช้คำสั่งใหม่อีกครั้ง**")
 
             async def get_xlsx_callback(interaction):
                 try:
-                    file = discord.File(f"temp/{vc.id}_absent.xlsx")
+                    file = discord.File(f"temp/sheets{vc.id}_absent.xlsx")
                     await interaction.response.send_message(file=file)
                 except:
                     await interaction.response.send_message("❌ **ไฟล์หมดอายุแล้ว ต้องใช้คำสั่งใหม่อีกครั้ง**")

@@ -10,10 +10,7 @@ class Yuuka(commands.Bot):
 
     async def loadcog(self):
         # At least it's O(n)
-        for filename in os.listdir('./cogs'):
-            # Need to load Log cog at first
-            if filename == 'log.py':
-                await self.load_extension(f'cogs.{filename[:-3]}')
+        await self.load_extension(f'cogs.log')
         for filename in os.listdir('./cogs'):
             if filename.endswith('.py') and filename != 'log.py':
                 await self.load_extension(f'cogs.{filename[:-3]}')

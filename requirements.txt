@@ -7,3 +7,9 @@ moviepy
 requests
 yt_dlp
 pyshorteners
+openai
+azure.cognitiveservices.speech
+langdetect
+opencv-python-headless
+PyNaCl
+bs4

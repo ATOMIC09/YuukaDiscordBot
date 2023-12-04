@@ -35,4 +35,4 @@
 * Discord : [@ATOMIC09](https://discords.com/bio/p/atomic09)
 
 ## © เครติด
-- ภาพโปรไฟล์ของบอท [👀](https://www.pixiv.net/en/artworks/94353390)
+- ภาพโปรไฟล์ของบอท [👀](https://www.pixiv.net/en/artworks/105671379)

@@ -27,8 +27,11 @@ class Ai(commands.Cog):
 
     @commands.Cog.listener("on_message")
     async def on_message(self, message):
-        guild = message.guild.id
-
+        try:
+            guild = message.guild.id
+        except: # ephemeral message
+            pass
+        
         # Check if guild is in the talk_to_ai dictionary, and add it if not
         if guild not in self.talk_to_ai:
             self.talk_to_ai[guild] = 0

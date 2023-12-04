@@ -7,7 +7,6 @@ class Announce(commands.Cog):
     def __init__(self, client: commands.Bot):
         self.client = client
         self.log_cog = client.get_cog("Log")
-        self.isAnnounce = False
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -17,15 +16,15 @@ class Announce(commands.Cog):
     @app_commands.describe(message="ข้อความประกาศ")
     async def announce(self, interaction: discord.Interaction, *, message: Optional[str]):
         if interaction.user.id == 269000561255383040:
-            if self.isAnnounce == False:
+            if self.client.isAnnounce == False:
                 await self.log_cog.sendlog(interaction, data={'content': message})
-                self.isAnnounce = True
+                self.client.isAnnounce = True
                 await self.client.change_presence(activity=discord.Activity(type=discord.ActivityType.listening, name=message))
                 await interaction.response.send_message(f'✅ **ประกาศ** {message} **เรียบร้อย**',ephemeral=True)
                 await self.log_cog.runcomplete('<:Approve:921703512382009354>')
             else:
                 await self.log_cog.sendlog(interaction)
-                self.isAnnounce = False
+                self.client.isAnnounce = False
                 await interaction.response.send_message(f'⏹ **หยุดประกาศเรียบร้อย**',ephemeral=True)
                 await self.log_cog.runcomplete('<:Approve:921703512382009354>')
 

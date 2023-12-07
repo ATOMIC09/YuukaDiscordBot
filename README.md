@@ -37,3 +37,7 @@
 
 ## © เครติด
 - ภาพโปรไฟล์ของบอท [👀](https://www.pixiv.net/en/artworks/105671379)
+
+<br>
+
+<video src="https://github.com/ATOMIC09/YuukaDiscordBot/assets/66838025/815c69a8-742b-4a30-ad96-c127097a303d"></video>

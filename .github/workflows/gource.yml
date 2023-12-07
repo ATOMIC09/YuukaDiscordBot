@@ -2,7 +2,7 @@ name: Gource Action
 on:
   push:
     branches:
-      - master
+      - yuuka-v2
 
 jobs:
   action:

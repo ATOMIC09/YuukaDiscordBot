@@ -17,6 +17,11 @@ jobs:
       - name: 'Gource Action'
         uses: nbprojekt/gource-action@v1
 
+      - name: Set up Git
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+
       - name: 'Create Branch and Push Video'
         run: |
           git checkout -b gource-visualisation

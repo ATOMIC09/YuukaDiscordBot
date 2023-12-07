@@ -20,7 +20,12 @@ class Deepfry(commands.Cog):
         print("Deepfry cog loaded")
 
     async def deepfry(self, interaction: discord.Interaction, message: discord.Message):
-        await self.log_cog.sendlog(interaction, data={'content': message.attachments[0].filename})
+        try:
+            await self.log_cog.sendlog(interaction, data={'content': message.attachments[0].filename})
+        except IndexError:
+            await interaction.response.send_message(f"❌ **[ไม่พบภาพที่ถูกแนบมา](<{message.jump_url}>)**", ephemeral=True)
+            return
+
         await interaction.response.send_message("<a:AppleLoadingGIF:1052465926487953428> **กำลังสร้าง...**")
         img_processsing.save_image_from_url(message.attachments[0].url, f"temp/deepfry/deepfryer_input/{message.attachments[0].filename}")
         img_processsing.deepfry(f"temp/deepfry/deepfryer_input/{message.attachments[0].filename}")

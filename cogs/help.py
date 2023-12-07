@@ -37,7 +37,7 @@ class Help(commands.Cog):
 
 
         bugs = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *⚠️ ปัญหา*", color=0xff6c17)
-        bugs.add_field(name="**/feedback**", value="ยังมึนกับโค้ดอยู่", inline=True)
+        bugs.add_field(name="**ไม่มี**", value="😋", inline=True)
 
         update = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *📌 ประวัติการอัปเดต*", color=0xdcfa80)
         update.add_field(name="1️⃣ V 1.0 | 04/12/2023", value="• Migrate from 1.x to 2.x\n• Rebuilt into a new bot structure", inline=True)

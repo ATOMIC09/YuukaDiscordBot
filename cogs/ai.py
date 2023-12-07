@@ -29,16 +29,16 @@ class Ai(commands.Cog):
     async def on_message(self, message):
         try:
             guild = message.guild.id
+            
+            # Check if guild is in the talk_to_ai dictionary, and add it if not
+            if guild not in self.talk_to_ai:
+                self.talk_to_ai[guild] = 0
+                self.ai_active_channel[guild] = 0
+                self.chat_history[guild] = self.first_yuuka_prompt
+                self.voice[guild] = None
+                self.voice_language[guild] = ""
         except: # ephemeral message
             pass
-        
-        # Check if guild is in the talk_to_ai dictionary, and add it if not
-        if guild not in self.talk_to_ai:
-            self.talk_to_ai[guild] = 0
-            self.ai_active_channel[guild] = 0
-            self.chat_history[guild] = self.first_yuuka_prompt
-            self.voice[guild] = None
-            self.voice_language[guild] = ""
 
         # Talk to AI
         if message.author.id != self.client.user.id and message.channel.id == self.ai_active_channel[guild]:

@@ -20,7 +20,12 @@ class SearchByImage(commands.Cog):
         print("SearchByImage cog loaded")
 
     async def searchbyimage(self, interaction: discord.Interaction, message: discord.Message):
-        await self.log_cog.sendlog(interaction, data={'content': message.attachments[0].filename})
+        try:
+            await self.log_cog.sendlog(interaction, data={'content': message.attachments[0].filename})
+        except IndexError:
+            await interaction.response.send_message(f"❌ **[ไม่พบภาพที่ถูกแนบมา](<{message.jump_url}>)**", ephemeral=True)
+            return
+
         search_result = {}
         page_number = {}
         guild = interaction.guild.id
@@ -28,7 +33,7 @@ class SearchByImage(commands.Cog):
         search_result[guild] = {}
         page_number[guild] = 1
 
-        await interaction.response.send_message(f"<a:MagnifierGIF:1052563354910216252> **[กำลังค้นหาภาพ]({message.jump_url})**")
+        await interaction.response.send_message(f"<a:MagnifierGIF:1052563354910216252> **[กำลังค้นหาภาพ](<{message.jump_url}>)**")
         searchUrl = 'https://yandex.com/images/search'
         files = {'upfile': ('blob', requests.get(message.attachments[0].url).content, 'image/jpeg')}
         params = {'rpt': 'imageview', 'format': 'json', 'request': '{"blocks":[{"block":"b-page_type_search-by-image__link"}]}'}
@@ -76,7 +81,7 @@ class SearchByImage(commands.Cog):
             search.timestamp = interaction.created_at
             search.set_footer(text=f'Page {page_number[guild]} of {len(search_result[guild])}')
             await interaction.response.defer()
-            await interaction.edit_original_response(content=f'🔎 **[ภาพที่ถูกค้นหา]({message.jump_url})**', embed=search, view=url_view)
+            await interaction.edit_original_response(content=f'🔎 **[ภาพที่ถูกค้นหา](<{message.jump_url}>)**', embed=search, view=url_view)
             await self.log_cog.runcomplete('<:Approve:921703512382009354>')
 
         async def go_previous(interaction):
@@ -90,7 +95,7 @@ class SearchByImage(commands.Cog):
             search.timestamp = interaction.created_at
             search.set_footer(text=f'Page {page_number[guild]} of {len(search_result[guild])}')
             await interaction.response.defer()
-            await interaction.edit_original_response(content=f'🔎 **[ภาพที่ถูกค้นหา]({message.jump_url})**', embed=search, view=url_view)
+            await interaction.edit_original_response(content=f'🔎 **[ภาพที่ถูกค้นหา](<{message.jump_url}>)**', embed=search, view=url_view)
             await self.log_cog.runcomplete('<:Approve:921703512382009354>')
 
         next_page = discord.ui.Button(label='Next page', emoji="➡️", style=discord.ButtonStyle.primary)
@@ -103,7 +108,7 @@ class SearchByImage(commands.Cog):
         url_view.add_item(discord.ui.Button(label='Search Result',emoji="🔗",style=discord.ButtonStyle.url, url=img_search_url))
         url_view.add_item(discord.ui.Button(label='Image Source',emoji="🔎",style=discord.ButtonStyle.url, url=search_result[guild][page_number[guild]][1]))
         
-        await interaction.edit_original_response(content=f'🔎 **[ภาพที่ถูกค้นหา]({message.jump_url})**' , embed=search, view=url_view)
+        await interaction.edit_original_response(content=f'🔎 **[ภาพที่ถูกค้นหา](<{message.jump_url}>)**' , embed=search, view=url_view)
         await self.log_cog.runcomplete('<:Approve:921703512382009354>')
 
 async def setup(client: commands.Bot):

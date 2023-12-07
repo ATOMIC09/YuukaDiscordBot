@@ -10,11 +10,11 @@ class Feedback(commands.Cog):
         self.log_cog = client.get_cog("Log")
 
     class FeedbackModal(ui.Modal, title='มีอะไรอยากบอก?'):
-        def __init__(self):
-            self.message = ui.TextInput(label='Answer', style=discord.TextStyle.paragraph)
-            self.custom_id = 'feedback'
-            self._children = [self.message]
-            self._View__stopped = False
+        def __init__(self, client, **kwargs):
+            self.client = client
+            super().__init__(**kwargs)
+
+        message = ui.TextInput(label='Answer', style=discord.TextStyle.paragraph)
 
         async def on_submit(self, interaction: discord.Interaction):
             channel = self.client.get_channel(1002616395495907328)
@@ -36,7 +36,8 @@ class Feedback(commands.Cog):
     @app_commands.command(name="feedback", description="📨 ส่งข้อความหลังไมค์ไปหาผู้สร้าง")
     async def feedback_command(self, interaction: discord.Interaction):
         await self.log_cog.sendlog(interaction)
-        await interaction.response.send_modal(self.FeedbackModal())
+        await interaction.response.send_modal(self.FeedbackModal(self.client))
+        await self.log_cog.runcomplete('<:Approve:921703512382009354>')
 
 async def setup(client: commands.Bot):
     print("Setting up Feedback cog")

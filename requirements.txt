@@ -1,5 +1,5 @@
 discord
-pyexcel
+pyexcel-xlsx
 pytz
 requests
 asyncpraw

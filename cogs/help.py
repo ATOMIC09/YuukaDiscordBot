@@ -31,6 +31,13 @@ class Help(commands.Cog):
         util.add_field(name="**👤 ดูข้อมูลบัญชีของผู้ใช้**", value="`/user`", inline=True)
         util.add_field(name="**😂 สุ่มวิดีโอมีม**", value="`/meme`", inline=True)
 
+        ai = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🧠 Ai*", color=0xfb17ff)
+        ai.add_field(name="**⌨ แชทกับบอท**", value="`/ai chat `", inline=True)
+        ai.add_field(name="**💹 แชทแบบไม่เก็บประวัติ** *(ประหยัดค่า API ;-;)*", value="`/ai oneshot-chat`", inline=True)
+        ai.add_field(name="**🔊 พิมพ์แชทและฟังบอทพูด**", value="`/ai speak`", inline=True)
+        ai.add_field(name="**🚮 ล้างประวัติการแชท**", value="`/ai reset`", inline=True)
+        ai.add_field(name="**❌ ปิดการคุยกับบอท**", value="`/ai stop`", inline=True)
+
         contextmenu = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🖱️ Apps (Context Menu)*", color=0x2cd453)
         contextmenu.add_field(name="**🔎 ค้นหาด้วยรูปภาพ**", value="`Search by Image`", inline=True)
         contextmenu.add_field(name="**🍟 ทอดกรอบภาพ**", value="`Deepfry`", inline=True)
@@ -45,6 +52,7 @@ class Help(commands.Cog):
 
         select = discord.ui.Select(placeholder="ตัวเลือกเมนู",options=[
         discord.SelectOption(label="เครื่องมืออรรถประโยชน์",emoji="🔧",description="คำสั่งการใช้งานทั่วไป",value="util",default=False),
+        discord.SelectOption(label="Ai", emoji="🧠",description="คุยกับบอท",value="ai",default=False),
         discord.SelectOption(label="Apps",emoji="🖱️",description="คำสั่งที่ใช้งานผ่านการ คลิกขวาที่ข้อความ -> Apps",value="contextmenu",default=False),
         discord.SelectOption(label="ปัญหา",emoji="⚠️",description="ปัญหาที่ทราบแล้ว",value="bugs",default=False),
         discord.SelectOption(label="ประวัติการอัปเดต",emoji="📌",description="คำสั่งตรวจสอบเวอร์ชันของบอท",value="update",default=False)
@@ -53,6 +61,9 @@ class Help(commands.Cog):
         async def my_callback(interaction):
             if select.values[0] == "util":
                 await interaction.response.edit_message(embed=util, view=view)
+
+            elif select.values[0] == "ai":
+                await interaction.response.edit_message(embed=ai, view=view)
 
             elif select.values[0] == "contextmenu":
                 await interaction.response.edit_message(embed=contextmenu, view=view)

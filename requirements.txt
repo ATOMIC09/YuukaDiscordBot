@@ -16,3 +16,5 @@ PyNaCl
 bs4
 psutil
 gTTS
+numpy
+opencv-python-headless

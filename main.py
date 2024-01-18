@@ -16,7 +16,8 @@ class Yuuka(commands.Bot):
                           'temp/deepfry/deepfryer_input', 
                           'temp/deepfry/deepfryer_output', 
                           'temp/sheets', 
-                          'temp/video']
+                          'temp/video',
+                          'temp/image',]
 
     async def loadcog(self):
         await self.load_extension(f'cogs.log')

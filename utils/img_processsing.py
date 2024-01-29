@@ -48,3 +48,9 @@ def get_filename(url):
     file_name = os.path.basename(url)
     file_name_only = os.path.splitext(file_name)[0]
     return file_name, file_name_only
+
+def get_shape(path):
+    image = cv2.imread(path,cv2.IMREAD_UNCHANGED)
+
+    height, width, channels = image.shape
+    return height, width, channels

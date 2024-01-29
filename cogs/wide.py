@@ -27,11 +27,13 @@ class Wide(commands.Cog):
 
         await interaction.response.send_message("<a:AppleLoadingGIF:1052465926487953428> **กำลังสร้าง...**")
         img_processsing.save_image_from_url(message.attachments[0].url, f"temp/image/{message.attachments[0].filename}")
+        source_shape = img_processsing.get_shape(f"temp/image/{message.attachments[0].filename}")
         img_processsing.wide(f"temp/image/{message.attachments[0].filename}",2)
+        result_shape = img_processsing.get_shape(f"temp/image/{message.attachments[0].filename}")
 
         path = f'temp/image/{message.attachments[0].filename}'
         file_name = discord.File(path)
-        await interaction.edit_original_response(content=f"✅ **สร้างเสร็จแล้ว `({filesize.getsize(path)})`**")
+        await interaction.edit_original_response(content=f"✅ **สร้างเสร็จแล้ว `{source_shape[0]}x{source_shape[1]} -> {result_shape[0]}x{result_shape[1]} ({filesize.getsize(path)})`**")
         
         await interaction.followup.send(file=file_name)
         await self.log_cog.runcomplete('<:Approve:921703512382009354>')

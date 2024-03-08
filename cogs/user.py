@@ -100,8 +100,8 @@ class User(commands.Cog):
         embed.set_thumbnail(url=user.display_avatar.url)
         embed.description = f"ไอดีของบัญชี : `{user.id}`\nข้อมูลจากเซิร์ฟเวอร์ : `{interaction.guild.name} ({interaction.guild_id})`"
         embed.add_field(name="**ชื่อเล่น**", value=f"`{user.display_name}`")
-        embed.add_field(name="**สร้างบัญชีเมื่อ**", value=f'{user.created_at.astimezone(tz=pytz.timezone('Asia/Bangkok')).strftime("`วันที่ %d/%m/%Y` `เวลา %H:%M:%S`")}')
-        embed.add_field(name="**เข้าร่วมเซิร์ฟเวอร์เมื่อ**", value=f'{user.joined_at.astimezone(tz=pytz.timezone('Asia/Bangkok')).strftime("`วันที่ %d/%m/%Y` `เวลา %H:%M:%S`")}')
+        embed.add_field(name="**สร้างบัญชีเมื่อ**", value=f'{user.created_at.astimezone(tz=pytz.timezone("Asia/Bangkok")).strftime("`วันที่ %d/%m/%Y` `เวลา %H:%M:%S`")}')
+        embed.add_field(name="**เข้าร่วมเซิร์ฟเวอร์เมื่อ**", value=f'{user.joined_at.astimezone(tz=pytz.timezone("Asia/Bangkok")).strftime("`วันที่ %d/%m/%Y` `เวลา %H:%M:%S`")}')
         embed.add_field(name="**กิจกรรม**", value=activity)
         embed.add_field(name=f"**เซิร์ฟเวอร์ร่วมกับบอท : {len_mutual_guilds} เซิร์ฟเวอร์**", value=f"> {mutual_guilds}")
         embed.add_field(name="**เหรียญตรา**", value=f"> {message}")

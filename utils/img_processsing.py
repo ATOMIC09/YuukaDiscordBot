@@ -41,6 +41,14 @@ def scale(path,scale):
         return "ไม่สามารถปรับขนาดภาพได้"
     cv2.imwrite(path,res)
 
+def resize(path,width,height):
+    img = cv2.imread(path)
+    try:
+        resized = cv2.resize(img, (width, height))
+    except:
+        return "ไม่สามารถปรับขนาดภาพได้"
+    cv2.imwrite(path,resized)
+
 # File management
 def save_image_from_url(url, filename):
     try:
@@ -63,4 +71,4 @@ def get_shape(path):
     image = cv2.imread(path,cv2.IMREAD_UNCHANGED)
 
     height, width, channels = image.shape
-    return height, width, channels
+    return width, height, channels

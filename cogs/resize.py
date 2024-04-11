@@ -4,18 +4,18 @@ from discord import app_commands
 import utils.img_processsing as img_processsing
 import utils.filesize as filesize
 
-class Scale(commands.Cog):
+class Resize(commands.Cog):
     def __init__(self, client: commands.Bot):
         self.client = client
         self.log_cog = client.get_cog("Log")
 
     @commands.Cog.listener()
     async def on_ready(self):
-        print("Scale cog loaded")
+        print("Resize cog loaded")
 
-    @app_commands.command(name='scale', description="📏 ปรับสเกลภาพด้วยบอท")
-    @app_commands.describe(scale='ขนาดที่จะปรับ เช่น 2 หรือ 200% คือการขยายภาพขึ้นเป็นสองเท่า')
-    async def scale(self, interaction: discord.Interaction, scale: str): 
+    @app_commands.command(name='resize', description="📏 ปรับขนาดภาพด้วยบอท")
+    @app_commands.describe(width='ความกว้างที่จะปรับ', height='ความสูงที่จะปรับ')
+    async def resize(self, interaction: discord.Interaction, width: int, height: int):
         # Get last imange from channel
         channel = self.client.get_channel(interaction.channel_id)
         message = await discord.utils.get(channel.history(limit=10))
@@ -36,7 +36,7 @@ class Scale(commands.Cog):
         
         img_processsing.save_image_from_url(attachment.url, f"temp/image/{attachment.filename}")
         source_shape = img_processsing.get_shape(f"temp/image/{attachment.filename}")
-        status = img_processsing.scale(f"temp/image/{attachment.filename}", float(scale.split('%')[0])/100 if '%' in scale else float(scale))
+        status = img_processsing.resize(f"temp/image/{attachment.filename}", width, height)
         if status:
             await interaction.edit_original_response(content=f"❌ **{status}**")
             await self.log_cog.runcomplete('⚠️')
@@ -51,5 +51,5 @@ class Scale(commands.Cog):
         await self.log_cog.runcomplete('<:Approve:921703512382009354>')
 
 async def setup(client: commands.Bot):
-    print("Setting up Scale cog")
-    await client.add_cog(Scale(client))
+    print("Setting up Resize cog")
+    await client.add_cog(Resize(client))

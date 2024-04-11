@@ -33,10 +33,7 @@ def wide(path,stretch):
 
 def scale(path,scale):
     image = cv2.imread(path)
-    try:
-        height, width, channels = image.shape
-    except:
-        return "ไม่รองรับภาพนี้"
+    height, width, channels = image.shape
     size = (math.ceil(width*scale), math.ceil(height*scale))
     try:
         res = cv2.resize(image, size)

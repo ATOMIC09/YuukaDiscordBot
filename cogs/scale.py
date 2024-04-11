@@ -29,6 +29,11 @@ class Scale(commands.Cog):
 
 
         await interaction.response.send_message("<a:AppleLoadingGIF:1052465926487953428> **กำลังสร้าง...**")
+        if attachment.filename.split('.')[-1] in ['gif', 'svg']:
+            await interaction.edit_original_response(content=f"❌ **ไม่รองรับภาพนี้**")
+            await self.log_cog.runcomplete('⚠️')
+            return
+        
         img_processsing.save_image_from_url(attachment.url, f"temp/image/{attachment.filename}")
         source_shape = img_processsing.get_shape(f"temp/image/{attachment.filename}")
         status = img_processsing.scale(f"temp/image/{attachment.filename}", float(scale.split('%')[0])/100 if '%' in scale else float(scale))

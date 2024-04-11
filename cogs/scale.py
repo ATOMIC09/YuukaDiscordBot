@@ -34,6 +34,7 @@ class Scale(commands.Cog):
         status = img_processsing.scale(f"temp/image/{attachment.filename}", float(scale.split('%')[0])/100 if '%' in scale else float(scale))
         if status:
             await interaction.edit_original_response(content=f"❌ **{status}**")
+            await self.log_cog.runcomplete('⚠️')
             return
         
         result_shape = img_processsing.get_shape(f"temp/image/{message.attachments[0].filename}")

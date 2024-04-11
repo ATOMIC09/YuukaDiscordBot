@@ -31,6 +31,16 @@ def wide(path,stretch):
     res = cv2.resize(img_RGBA, size)
     cv2.imwrite(path,res)
 
+def scale(path,scale):
+    image = cv2.imread(path)
+    height, width, channels = image.shape
+    size = (math.ceil(width*scale), math.ceil(height*scale))
+    try:
+        res = cv2.resize(image, size)
+    except:
+        return "ไม่สามารถปรับขนาดภาพได้"
+    cv2.imwrite(path,res)
+
 # File management
 def save_image_from_url(url, filename):
     try:

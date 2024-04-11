@@ -30,6 +30,7 @@ class Help(commands.Cog):
         util.add_field(name="**🧠 เปิด/ปิดการคุยกับบอท**", value="`/ai`", inline=True)
         util.add_field(name="**👤 ดูข้อมูลบัญชีของผู้ใช้**", value="`/user`", inline=True)
         util.add_field(name="**😂 สุ่มวิดีโอมีม**", value="`/meme`", inline=True)
+        util.add_field(name="**📏 ปรับขนาดภาพ**", value="`/scale`", inline=True)
 
         ai = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🧠 Ai*", color=0xfb17ff)
         ai.add_field(name="**⌨ แชทกับบอท**", value="`/ai chat `", inline=True)
@@ -41,14 +42,15 @@ class Help(commands.Cog):
         contextmenu = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🖱️ Apps (Context Menu)*", color=0x2cd453)
         contextmenu.add_field(name="**🔎 ค้นหาด้วยรูปภาพ**", value="`Search by Image`", inline=True)
         contextmenu.add_field(name="**🍟 ทอดกรอบภาพ**", value="`Deepfry`", inline=True)
+        contextmenu.add_field(name="**↔️ ยืดภาพ**", value="`Wide`", inline=True)
 
 
         bugs = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *⚠️ ปัญหา*", color=0xff6c17)
-        bugs.add_field(name="**ไม่มี**", value="😋", inline=True)
+        bugs.add_field(name="**ไม่มี...มั้งนะ**", value="😋", inline=True)
 
         update = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *📌 ประวัติการอัปเดต*", color=0xdcfa80)
-        update.add_field(name="1️⃣ V 1.0 | 04/12/2023", value="• Migrate from 1.x to 2.x\n• Rebuilt into a new bot structure", inline=True)
-        update.add_field(name="2️⃣ V 1.1 | \*\*/\*\*/\*\*\*\*", value="• Migrate commands from Miura", inline=True)
+        update.add_field(name="1️⃣ V 2.0 | 04/12/2023", value="• Migrate from 1.x to 2.x\n• Rebuilt into a new bot structure", inline=True)
+        update.add_field(name="2️⃣ V 2.1 | \*\*/\*\*/\*\*\*\*", value="• Finished migrating commands from Miura", inline=True)
 
         select = discord.ui.Select(placeholder="ตัวเลือกเมนู",options=[
         discord.SelectOption(label="เครื่องมืออรรถประโยชน์",emoji="🔧",description="คำสั่งการใช้งานทั่วไป",value="util",default=False),

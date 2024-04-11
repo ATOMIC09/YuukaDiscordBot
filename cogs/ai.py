@@ -26,7 +26,7 @@ class Ai(app_commands.Group):
         
     @app_commands.command(name='chat', description="🧠 แชทข้อความกับบอท")
     async def chat(self, interaction: discord.Interaction):
-        await self.log_cog.sendlog(interaction, data={'content': "ai"})
+        await self.log_cog.sendlog(interaction, data={'content': "in /ai"})
         guild = interaction.guild_id
         if guild not in self.talk_to_ai:
             self.talk_to_ai[guild] = 0
@@ -52,7 +52,7 @@ class Ai(app_commands.Group):
 
     @app_commands.command(name='speak', description="🧠 พูดกับบอท")
     async def speak(self, interaction: discord.Interaction, language: Optional[str]):
-        await self.log_cog.sendlog(interaction, data={'content': "ai"})
+        await self.log_cog.sendlog(interaction, data={'content': "in /ai"})
         guild = interaction.guild_id
         if guild not in self.talk_to_ai:
             self.talk_to_ai[guild] = 0
@@ -90,7 +90,7 @@ class Ai(app_commands.Group):
 
     @app_commands.command(name='oneshot-chat', description="🧠 แชทกับบอทแบบประหยัด (ถามคำตอบคำ ไม่เก็บประวัติการแชท)")
     async def oneshot_chat(self, interaction: discord.Interaction):
-        await self.log_cog.sendlog(interaction, data={'content': "ai"})
+        await self.log_cog.sendlog(interaction, data={'content': "in /ai"})
         guild = interaction.guild_id
         if guild not in self.talk_to_ai:
             self.talk_to_ai[guild] = 0
@@ -116,7 +116,7 @@ class Ai(app_commands.Group):
 
     @app_commands.command(name='reset', description="🧠 ล้างประวัติการแชท")
     async def reset(self, interaction: discord.Interaction):
-        await self.log_cog.sendlog(interaction, data={'content': "ai"})
+        await self.log_cog.sendlog(interaction, data={'content': "in /ai"})
         guild = interaction.guild_id
         if guild not in self.talk_to_ai:
             self.talk_to_ai[guild] = 0
@@ -134,7 +134,7 @@ class Ai(app_commands.Group):
 
     @app_commands.command(name='stop', description="🧠 หยุดคุยกับบอท")
     async def stop(self, interaction: discord.Interaction):
-        await self.log_cog.sendlog(interaction, data={'content': "ai"})
+        await self.log_cog.sendlog(interaction, data={'content': "in /ai"})
         guild = interaction.guild_id
 
         if self.talk_to_ai[guild] == 0 or self.ai_active_channel[guild] == 0:

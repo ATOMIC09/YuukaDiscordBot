@@ -10,6 +10,7 @@ class Countdis(commands.Cog):
         self.log_cog = client.get_cog("Log")
         self.time_stop = {}
         self.countdis_except = {}
+        self.already_called = {}
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -33,9 +34,17 @@ class Countdis(commands.Cog):
                 self.countdis_except[guild] = []
             
             if time < 0:
-                await interaction.response.send_message("**เวลาไม่ถูกต้อง ❌**")
+                await interaction.response.send_message("**❌ นาฬิกาบ้านคุณช่างวิเศษเสียจริง เวลาสามารถติดลบได้**")
                 await self.log_cog.runcomplete('⚠️')
             else:
+                try:
+                    if self.already_called[channel.id]:
+                        await interaction.response.send_message("**❌ แค่ตัวเดียวก็เกินพอแล้ว**")
+                        await self.log_cog.runcomplete('⚠️')
+                        return
+                except KeyError:
+                    self.already_called[channel.id] = True
+                    
                 output = countdown.countdown(time)
                 view = discord.ui.View()
                 view.add_item(stop_button)
@@ -44,7 +53,8 @@ class Countdis(commands.Cog):
                 await interaction.response.send_message(output, view=view)
                 for i in range(time):
                     if self.time_stop[guild] == True:
-                        await interaction.edit_original_response(content="**ยกเลิกการนับถอยหลังแล้ว 🛑**", view=None)
+                        await interaction.edit_original_response(content="**🛑 ยกเลิกการนับถอยหลังแล้ว**", view=None)
+                        self.already_called.pop(channel.id)
                         break
                     
                     await asyncio.sleep(1)
@@ -68,14 +78,15 @@ class Countdis(commands.Cog):
                     exceptme_button.callback = exceptme
 
                 if self.time_stop[guild] == False:
-                    await interaction.edit_original_response(content="**หมดเวลา 🔔**", view=None)
+                    await interaction.edit_original_response(content="**🔔 หมดเวลา**", view=None)
                     for member in all_member:
                         if member.id in self.countdis_except[guild]:
                             continue
                         await member.move_to(None)
                         member_count += 1
                     
-                    await interaction.followup.send(f"⏏️  **ตัดการเชื่อมต่อจำนวน {member_count} คน จาก `{channel}` สำเร็จแล้ว**")
+                    await interaction.followup.send(f"⏏️  **ตัดการเชื่อมต่อทั้งหมด {member_count} คน จาก `{channel}` สำเร็จแล้ว**")
+                    self.already_called.pop(channel.id)
 
                 # Reset
                 self.countdis_except[guild] = []
@@ -83,7 +94,7 @@ class Countdis(commands.Cog):
                 await self.log_cog.runcomplete('<:Approve:921703512382009354>')
         
         except AttributeError:
-            await interaction.response.send_message(content="**ถีบใคร? ไม่มีใครให้ถีบอะดิ (●'◡'●)**")
+            await interaction.response.send_message(content="**จะให้ถีบใคร? ไม่มีใครให้ถีบอะ ಠل͟ಠ**")
             await self.log_cog.runcomplete('⚠️')
 
 async def setup(client):

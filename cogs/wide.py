@@ -35,8 +35,13 @@ class Wide(commands.Cog):
         file_name = discord.File(path)
         await interaction.edit_original_response(content=f"✅ **สร้างเสร็จแล้ว `{source_shape[0]}x{source_shape[1]} -> {result_shape[0]}x{result_shape[1]} ({filesize.getsize(path)})`**")
         
-        await interaction.followup.send(file=file_name)
-        await self.log_cog.runcomplete('<:Approve:921703512382009354>')
+        try:
+            await interaction.followup.send(file=file_name)
+            await self.log_cog.runcomplete('<:Approve:921703512382009354>')
+        except:
+            await interaction.edit_original_response(content=f"❌ **ไฟล์ใหญ่เกินไป `{source_shape[0]}x{source_shape[1]} -> {result_shape[0]}x{result_shape[1]} ({filesize.getsize(path)})`**")
+            await self.log_cog.runcomplete('⚠️')
+            return
         
 async def setup(client: commands.Bot):
     print("Setting up Wide cog")

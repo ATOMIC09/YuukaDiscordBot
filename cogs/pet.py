@@ -9,7 +9,6 @@ class Pet(commands.Cog):
     def __init__(self, client: commands.Bot):
         self.client = client
         self.log_cog = client.get_cog("Log")
-        self.client.tree.add_command(self.context_menu)
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -33,7 +32,7 @@ class Pet(commands.Cog):
         await interaction.response.send_message("<a:AppleLoadingGIF:1052465926487953428> **กำลังสร้าง...**")
         img_processsing.save_image_from_url(attachment.url, f"temp/image/{attachment.filename}")
         file_name_only = img_processsing.get_filename(attachment.filename)[1]
-        
+
         petpet.make(f'temp/image/{attachment.filename}', f'temp/image/{file_name_only}_petpet.gif')
         path = f'temp/image/{file_name_only}_petpet.gif'
         file_name = discord.File(path)

@@ -18,3 +18,4 @@ psutil
 gTTS
 numpy
 opencv-python-headless
+pet-pet-gif

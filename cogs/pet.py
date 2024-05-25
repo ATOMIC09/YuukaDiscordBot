@@ -28,10 +28,10 @@ class Pet(commands.Cog):
 
         await interaction.response.send_message("<a:AppleLoadingGIF:1052465926487953428> **กำลังสร้าง...**")
         img_processsing.save_image_from_url(message.attachments[0].url, f"temp/image/{message.attachments[0].filename}")
-        petpet.make(f'temp/image/{message.attachments[0].filename}', f'temp/image/{get_file_name_only}_petpet.gif')
         
         get_file_name_only = img_processsing.get_filename(message.attachments[0].url)[1]
-        
+
+        petpet.make(f'temp/image/{message.attachments[0].filename}', f'temp/image/{get_file_name_only}_petpet.gif')
         path = f'temp/image/{get_file_name_only}_petpet.gif'
         file_name = discord.File(path)
         await interaction.edit_original_response(content=f"✅ **สร้างเสร็จแล้ว `({filesize.getsize(path)})`**")

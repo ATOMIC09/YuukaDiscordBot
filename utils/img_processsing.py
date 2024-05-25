@@ -49,6 +49,17 @@ def resize(path,width,height):
         return "ไม่สามารถปรับขนาดภาพได้"
     cv2.imwrite(path,resized)
 
+def grayscale(path):
+    img = cv2.imread(path,cv2.IMREAD_UNCHANGED)
+
+    # Save the transparency channel alpha
+    *_, alpha = cv2.split(img)
+
+    gray_layer = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    img = cv2.merge((gray_layer, gray_layer, gray_layer, alpha))
+    
+    cv2.imwrite(path,img)
+
 # File management
 def save_image_from_url(url, filename):
     try:
@@ -65,7 +76,8 @@ def save_image_from_url(url, filename):
 def get_filename(url):
     file_name = os.path.basename(url)
     file_name_only = os.path.splitext(file_name)[0]
-    return file_name, file_name_only
+    ext = os.path.splitext(file_name)[1]
+    return file_name, file_name_only, ext
 
 def get_shape(path):
     image = cv2.imread(path,cv2.IMREAD_UNCHANGED)

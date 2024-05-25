@@ -3,6 +3,7 @@ from utils import deepfryer
 import requests
 import os
 import math
+from urllib.parse import urlparse, parse_qs
 
 def deepfry(path):
     imageNormal = cv2.imread(path)
@@ -74,9 +75,9 @@ def save_image_from_url(url, filename):
         print(f"An error occurred: {e}")
 
 def get_filename(url):
-    file_name = os.path.basename(url)
-    file_name_only = os.path.splitext(file_name)[0]
-    ext = os.path.splitext(file_name)[1]
+    parsed_url = urlparse(url)
+    file_name = os.path.basename(parsed_url.path)
+    file_name_only, ext = os.path.splitext(file_name)
     return file_name, file_name_only, ext
 
 def get_shape(path):

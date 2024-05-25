@@ -37,9 +37,8 @@ class QRCode(commands.Cog):
             img = qr.make_image(fill_color="black", back_color="white")
         else:
             img = qr.make_image().convert('RGB')
-            
-        pos = ((img.size[0] - logo.size[0]) // 2, (img.size[1] - logo.size[1]) // 2)
-        img.paste(logo, pos)
+            pos = ((img.size[0] - logo.size[0]) // 2, (img.size[1] - logo.size[1]) // 2)
+            img.paste(logo, pos)
 
         path = f"temp/image/{uuid.uuid4().hex}.png"
         img.save(path)

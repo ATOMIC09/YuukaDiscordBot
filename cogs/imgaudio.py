@@ -15,7 +15,7 @@ class ImgAudio(commands.Cog):
     async def on_ready(self):
         print("ImgAudio cog loaded")
 
-    @app_commands.command(name='imgaudio', description="🎵 แปลงรูปเป็นเสียง")
+    @app_commands.command(name='imgaudio', description="🎵 สร้างคลิปเสียงจากภาพ")
     async def imgaudio(self, interaction: discord.Interaction):
         # Get last media from channel
         channel = self.client.get_channel(interaction.channel_id)

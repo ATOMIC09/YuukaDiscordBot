@@ -19,7 +19,7 @@ class QRCode(commands.Cog):
 
     @app_commands.command(name='qrcode', description="📸 สร้าง QR Code")
     @app_commands.describe(text='ข้อความที่จะสร้าง QR Code', logo='ลิ้งภาพของโลโก้ที่จะใส่ลงใน QR Code', box_size='จำนวนพิกเซลแต่ละช่อง', border='ความหนาของขอบ', version='จำนวน 1-40 ที่ควบคุมขนาดของ QR Code (version 1 = 21x21 matrix)')
-    async def qrcode(self, interaction: discord.Interaction, text: str, logo: Optional[str], box_size: Optional[int] = 10, border: Optional[int] = 4, version: Optional[int] = 1):
+    async def qr(self, interaction: discord.Interaction, text: str, logo: Optional[str], box_size: Optional[int] = 10, border: Optional[int] = 4, version: Optional[int] = 1):
         await self.log_cog.sendlog(interaction, data={'content': f'box_size: {box_size} border: {border} version: {version}'})
         await interaction.response.send_message("<a:AppleLoadingGIF:1052465926487953428> **กำลังสร้าง...**")
         

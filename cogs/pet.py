@@ -9,30 +9,33 @@ class Pet(commands.Cog):
     def __init__(self, client: commands.Bot):
         self.client = client
         self.log_cog = client.get_cog("Log")
-        self.context_menu = app_commands.ContextMenu(
-            name='Pet',
-            callback=self.pet,
-        )
         self.client.tree.add_command(self.context_menu)
 
     @commands.Cog.listener()
     async def on_ready(self):
         print("Pet cog loaded")
 
-    async def pet(self, interaction: discord.Interaction, message: discord.Message):
-        try:
-            await self.log_cog.sendlog(interaction, data={'content': message.attachments[0].filename})
-        except IndexError:
-            await interaction.response.send_message(f"❌ **[ไม่พบภาพที่ถูกแนบมา](<{message.jump_url}>)**", ephemeral=True)
+    @app_commands.command(name='pet', description="🐶 ตบหลังแล้วลูบหัว")
+    async def pet(self, interaction: discord.Interaction):
+        # Get last imange from channel
+        channel = self.client.get_channel(interaction.channel_id)
+        message = await discord.utils.get(channel.history(limit=10))
+
+        if len(message.attachments) > 0:
+            for attachment in message.attachments:
+                await self.log_cog.sendlog(interaction, data={'content': attachment.filename})
+        else:
+            await interaction.response.send_message(f"❌ **ไม่พบภาพที่ถูกแนบมา**")
+            
             return
 
-        await interaction.response.send_message("<a:AppleLoadingGIF:1052465926487953428> **กำลังสร้าง...**")
-        img_processsing.save_image_from_url(message.attachments[0].url, f"temp/image/{message.attachments[0].filename}")
-        
-        get_file_name_only = img_processsing.get_filename(message.attachments[0].url)[1]
 
-        petpet.make(f'temp/image/{message.attachments[0].filename}', f'temp/image/{get_file_name_only}_petpet.gif')
-        path = f'temp/image/{get_file_name_only}_petpet.gif'
+        await interaction.response.send_message("<a:AppleLoadingGIF:1052465926487953428> **กำลังสร้าง...**")
+        img_processsing.save_image_from_url(attachment.url, f"temp/image/{attachment.filename}")
+        file_name_only = img_processsing.get_filename(attachment.filename)[1]
+        
+        petpet.make(f'temp/image/{attachment.filename}', f'temp/image/{file_name_only}_petpet.gif')
+        path = f'temp/image/{file_name_only}_petpet.gif'
         file_name = discord.File(path)
         await interaction.edit_original_response(content=f"✅ **สร้างเสร็จแล้ว `({filesize.getsize(path)})`**")
         

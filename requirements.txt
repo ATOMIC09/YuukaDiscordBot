@@ -19,3 +19,5 @@ gTTS
 numpy
 opencv-python-headless
 pet-pet-gif
+qrcode
+Pillow

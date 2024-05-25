@@ -5,8 +5,7 @@ import os
 import math
 from urllib.parse import urlparse, parse_qs
 import cv2
-from PIL import Image
-from PIL.ExifTags import TAGS
+from PIL import Image, ExifTags
 from datetime import datetime
 
 def deepfry(path):
@@ -85,13 +84,18 @@ def imginfo(path):
     last_modified_time = datetime.fromtimestamp(os.path.getmtime(path)).strftime('%Y-%m-%d %H:%M:%S')
 
     # Extract EXIF data
-    pil_image = Image.open(path)
-    exif_data = pil_image._getexif()
     exif_info = {}
-    if exif_data:
-        for tag, value in exif_data.items():
-            tag_name = TAGS.get(tag, tag)
-            exif_info[tag_name] = value
+    try:
+        pil_image = Image.open(path)
+        exif_data = pil_image._getexif()
+        if exif_data:
+            print("Raw EXIF data:", exif_data)  # Debugging: Print raw EXIF data
+            for tag, value in exif_data.items():
+                tag_name = ExifTags.TAGS.get(tag, tag)
+                exif_info[tag_name] = value
+                print(f"EXIF tag: {tag_name}, value: {value}")  # Debugging: Print each EXIF tag and its value
+    except Exception as e:
+        print(f"Error reading EXIF data: {e}")
 
     # Extract specific EXIF information if available
     date_taken = exif_info.get('DateTimeOriginal', 'N/A')
@@ -115,6 +119,7 @@ def imginfo(path):
         "iso_speed": iso_speed,
         "focal_length": focal_length
     }
+
 
 # File management
 def save_image_from_url(url, filename):

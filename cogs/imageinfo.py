@@ -9,7 +9,7 @@ class ImageInfo(commands.Cog):
         self.client = client
         self.log_cog = client.get_cog("Log")
         self.context_menu = app_commands.ContextMenu(
-            name='ImageInfo',
+            name='Image Information',
             callback=self.imageinfo,
         )
         self.client.tree.add_command(self.context_menu)
@@ -25,6 +25,7 @@ class ImageInfo(commands.Cog):
             await interaction.response.send_message(f"❌ **[ไม่พบภาพที่ถูกแนบมา](<{message.jump_url}>)**", ephemeral=True)
             return
 
+        await interaction.response.send_message("<a:AppleLoadingGIF:1052465926487953428> **กำลังตรวจสอบ...**")
         img_processsing.save_image_from_url(message.attachments[0].url, f"temp/image/{message.attachments[0].filename}")
 
         info = img_processsing.imginfo(f"temp/image/{message.attachments[0].filename}")
@@ -57,7 +58,7 @@ class ImageInfo(commands.Cog):
         embed.add_field(name="📈 ค่า ISO", value=f"`{iso_speed}`", inline=False)
         embed.add_field(name="🔭 ความยาวโฟกัส", value=f"`{focal_length}`", inline=False)
         
-        await interaction.response.send_message(embed=embed)
+        await interaction.edit_original_response(embed=embed)
         await self.log_cog.runcomplete('<:Approve:921703512382009354>')
 
 async def setup(client: commands.Bot):

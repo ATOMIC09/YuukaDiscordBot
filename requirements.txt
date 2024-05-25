@@ -21,3 +21,4 @@ opencv-python-headless
 pet-pet-gif
 qrcode
 Pillow
+# pymediainfo

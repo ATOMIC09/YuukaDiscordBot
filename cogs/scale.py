@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import utils.img_processsing as img_processsing
+import utils.img_processing as img_processing
 import utils.filesize as filesize
 
 class Scale(commands.Cog):
@@ -34,15 +34,15 @@ class Scale(commands.Cog):
             await self.log_cog.runcomplete('⚠️')
             return
         
-        img_processsing.save_image_from_url(attachment.url, f"temp/image/{attachment.filename}")
-        source_shape = img_processsing.get_shape(f"temp/image/{attachment.filename}")
-        status = img_processsing.scale(f"temp/image/{attachment.filename}", float(scale.split('%')[0])/100 if '%' in scale else float(scale))
+        img_processing.save_image_from_url(attachment.url, f"temp/image/{attachment.filename}")
+        source_shape = img_processing.get_shape(f"temp/image/{attachment.filename}")
+        status = img_processing.scale(f"temp/image/{attachment.filename}", float(scale.split('%')[0])/100 if '%' in scale else float(scale))
         if status:
             await interaction.edit_original_response(content=f"❌ **{status}**")
             await self.log_cog.runcomplete('⚠️')
             return
         
-        result_shape = img_processsing.get_shape(f"temp/image/{attachment.filename}")
+        result_shape = img_processing.get_shape(f"temp/image/{attachment.filename}")
         path = f'temp/image/{attachment.filename}'
         file_name = discord.File(path)
         await interaction.edit_original_response(content=f"✅ **สร้างเสร็จแล้ว `{source_shape[0]}x{source_shape[1]} -> {result_shape[0]}x{result_shape[1]} ({filesize.getsize(path)})`**")

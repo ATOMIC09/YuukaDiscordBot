@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import utils.img_processsing as img_processsing
+import utils.img_processing as img_processing
 import utils.filesize as filesize
 from petpetgif import petpet
 
@@ -30,8 +30,8 @@ class Pet(commands.Cog):
 
 
         await interaction.response.send_message("<a:AppleLoadingGIF:1052465926487953428> **กำลังสร้าง...**")
-        img_processsing.save_image_from_url(attachment.url, f"temp/image/{attachment.filename}")
-        file_name_only = img_processsing.get_filename(attachment.filename)[1]
+        img_processing.save_image_from_url(attachment.url, f"temp/image/{attachment.filename}")
+        file_name_only = img_processing.get_filename(attachment.filename)[1]
 
         petpet.make(f'temp/image/{attachment.filename}', f'temp/image/{file_name_only}_petpet.gif')
         path = f'temp/image/{file_name_only}_petpet.gif'

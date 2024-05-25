@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import utils.img_processsing as img_processsing
+import utils.img_processing as img_processing
 import utils.filesize as filesize
 
 class ImageInfo(commands.Cog):
@@ -26,9 +26,9 @@ class ImageInfo(commands.Cog):
             return
 
         await interaction.response.send_message("<a:AppleLoadingGIF:1052465926487953428> **กำลังตรวจสอบ...**")
-        img_processsing.save_image_from_url(message.attachments[0].url, f"temp/image/{message.attachments[0].filename}")
+        img_processing.save_image_from_url(message.attachments[0].url, f"temp/image/{message.attachments[0].filename}")
 
-        info = img_processsing.imginfo(f"temp/image/{message.attachments[0].filename}")
+        info = img_processing.imginfo(f"temp/image/{message.attachments[0].filename}")
         channel = info["channel_type"]
         width = info["width"]
         height = info["height"]

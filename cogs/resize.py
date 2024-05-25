@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import utils.img_processsing as img_processsing
+import utils.img_processing as img_processing
 import utils.filesize as filesize
 
 class Resize(commands.Cog):
@@ -34,15 +34,15 @@ class Resize(commands.Cog):
             await self.log_cog.runcomplete('⚠️')
             return
         
-        img_processsing.save_image_from_url(attachment.url, f"temp/image/{attachment.filename}")
-        source_shape = img_processsing.get_shape(f"temp/image/{attachment.filename}")
-        status = img_processsing.resize(f"temp/image/{attachment.filename}", width, height)
+        img_processing.save_image_from_url(attachment.url, f"temp/image/{attachment.filename}")
+        source_shape = img_processing.get_shape(f"temp/image/{attachment.filename}")
+        status = img_processing.resize(f"temp/image/{attachment.filename}", width, height)
         if status:
             await interaction.edit_original_response(content=f"❌ **{status}**")
             await self.log_cog.runcomplete('⚠️')
             return
         
-        result_shape = img_processsing.get_shape(f"temp/image/{attachment.filename}")
+        result_shape = img_processing.get_shape(f"temp/image/{attachment.filename}")
         path = f'temp/image/{attachment.filename}'
         file_name = discord.File(path)
         await interaction.edit_original_response(content=f"✅ **สร้างเสร็จแล้ว `{source_shape[0]}x{source_shape[1]} -> {result_shape[0]}x{result_shape[1]} ({filesize.getsize(path)})`**")

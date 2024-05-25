@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import utils.img_processsing as img_processsing
+import utils.img_processing as img_processing
 import utils.filesize as filesize
 import os
 
@@ -27,12 +27,12 @@ class Grayscale(commands.Cog):
             return
 
         await interaction.response.send_message("<a:AppleLoadingGIF:1052465926487953428> **กำลังสร้าง...**")
-        img_processsing.save_image_from_url(message.attachments[0].url, f"temp/image/{message.attachments[0].filename}")
+        img_processing.save_image_from_url(message.attachments[0].url, f"temp/image/{message.attachments[0].filename}")
 
-        get_file_name_only = img_processsing.get_filename(message.attachments[0].url)[1]
-        ext = img_processsing.get_filename(message.attachments[0].url)[2]
+        get_file_name_only = img_processing.get_filename(message.attachments[0].url)[1]
+        ext = img_processing.get_filename(message.attachments[0].url)[2]
         
-        img_processsing.grayscale(f"temp/image/{message.attachments[0].filename}")
+        img_processing.grayscale(f"temp/image/{message.attachments[0].filename}")
         os.rename(f"temp/image/{message.attachments[0].filename}", f"temp/image/{get_file_name_only}_grayscale.{ext}")
         path = f'temp/image/{get_file_name_only}_grayscale.{ext}'
         file_name = discord.File(path)

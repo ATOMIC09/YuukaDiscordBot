@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import utils.img_processsing as img_processsing
+import utils.img_processing as img_processing
 import utils.filesize as filesize
 import qrcode
 from typing import Optional
@@ -24,8 +24,8 @@ class QRCode(commands.Cog):
         await interaction.response.send_message("<a:AppleLoadingGIF:1052465926487953428> **กำลังสร้าง...**")
         
         if logo != None:
-            file_name = img_processsing.get_filename(logo)[0]
-            img_processsing.save_image_from_url(logo, f"temp/image/{file_name}")
+            file_name = img_processing.get_filename(logo)[0]
+            img_processing.save_image_from_url(logo, f"temp/image/{file_name}")
             logolocal = Image.open(f"temp/image/{file_name}")
 
         qr = qrcode.QRCode(

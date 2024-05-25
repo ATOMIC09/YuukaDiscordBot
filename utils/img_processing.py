@@ -3,7 +3,7 @@ from utils import deepfryer
 import requests
 import os
 import math
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse
 import cv2
 from PIL import Image, ExifTags
 from datetime import datetime
@@ -122,13 +122,14 @@ def imginfo(path):
 
 
 # File management
-def save_image_from_url(url, filename):
+def save_image_from_url(url, path):
     try:
         response = requests.get(url)
         if response.status_code == 200:
-            with open(filename, 'wb') as file:
+            with open(path, 'wb') as file:
                 file.write(response.content)
-                print(f"Image saved as {filename}")
+                print(f"Image saved as {path}")
+                return path
         else:
             print("Failed to fetch the image")
     except Exception as e:

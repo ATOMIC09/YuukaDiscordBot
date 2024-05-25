@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import utils.img_processsing as img_processsing
+import utils.img_processing as img_processing
 import utils.filesize as filesize
 
 class Deepfry(commands.Cog):
@@ -26,11 +26,11 @@ class Deepfry(commands.Cog):
             return
 
         await interaction.response.send_message("<a:AppleLoadingGIF:1052465926487953428> **กำลังสร้าง...**")
-        img_processsing.save_image_from_url(message.attachments[0].url, f"temp/deepfry/deepfryer_input/{message.attachments[0].filename}")
+        img_processing.save_image_from_url(message.attachments[0].url, f"temp/deepfry/deepfryer_input/{message.attachments[0].filename}")
 
-        get_file_name_only = img_processsing.get_filename(message.attachments[0].url)[1]
+        get_file_name_only = img_processing.get_filename(message.attachments[0].url)[1]
 
-        img_processsing.deepfry(f"temp/deepfry/deepfryer_input/{message.attachments[0].filename}")
+        img_processing.deepfry(f"temp/deepfry/deepfryer_input/{message.attachments[0].filename}")
         path = f'temp/deepfry/deepfryer_output/{get_file_name_only}_deepfried.png'
         file_name = discord.File(path)
         await interaction.edit_original_response(content=f"✅ **สร้างเสร็จแล้ว `({filesize.getsize(path)})`**")

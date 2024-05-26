@@ -1,13 +1,63 @@
-from moviepy.editor import AudioFileClip, ImageClip
+from moviepy.editor import AudioFileClip, ImageClip, VideoFileClip, concatenate_videoclips
+from PIL import Image
+import os
 
-
-def add_static_image_to_audio(image_path, audio_path, output_path):
+def add_static_image_to_audio(image_path, audio_path, output_path, fps=1):
     audio_clip = AudioFileClip(audio_path)
-    image_clip = ImageClip(image_path)
-    video_clip = image_clip.set_audio(audio_clip)
-    video_clip.duration = audio_clip.duration
-    video_clip.fps = 1
-    video_clip.write_videofile(output_path)
+    audio_duration = audio_clip.duration
+
+    if image_path.endswith('.gif'):
+        file_name = os.path.basename(image_path)
+        
+        # Using context manager to ensure proper resource handling
+        with VideoFileClip(image_path) as gif_clip:
+            gif_duration = gif_clip.duration
+            
+            if gif_duration < audio_duration:
+                num_loops = int(audio_duration / gif_duration) + 1
+                gif_clip = concatenate_videoclips([gif_clip] * num_loops)
+            gif_clip = gif_clip.set_duration(audio_duration)
+            
+            # Add audio to the gif_clip
+            video_with_audio = gif_clip.set_audio(audio_clip)
+            video_with_audio.write_videofile(output_path, fps=fps, audio_codec='aac')
+    else:
+        # Static image handling
+        file_name = os.path.basename(image_path)
+        
+        # Create a video clip from the image with the duration of the audio
+        image_clip = ImageClip(image_path, duration=audio_duration)
+        image_clip = image_clip.set_audio(audio_clip)
+        
+        # Write the final video file with FPS set to 1
+        image_clip.write_videofile(output_path, fps=fps, audio_codec='aac')
+
+
+def get_gif_fps(gif_path):
+    # Open the GIF file
+    gif = Image.open(gif_path)
+
+    # Initialize variables
+    total_duration = 0
+    frame_count = 0
+
+    while True:
+        try:
+            # Get the duration of the current frame
+            duration = gif.info['duration']  # Duration in milliseconds
+            total_duration += duration
+            frame_count += 1
+
+            # Move to the next frame
+            gif.seek(gif.tell() + 1)
+        except EOFError:
+            # Exit the loop when all frames have been processed
+            break
+
+    # Calculate the FPS
+    total_duration_seconds = total_duration / 1000  # Convert to seconds
+    fps = frame_count / total_duration_seconds if total_duration_seconds > 0 else 0
+    return fps
 
 def is_video_file(filename):
     video_file_extensions = (

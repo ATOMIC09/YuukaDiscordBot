@@ -49,7 +49,7 @@ class ImgAudio(commands.Cog):
                     found_media == 0
                     break
             else:
-                print("No attachment")
+                pass
                 
         await self.log_cog.sendlog(interaction, data={'content': f"{filename1} + {filename2}"})
 
@@ -62,7 +62,11 @@ class ImgAudio(commands.Cog):
             audio_path = img_processing.save_image_from_url(url2, f"temp/audio/{filename2}")
             await message2.add_reaction("🔉")
             # Process the video
-            video_processing.add_static_image_to_audio(image_path, audio_path, f"temp/video/{filename1.split('.')[0]}_{filename2.split('.')[0]}.mp4")
+            if filename1.endswith('.gif'):
+                fps = video_processing.get_gif_fps(image_path)
+                video_processing.add_static_image_to_audio(image_path, audio_path, f"temp/video/{filename1.split('.')[0]}_{filename2.split('.')[0]}.mp4", fps=fps)
+            else:
+                video_processing.add_static_image_to_audio(image_path, audio_path, f"temp/video/{filename1.split('.')[0]}_{filename2.split('.')[0]}.mp4")
             path = f"temp/video/{filename1.split('.')[0]}_{filename2.split('.')[0]}.mp4"
             # Send the video
             file_name = discord.File(path)
@@ -79,7 +83,11 @@ class ImgAudio(commands.Cog):
             image_path = img_processing.save_image_from_url(url2, f"temp/image/{filename2}")
             await message2.add_reaction("🖼️")
             # Process the video
-            video_processing.add_static_image_to_audio(image_path, audio_path, f"temp/video/{filename2.split('.')[0]}_{filename1.split('.')[0]}.mp4")
+            if filename2.endswith('.gif'):
+                fps = video_processing.get_gif_fps(image_path)
+                video_processing.add_static_image_to_audio(image_path, audio_path, f"temp/video/{filename2.split('.')[0]}_{filename1.split('.')[0]}.mp4", fps=fps)
+            else:
+                video_processing.add_static_image_to_audio(image_path, audio_path, f"temp/video/{filename2.split('.')[0]}_{filename1.split('.')[0]}.mp4")
             path = f"temp/video/{filename2.split('.')[0]}_{filename1.split('.')[0]}.mp4"
             # Send the video
             file_name = discord.File(path)

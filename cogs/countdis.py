@@ -19,6 +19,8 @@ class Countdis(commands.Cog):
     @app_commands.command(name="countdis", description="🔌 นับถอยหลังและตัดการเชื่อมต่อ")
     @app_commands.describe(time='เวลาเป็นหน่วยวินาที')
     async def countdis(self, interaction: discord.Interaction, time: int):
+        followup_sent = False
+        new_message = None
         await self.log_cog.sendlog(interaction, data={'content': f'{time}'})
         try:
             all_member = interaction.user.voice.channel.members
@@ -52,14 +54,33 @@ class Countdis(commands.Cog):
 
                 await interaction.response.send_message(output, view=view)
                 for i in range(time):
-                    if self.time_stop[guild] == True:
-                        await interaction.edit_original_response(content="**🛑 ยกเลิกการนับถอยหลังแล้ว**", view=None)
-                        self.already_called.pop(channel.id)
-                        break
-                    
                     await asyncio.sleep(1)
                     output = countdown.countdown(time - i - 1)
-                    await interaction.edit_original_response(content=output)
+                    
+                    # When stop button is clicked
+                    if self.time_stop[guild] == True:
+                        print(f'new_message: {new_message}')
+                        if followup_sent:
+                            await new_message.edit(content="**🛑 ยกเลิกการนับถอยหลังแล้ว**", view=None)
+                        else:
+                            await interaction.edit_original_response(content="**🛑 ยกเลิกการนับถอยหลังแล้ว**", view=None)
+                        self.already_called.pop(channel.id)
+                        break
+
+                    if i <= 600: # 10 minutes before sending followup message
+                        await interaction.edit_original_response(content=output)
+                    else:
+                        if not followup_sent:
+                            # remove buttons
+                            view.clear_items()
+                            await interaction.edit_original_response(content="**เปลี่ยนนาฬิกาแล้ว!**", view=view)
+                            # send new followup message instead
+                            view.add_item(stop_button)
+                            view.add_item(exceptme_button)
+                            new_message = await interaction.followup.send(content=output, view=view)
+                            followup_sent = True
+                        else:
+                            await new_message.edit(content=output)
 
                     # Except Me
                     async def exceptme(interaction: discord.Interaction):
@@ -73,19 +94,23 @@ class Countdis(commands.Cog):
                     # Stop
                     async def stop(interaction: discord.Interaction):
                         self.time_stop[guild] = True
+                        print('stop button clicked')
 
                     stop_button.callback = stop
                     exceptme_button.callback = exceptme
 
                 if self.time_stop[guild] == False:
-                    await interaction.edit_original_response(content="**🔔 หมดเวลา**", view=None)
+                    if followup_sent:
+                        await new_message.edit(content="**🔔 หมดเวลา**", view=None)
+                    else:
+                        await interaction.edit_original_response(content="**🔔 หมดเวลา**", view=None)
                     for member in all_member:
                         if member.id in self.countdis_except[guild]:
                             continue
                         await member.move_to(None)
                         member_count += 1
                     
-                    await interaction.followup.send(f"⏏️  **ตัดการเชื่อมต่อทั้งหมด {member_count} คน จาก `{channel}` สำเร็จแล้ว**")
+                    await interaction.followup.send(f"⏏️  **ตัดการเชื่อมต่อทั้ง {member_count} คน จาก `{channel}` แล้วนะ**")
                     self.already_called.pop(channel.id)
 
                 # Reset

@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+import asyncio
 
 class Log(commands.Cog):
     def __init__(self, client: commands.Bot):
@@ -72,6 +73,7 @@ class Log(commands.Cog):
 
     async def runcomplete(self, emoji):
         await self.log_msg.add_reaction(emoji)
+        await asyncio.sleep(1)
         await self.log_msg.remove_reaction("<a:AppleLoadingGIF:1052465926487953428>", self.client.user)
 
 

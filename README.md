@@ -36,8 +36,5 @@
 * Discord : [@ATOMIC09](https://discords.com/bio/p/atomic09)
 
 ## © เครติด
-- ภาพโปรไฟล์ของบอท [👀](https://www.pixiv.net/en/artworks/105671379)
-
-<br>
-
-<video src="https://github.com/ATOMIC09/YuukaDiscordBot/assets/66838025/815c69a8-742b-4a30-ad96-c127097a303d"></video>
+- ภาพโปรไฟล์ของบอท [👀](https://www.pixiv.net/en/artworks/121894766)
+- ภาพปกของบอท [🖼](https://x.com/morphling_2/status/1655501344164433922)

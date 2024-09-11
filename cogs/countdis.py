@@ -36,7 +36,7 @@ class Countdis(commands.Cog):
                 self.countdis_except[guild] = []
             
             if time < 0:
-                await interaction.response.send_message("**❌ นาฬิกาบ้านคุณช่างวิเศษเสียจริง เวลาสามารถติดลบได้**")
+                await interaction.response.send_message("**❌ นาฬิกาแบบจินตภาพ**")
                 await self.log_cog.runcomplete('⚠️')
             else:
                 try:
@@ -119,7 +119,7 @@ class Countdis(commands.Cog):
                 await self.log_cog.runcomplete('<:Approve:921703512382009354>')
         
         except AttributeError:
-            await interaction.response.send_message(content="**จะให้ถีบใคร? ไม่มีใครให้ถีบอะ ಠل͟ಠ**")
+            await interaction.response.send_message(content="**ไม่มีใครให้ถีบ ಠل͟ಠ**")
             await self.log_cog.runcomplete('⚠️')
 
 async def setup(client):

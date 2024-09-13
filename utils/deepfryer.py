@@ -61,8 +61,8 @@ def badPosterize(imageNormal):
     """
     colorList = np.arange(0, 256)
     colorDivider = np.linspace(0, 255,3)[1]
-    colorQuantization = np.int0(np.linspace(0, 255, 2))
-    colorLevels = np.clip(np.int0(colorList/colorDivider), 0, 1)
+    colorQuantization = np.int_(np.linspace(0, 255, 2))
+    colorLevels = np.clip(np.int_(colorList/colorDivider), 0, 1)
     colorPalette = colorQuantization[colorLevels]
     return colorPalette[imageNormal]
 

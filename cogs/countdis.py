@@ -21,7 +21,6 @@ class Countdis(commands.Cog):
     async def countdis(self, interaction: discord.Interaction, time: int):
         await self.log_cog.sendlog(interaction, data={'content': f'{time}'})
         try:
-            all_member = interaction.user.voice.channel.members
             stop_button = discord.ui.Button(label="Stop", style=discord.ButtonStyle.red)
             exceptme_button = discord.ui.Button(label="Except Me", style=discord.ButtonStyle.primary)
             guild = interaction.guild_id
@@ -99,7 +98,7 @@ class Countdis(commands.Cog):
 
                 if self.time_stop[guild] == False:
                     await store_message.edit(content="**🔔 หมดเวลา**", view=None)
-                    for member in all_member:
+                    for member in interaction.user.voice.channel.members: # If no one is in the channel, it may cause an error (To be fix later)
                         if member.id in self.countdis_except[guild]:
                             continue
                         await member.move_to(None)

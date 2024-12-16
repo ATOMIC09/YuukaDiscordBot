@@ -1,4 +1,4 @@
-from moviepy.editor import AudioFileClip, ImageClip, VideoFileClip, concatenate_videoclips
+from moviepy import AudioFileClip, ImageClip, VideoFileClip, concatenate_videoclips
 from PIL import Image
 import os
 

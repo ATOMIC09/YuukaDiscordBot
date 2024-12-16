@@ -1,4 +1,4 @@
-import moviepy.editor as mp
+import moviepy as mp
 import requests
 
 def check_http_status(url):

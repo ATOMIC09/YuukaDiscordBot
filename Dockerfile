@@ -1,4 +1,4 @@
-FROM gorialis/discord.py
+FROM gorialis/discord.py:3.10.15-bookworm-master-minimal
 
 WORKDIR /app
 

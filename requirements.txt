@@ -4,14 +4,13 @@ pyexcel-xlsx
 pytz
 requests
 asyncpraw
-moviepy
+moviepy==1.0.3 # v2.X.X will conflict with rvc-python
 requests
 yt_dlp
 pyshorteners
 openai
 azure.cognitiveservices.speech
 langdetect
-opencv-python-headless
 PyNaCl
 bs4
 psutil
@@ -22,3 +21,6 @@ pet-pet-gif
 qrcode
 Pillow
 # pymediainfo
+rvc-python==0.1.5
+torch==2.1.1
+torchaudio==2.1.1

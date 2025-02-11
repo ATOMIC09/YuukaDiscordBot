@@ -5,6 +5,7 @@ from typing import Optional
 import utils.tts_language_check as tts_language_check
 import utils.chatgpt as chatgpt
 import utils.speech_synthesis as speech_synthesis
+import utils.rvc.gen_rvc_audio as rvc
 
 class Ai(app_commands.Group):
     def __init__(self, client: commands.Bot, name):
@@ -13,6 +14,7 @@ class Ai(app_commands.Group):
         self.name = name
         self.log_cog = client.get_cog("Log")
         self.talk_to_ai = {}
+        self.rvc_active = {}
         self.ai_active_channel = {}
         self.chat_history = {}
         self.voice = {}
@@ -45,13 +47,13 @@ class Ai(app_commands.Group):
             self.talk_to_ai[guild] = 1
             self.ai_active_channel[guild] = interaction.channel_id
             self.chat_history[guild] = self.first_yuuka_prompt[:] # Clear chat history
-            await interaction.response.send_message(f"**✅ พร้อมคุยใน <#{interaction.channel_id}> แล้ว**")
+            await interaction.response.send_message(f"**✅ พร้อมแชทใน <#{interaction.channel_id}> แล้ว**")
         elif self.talk_to_ai[guild] == 1:
-            await interaction.response.send_message(f"**ℹ️ บอทกำลังคุยอยู่ใน <#{self.ai_active_channel[guild]}>**")
+            await interaction.response.send_message(f"**ℹ️ บอทกำลังแชทอยู่ใน <#{self.ai_active_channel[guild]}>**")
         await self.log_cog.runcomplete('<:Approve:921703512382009354>')
 
-    @app_commands.command(name='speak', description="🧠 พูดกับบอท")
-    async def speak(self, interaction: discord.Interaction, language: Optional[str]):
+    @app_commands.command(name='speak', description="🧠 ฟังบอทพูด")
+    async def speak(self, interaction: discord.Interaction, language: Optional[str], rvc: Optional[bool] = False):
         await self.log_cog.sendlog(interaction, data={'content': "in /ai"})
         guild = interaction.guild_id
         if guild not in self.talk_to_ai:
@@ -64,14 +66,21 @@ class Ai(app_commands.Group):
                 voice = discord.utils.get(self.client.voice_clients, guild=interaction.guild)
                 self.talk_to_ai[guild] = 2
                 self.ai_active_channel[guild] = interaction.channel_id
-                if language != None and tts_language_check.check(language):
+                if language != None and tts_language_check.check(language) and rvc == False:
                     self.voice_language[guild] = language
-                    await interaction.response.send_message(f"**✅ พร้อมพูดใน <#{voice_channel.id}> ด้วยเสียง `{language}` แล้ว**")
-                else:
+                    await interaction.response.send_message(f"**✅ พร้อมฟังใน <#{voice_channel.id}> ด้วยเสียง `{language}` แล้ว**")
+                elif language != None and tts_language_check.check(language) and rvc == True:
+                    self.voice_language[guild] = language
+                    await interaction.response.send_message(f"**✅ พร้อมฟังใน <#{voice_channel.id}> ด้วยเสียง `{language}` แล้ว (กำลังใช้งาน RVC)**")
+                elif language == None and rvc == False:
                     self.voice_language[guild] = ""
-                    await interaction.response.send_message(f"**✅ พร้อมพูดใน <#{voice_channel.id}> แล้ว**")
+                    await interaction.response.send_message(f"**✅ พร้อมฟังใน <#{voice_channel.id}> แล้ว**")
+                elif language == None and rvc == True:
+                    self.voice_language[guild] = ""
+                    await interaction.response.send_message(f"**✅ พร้อมฟังใน <#{voice_channel.id}> แล้ว (กำลังใช้งาน RVC)**")
 
                 self.chat_history[guild] = self.first_yuuka_prompt[:] # Clear chat history
+                self.rvc_active[guild] = rvc
                 
                 if voice and voice.is_connected():
                     await voice.move_to(voice_channel)
@@ -109,9 +118,9 @@ class Ai(app_commands.Group):
             self.talk_to_ai[guild] = 3
             self.ai_active_channel[guild] = interaction.channel_id
             self.chat_history[guild] = self.first_yuuka_prompt[:] # Clear chat history
-            await interaction.response.send_message(f"**✅ พร้อมคุยใน <#{interaction.channel_id}> แล้ว**")
+            await interaction.response.send_message(f"**✅ พร้อมแชทใน <#{interaction.channel_id}> แล้ว**")
         elif self.talk_to_ai[guild] == 3:
-            await interaction.response.send_message(f"**ℹ️ บอทกำลังคุยอยู่ใน <#{self.ai_active_channel[guild]}>**")
+            await interaction.response.send_message(f"**ℹ️ บอทกำลังแชทอยู่ใน <#{self.ai_active_channel[guild]}>**")
         await self.log_cog.runcomplete('<:Approve:921703512382009354>')
 
     @app_commands.command(name='reset', description="🧠 ล้างประวัติการแชท")
@@ -154,7 +163,7 @@ class Ai(app_commands.Group):
                 print("Error to disconnect voice")
         self.talk_to_ai[guild] = 0
         self.ai_active_channel[guild] = 0
-        await interaction.response.send_message("**❌ ปิดการใช้งาน AI แล้ว**")
+        await interaction.response.send_message("**❌ ปิดการคุยแล้ว**")
         await self.log_cog.runcomplete('<:Approve:921703512382009354>')
 
     @commands.Cog.listener()
@@ -213,7 +222,12 @@ class Ai(app_commands.Group):
                 if voice.is_playing():
                     voice.stop()
                 speech_synthesis.tts(response.replace("Yuuka: ", ""), self.voice_language[guild], self.ai_active_channel[guild])
-                voice.play(discord.FFmpegPCMAudio(f"temp/ai/{self.ai_active_channel[guild]}_output.wav"))
+
+                if self.rvc_active[guild] == False:
+                    voice.play(discord.FFmpegPCMAudio(f"temp/ai/{self.ai_active_channel[guild]}_output.wav"))
+                else:
+                    rvc.gen_audio(self.ai_active_channel[guild])
+                    voice.play(discord.FFmpegPCMAudio(f"temp/ai/{self.ai_active_channel[guild]}_outputrvc.wav"))
 
 async def setup(client):
     print("Setting up Ai cog")

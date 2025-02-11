@@ -28,7 +28,7 @@ def generate_response(prompt, chat_history, name = "User"):
             messages=prompt_with_history
         )
 
-        print('response:', response)
+        # print('response:', response)
         generated_text = response.choices[0].message.content
         prompt_with_history.append({"role": "assistant", "content": generated_text})
 

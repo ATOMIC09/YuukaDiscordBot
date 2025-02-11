@@ -1,16 +1,16 @@
-<h1 align="center">🌈 YuukaDiscordBot - v2.0 "Kaboom Upgrade!" 💥</h1>
-<h6 align="center">เขียนใหม่ทั้งหมด 🗿</p>
+<h1 align="center">🌈 YuukaDiscordBot - v2.1 "ยกเครื่อง เรื่องเสียง!" 🔊</h1>
+<h6 align="center">ยังมีความไม่เสถียรอีกมหาศาล 🗿</p>
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-2.0-blue.svg?cacheSeconds=2592000" />
+  <img alt="Version" src="https://img.shields.io/badge/version-2.1-blue.svg?cacheSeconds=2592000" />
   <a>
     <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" />
   </a>
 </p>
 
 ## ❔ วิธีใช้งาน
-เพียงดึงบอทเข้าร่วมเซิร์ฟเวอร์ใน Discord [ผ่านลิ้งนี้](https://discord.com/api/oauth2/authorize?client_id=750733882374225940&permissions=8&scope=bot)
+เพียงดึงบอทเข้าร่วมเซิร์ฟเวอร์ใน Discord [ผ่านลิ้งนี้](https://discord.com/oauth2/authorize?client_id=750733882374225940)
 
-และบอทนี้ขอใช้สิทธิ Administrator เพื่อใช้งานคำสั่งประเภทบังคับ ซึ่งจะมีผลกับทุกคนในเซิร์ฟเวอร์นั้น ๆ เช่น `/countdis`
+และบอทนี้ขอใช้สิทธิ Administrator เพื่อใช้งานคำสั่งประเภท**บังคับ** ซึ่งจะมีผลกับทุกคนในเซิร์ฟเวอร์นั้น ๆ เช่น `/countdis`
 
 ## 🚀 รายการคำสั่ง Slash Command ที่สามารถใช้งานได้
 - `/ping` วัดความเร็วในการตอบสนองของบอท
@@ -27,6 +27,7 @@
 - `/user` ดูข้อมูลบัญชีของผู้ใช้
 - `/meme` โหลดมีมที่มาจาก Reddit
 - `/ai` เปิดโหมด Ai เป็นแชทบอท
+- และอื่น ๆ
 
 ## 📄 รายการคำสั่ง Context Command (คลิกขวาที่ข้อความ -> Apps -> ...)
 - `Search by Image` ค้นหาภาพคล้าย

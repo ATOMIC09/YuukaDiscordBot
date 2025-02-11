@@ -54,7 +54,7 @@ class Help(commands.Cog):
 
         update = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *📌 ประวัติการอัปเดต*", color=0xdcfa80)
         update.add_field(name="1️⃣ V 2.0 | 04/12/2023", value="• Migrate from 1.x to 2.x\n• Rebuilt into a new bot structure", inline=True)
-        update.add_field(name="2️⃣ V 2.1 | \*\*/\*\*/\*\*\*\*", value="• Finished migrating commands from Miura", inline=True)
+        update.add_field(name="2️⃣ V 2.1 | \*\*/\*\*/\*\*\*\*", value="• Improve overall performance", inline=True)
 
         select = discord.ui.Select(placeholder="ตัวเลือกเมนู",options=[
         discord.SelectOption(label="เครื่องมืออรรถประโยชน์",emoji="🔧",description="คำสั่งการใช้งานทั่วไป",value="util",default=False),

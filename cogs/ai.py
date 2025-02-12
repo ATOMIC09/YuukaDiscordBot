@@ -2,6 +2,8 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from typing import Optional
+import asyncio
+import functools
 import utils.tts_language_check as tts_language_check
 import utils.chatgpt as chatgpt
 import utils.speech_synthesis as speech_synthesis
@@ -53,7 +55,13 @@ class Ai(app_commands.Group):
         await self.log_cog.runcomplete('<:Approve:921703512382009354>')
 
     @app_commands.command(name='speak', description="🧠 ฟังบอทพูด")
-    async def speak(self, interaction: discord.Interaction, language: Optional[str], rvc: Optional[bool] = False):
+    @app_commands.choices(rvc=[
+        app_commands.Choice(name="Harvest : Best pitch detection, slowest on CPU", value="harvest"),
+        app_commands.Choice(name="PM : Fast on CPU, decent accuracy", value="pm"),
+        app_commands.Choice(name="RMVPE : Fast and accurate, good balance for CPU", value="rmvpe"),
+    ])
+    @app_commands.describe(language="ภาษาของเสียงพูด", rvc="เลือก Pitch Extraction Algorithm")
+    async def speak(self, interaction: discord.Interaction, language: Optional[str], rvc: Optional[app_commands.Choice[str]]):
         await self.log_cog.sendlog(interaction, data={'content': "in /ai"})
         guild = interaction.guild_id
         if guild not in self.talk_to_ai:
@@ -66,21 +74,21 @@ class Ai(app_commands.Group):
                 voice = discord.utils.get(self.client.voice_clients, guild=interaction.guild)
                 self.talk_to_ai[guild] = 2
                 self.ai_active_channel[guild] = interaction.channel_id
-                if language != None and tts_language_check.check(language) and rvc == False:
+                if language != None and tts_language_check.check(language) and rvc == None:
                     self.voice_language[guild] = language
                     await interaction.response.send_message(f"**✅ พร้อมฟังใน <#{voice_channel.id}> ด้วยเสียง `{language}` แล้ว**")
-                elif language != None and tts_language_check.check(language) and rvc == True:
+                elif language != None and tts_language_check.check(language) and rvc != None:
                     self.voice_language[guild] = language
-                    await interaction.response.send_message(f"**✅ พร้อมฟังใน <#{voice_channel.id}> ด้วยเสียง `{language}` แล้ว (กำลังใช้งาน RVC)**")
-                elif language == None and rvc == False:
+                    await interaction.response.send_message(f"**✅ พร้อมฟังใน <#{voice_channel.id}> ด้วยเสียง `{language}` แล้ว (กำลังใช้งาน {rvc.value})**")
+                elif language == None and rvc == None:
                     self.voice_language[guild] = ""
                     await interaction.response.send_message(f"**✅ พร้อมฟังใน <#{voice_channel.id}> แล้ว**")
-                elif language == None and rvc == True:
+                elif language == None and rvc != None:
                     self.voice_language[guild] = ""
-                    await interaction.response.send_message(f"**✅ พร้อมฟังใน <#{voice_channel.id}> แล้ว (กำลังใช้งาน RVC)**")
+                    await interaction.response.send_message(f"**✅ พร้อมฟังใน <#{voice_channel.id}> แล้ว (กำลังใช้งาน {rvc.value})**")
 
                 self.chat_history[guild] = self.first_yuuka_prompt[:] # Clear chat history
-                self.rvc_active[guild] = rvc
+                self.rvc_active[guild] = rvc.value
                 
                 if voice and voice.is_connected():
                     await voice.move_to(voice_channel)
@@ -223,10 +231,11 @@ class Ai(app_commands.Group):
                     voice.stop()
                 speech_synthesis.tts(response.replace("Yuuka: ", ""), self.voice_language[guild], self.ai_active_channel[guild])
 
-                if self.rvc_active[guild] == False:
+                if self.rvc_active[guild] == None:
                     voice.play(discord.FFmpegPCMAudio(f"temp/ai/{self.ai_active_channel[guild]}_output.wav"))
                 else:
-                    rvc.gen_audio(self.ai_active_channel[guild])
+                    print("RVC: ", self.rvc_active[guild])
+                    await rvc.gen_audio(self.ai_active_channel[guild], self.rvc_active[guild])
                     voice.play(discord.FFmpegPCMAudio(f"temp/ai/{self.ai_active_channel[guild]}_outputrvc.wav"))
 
 async def setup(client):

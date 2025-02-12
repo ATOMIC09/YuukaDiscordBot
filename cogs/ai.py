@@ -88,7 +88,7 @@ class Ai(app_commands.Group):
                     await interaction.response.send_message(f"**✅ พร้อมฟังใน <#{voice_channel.id}> แล้ว (กำลังใช้งาน {rvc.value})**")
 
                 self.chat_history[guild] = self.first_yuuka_prompt[:] # Clear chat history
-                self.rvc_active[guild] = rvc.value
+                self.rvc_active[guild] = rvc.value if rvc is not None else None
                 
                 if voice and voice.is_connected():
                     await voice.move_to(voice_channel)
@@ -226,16 +226,21 @@ class Ai(app_commands.Group):
                 response, self.chat_history[guild],log = chatgpt.generate_response(message.content, self.chat_history[guild], message.author.display_name)
                 if log != None:
                     await self.log_cog.openailog(None, data={'message': message, 'log_data': log})
-                # If the bot is already speaking, stop it
-                if voice.is_playing():
-                    voice.stop()
+
                 speech_synthesis.tts(response.replace("Yuuka: ", ""), self.voice_language[guild], self.ai_active_channel[guild])
 
                 if self.rvc_active[guild] == None:
+                    # If the bot is already speaking, stop it
+                    if voice.is_playing():
+                        voice.stop()
                     voice.play(discord.FFmpegPCMAudio(f"temp/ai/{self.ai_active_channel[guild]}_output.wav"))
                 else:
                     print("RVC: ", self.rvc_active[guild])
                     await rvc.gen_audio(self.ai_active_channel[guild], self.rvc_active[guild])
+
+                    # If the bot is already speaking, stop it
+                    if voice.is_playing():
+                        voice.stop()
                     voice.play(discord.FFmpegPCMAudio(f"temp/ai/{self.ai_active_channel[guild]}_outputrvc.wav"))
 
 async def setup(client):

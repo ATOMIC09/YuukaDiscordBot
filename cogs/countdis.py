@@ -18,9 +18,9 @@ class Countdis(commands.Cog):
         print('Countdis cog loaded')
 
     @app_commands.command(name="countdis", description="🔌 นับถอยหลังและตัดการเชื่อมต่อ")
-    @app_commands.describe(settime='เวลาเป็นหน่วยวินาที')
-    async def countdis(self, interaction: discord.Interaction, settime: int):
-        await self.log_cog.sendlog(interaction, data={'content': f'{settime}'})
+    @app_commands.describe(timer='เวลาเป็นหน่วยวินาที')
+    async def countdis(self, interaction: discord.Interaction, timer: int):
+        await self.log_cog.sendlog(interaction, data={'content': f'{timer}'})
         try:
             all_member = interaction.user.voice.channel.members
             stop_button = discord.ui.Button(label="Stop", style=discord.ButtonStyle.red)
@@ -35,8 +35,8 @@ class Countdis(commands.Cog):
             if guild not in self.countdis_except: 
                 self.countdis_except[guild] = []
             
-            if settime < 0:
-                await interaction.response.send_message("**❌ นาฬิกาจินตภาพ?**")
+            if timer < 0:
+                await interaction.response.send_message("**นาฬิกาจินตภาพ <a:ThonkingGif:1342819485827993650>**")
                 await self.log_cog.runcomplete('⚠️')
             else:
                 try:
@@ -47,9 +47,9 @@ class Countdis(commands.Cog):
                 except KeyError:
                     self.already_called[channel.id] = True
                     
-                start_time = int(time.time())
-                end_time = start_time + settime
-                output = f"⏰ เหลือเวลา <t:{end_time}:R>"
+                start_time = time.time()
+                end_time = start_time + timer
+                output = countdown.countdown(timer)
 
                 view = discord.ui.View()
                 view.add_item(stop_button)
@@ -76,8 +76,7 @@ class Countdis(commands.Cog):
                 while int(time.time()) < end_time:
                     stop_button.callback = stop
                     exceptme_button.callback = exceptme
-                    # print(f'time: {int(time.time())}')
-                    # print(f'time_stop: {self.time_stop[guild]}')
+                    output = countdown.countdown(end_time - time.time())
 
                     if self.time_stop[guild]:
                         await store_message.edit(content="**🛑 ยกเลิกการนับถอยหลังแล้ว**", view=None)
@@ -86,7 +85,7 @@ class Countdis(commands.Cog):
                     
                     # Update countdown when countdown is running for 10 minutes
                     if self.already_called[channel.id]:
-                        if int(time.time()) <= start_time + 600:
+                        if int(time.time()) <= int(start_time) + 600:
                             if store_message:
                                 await store_message.edit(content=output)
                         else:
@@ -110,7 +109,7 @@ class Countdis(commands.Cog):
                                 await member.move_to(None)
                                 member_count += 1
                         
-                        await store_message.channel.send(f"⏏️  **ตัดการเชื่อมต่อ {member_count} คน จาก `{channel}` แล้วนะ**")
+                        await store_message.channel.send(f"⏏️  **ตัดการเชื่อมต่อ {member_count} คน จาก <#{channel.id}> แล้วนะ**")
                         self.already_called.pop(channel.id)
                         break
 
@@ -124,8 +123,9 @@ class Countdis(commands.Cog):
 
         
         except AttributeError:
-            await interaction.response.send_message(content="**ไม่มีใครให้ถีบ ಠل͟ಠ**")
+            await interaction.response.send_message(content="**ไม่มีใครให้ถีบ 😅**")
             await self.log_cog.runcomplete('⚠️')
+
 
 async def setup(client):
     print("Setting up Countdis cog")

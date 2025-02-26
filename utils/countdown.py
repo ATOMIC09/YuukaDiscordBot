@@ -11,7 +11,7 @@ def countdown(time):
     parts = []
     for interval, label in intervals:
         if time >= interval:
-            value = float("{:.2f}".format(time / interval))
+            value = int(time / interval)
             parts.append(f"{value} {label}")
             time %= interval
 

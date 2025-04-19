@@ -1,9 +1,10 @@
 <h1 align="center">🌈 YuukaDiscordBot - v2.1 "ยกเครื่อง เรื่องเสียง!" 🔊</h1>
 <h6 align="center">ยังมีความไม่เสถียรอีกมหาศาล 🗿</p>
+  
 <p align="center">
   <img alt="Version" src="https://img.shields.io/badge/version-2.1-blue.svg?cacheSeconds=2592000" />
   <a>
-    <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" />
+    <img alt="GitHub License" src="https://img.shields.io/github/license/ATOMIC09/YuukaDiscordBot">
   </a>
 </p>
 

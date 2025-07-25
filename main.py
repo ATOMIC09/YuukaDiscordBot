@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+from dotenv import load_dotenv
 import os
 import shutil
 from discord.ext import tasks
@@ -66,16 +67,14 @@ async def host_status_change():
 @client.tree.command(name="reload", description="🔄️ โหลด Cog ใหม่ทั้งหมด")
 async def reload(interaction: discord.Interaction):
   try:
-    if interaction.user.id == 269000561255383040:
-        await client.reload_extension(f'cogs.log')
-        for filename in os.listdir('./cogs'):
-            if filename.endswith('.py') and filename != 'log.py':
-                await client.reload_extension(f'cogs.{filename[:-3]}')
-        await interaction.response.send_message(f"**✅ Successfully reloaded all cogs**")
-    else:
-        await interaction.response.send_message(f"❌ **You are not allowed to use this command**")
+    await client.reload_extension(f'cogs.log')
+    for filename in os.listdir('./cogs'):
+        if filename.endswith('.py') and filename != 'log.py':
+            await client.reload_extension(f'cogs.{filename[:-3]}')
+    await interaction.response.send_message(f"**✅ Successfully reloaded all cogs**")
   except Exception as e:
     await interaction.response.send_message(f"⚠️ Failed! Could not reload this cog class.\n```{e}```")
 
+load_dotenv()
 Token = os.environ['YuukaToken']
 client.run(Token)

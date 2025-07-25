@@ -24,3 +24,4 @@ Pillow
 rvc-python==0.1.5
 torch==2.1.1
 torchaudio==2.1.1
+python-dotenv

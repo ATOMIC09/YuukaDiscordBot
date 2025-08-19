@@ -1,11 +1,15 @@
 import discord
 from discord.ext import commands
 import asyncio
+import traceback
+import os
 
 class Log(commands.Cog):
     def __init__(self, client: commands.Bot):
         self.client = client
         self.log_msg = ''
+        # Configure the log channel via env var if provided
+        self._log_channel_id = int(os.getenv("LOG_CHANNEL_ID", "1003719893260185750"))
     
     @commands.Cog.listener()
     async def on_ready(self):
@@ -14,7 +18,7 @@ class Log(commands.Cog):
     # normal log
     async def sendlog(self, interaction, data={'content': ''}):
         print('log data:', data)
-        channel = self.client.get_channel(1003719893260185750)
+        channel = self.get_log_channel()
         sendlog = discord.Embed(title=f"**ID : **`{interaction.id}`", color=0x455EE8)
         sendlog.set_author(name=interaction.user, icon_url=interaction.user.display_avatar.url)
         sendlog.timestamp = interaction.created_at
@@ -28,6 +32,61 @@ class Log(commands.Cog):
         self.log_msg = await channel.send(embed=sendlog,view=url_view)
         await self.stillrunning(self.log_msg)
         return self.log_msg
+
+    # error log
+    async def send_error_log(self, *, interaction: discord.Interaction | None = None, error: Exception | None = None, traceback_text: str | None = None, context: dict | None = None):
+        channel = self.get_log_channel()
+        if traceback_text is None and error is not None:
+            traceback_text = ''.join(traceback.format_exception(type(error), error, error.__traceback__))
+
+        embed = discord.Embed(title="❌ Error", color=0xE84545)
+
+        if interaction is not None:
+            embed.set_author(name=str(interaction.user), icon_url=interaction.user.display_avatar.url)
+            embed.timestamp = interaction.created_at
+            try:
+                embed.add_field(name="เซิร์ฟเวอร์", value=f"`{interaction.guild}` ({interaction.guild_id})", inline=False)
+                embed.add_field(name="ช่อง", value=f"`{interaction.channel}` ({interaction.channel_id})", inline=False)
+            except Exception:
+                pass
+            if getattr(interaction, 'command', None) is not None:
+                embed.add_field(name="คำสั่ง", value=f"`/{interaction.command.name}`", inline=False)
+            url_view = discord.ui.View()
+            try:
+                url_view.add_item(discord.ui.Button(label='Go to Message', style=discord.ButtonStyle.url, url=f"https://discord.com/channels/{interaction.guild_id}/{interaction.channel_id}/{interaction.id}"))
+            except Exception:
+                pass
+        else:
+            embed.set_author(name=str(self.client.user) if self.client.user else "Yuuka")
+
+        if error is not None:
+            embed.add_field(name="Exception", value=f"`{type(error).__name__}: {error}`", inline=False)
+
+        if context:
+            for k, v in context.items():
+                embed.add_field(name=str(k), value=f"`{v}`", inline=True)
+
+        if traceback_text:
+            # Split large traceback into chunks that fit embed limits
+            for i, segment in enumerate(self.split_text(traceback_text.replace('```', 'ˋˋˋ'), 1000)):
+                embed.add_field(name="Traceback" if i == 0 else "\u200b", value=f"```py\n{segment}\n```", inline=False)
+
+        # Send message
+        try:
+            if channel is None:
+                raise RuntimeError("Log channel not found. Set LOG_CHANNEL_ID env var.")
+            if 'url_view' in locals():
+                await channel.send(embed=embed, view=url_view)
+            else:
+                await channel.send(embed=embed)
+        except Exception as send_err:
+            # Fallback to console
+            print("Failed to send error log:", send_err)
+            if traceback_text:
+                print(traceback_text)
+
+    def get_log_channel(self) -> discord.TextChannel | None:
+        return self.client.get_channel(self._log_channel_id)
     
     async def openailog(self, interaction, data={'message': None, 'log_data': None}):
         channel = self.client.get_channel(1003719893260185750)

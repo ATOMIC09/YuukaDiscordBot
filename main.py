@@ -97,34 +97,12 @@ async def on_app_command_error(interaction: discord.Interaction, error: Exceptio
     log_cog = client.get_cog("Log")
     if log_cog:
         await log_cog.send_error_log(interaction=interaction, error=error)
+    
     try:
         if not interaction.response.is_done():
             await interaction.response.send_message("⚠️ An error occurred while executing this command.", ephemeral=True)
     except Exception:
         pass
-
-    # Try to react with a warning sign to the original response (if possible)
-    try:
-        msg = await interaction.original_response()
-        try:
-            await msg.add_reaction('⚠️')
-        except Exception:
-            # Fallback: send a follow-up message and react to it
-            follow = await interaction.followup.send("⚠️", wait=True)
-            try:
-                await follow.add_reaction('⚠️')
-            except Exception:
-                pass
-    except Exception:
-        # Last resort: try a simple follow-up
-        try:
-            follow = await interaction.followup.send("⚠️", wait=True)
-            try:
-                await follow.add_reaction('⚠️')
-            except Exception:
-                pass
-        except Exception:
-            pass
 
 @tasks.loop(hours=12)
 async def resettemp():

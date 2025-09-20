@@ -3,26 +3,69 @@ from discord.ext import commands
 from discord import app_commands
 from typing import Optional
 import pytz
+import re
 
 class User(commands.Cog):
     def __init__(self, client: commands.Bot):
         self.client = client
         self.log_cog = client.get_cog("Log")
+    
+    def extract_user_id(self, user_input: str) -> int:
+        """Extract user ID from mention format or plain ID"""
+        # Remove whitespace
+        user_input = user_input.strip()
+        
+        # Check if it's a mention format <@123456> or <@!123456>
+        mention_match = re.match(r'<@!?(\d+)>', user_input)
+        if mention_match:
+            return int(mention_match.group(1))
+        
+        # If it's just a plain number, convert directly
+        if user_input.isdigit():
+            return int(user_input)
+        
+        # If none of the above, raise an error
+        raise ValueError(f"Invalid user ID format: {user_input}")
 
     @commands.Cog.listener()
     async def on_ready(self):
         print("User cog loaded")
 
     @app_commands.command(name='user', description="👤 ดูข้อมูลของผู้ใช้")
-    async def user(self, interaction: discord.Interaction, member: Optional[discord.User]):
-        if member == None:
+    @app_commands.describe(user_id="ใส่ไอดีของผู้ใช้หรือ @mention ผู้ใช้")
+    async def user(self, interaction: discord.Interaction, user_id: Optional[str]):
+        if user_id == None:
             await self.log_cog.sendlog(interaction)
         else:
-            await self.log_cog.sendlog(interaction, data={'content': member})
+            await self.log_cog.sendlog(interaction, data={'content': user_id})
 
         user = interaction.guild.get_member(interaction.user.id)
-        if member != None:
-            user = interaction.guild.get_member(member.id)
+        if user_id != None:
+            try:
+                # Extract user ID from mention or plain ID
+                extracted_id = self.extract_user_id(user_id)
+                user = interaction.guild.get_member(extracted_id)
+                
+                # Check if user was found in the guild
+                if user is None:
+                    embed = discord.Embed(
+                        title="❌ ไม่พบผู้ใช้", 
+                        description="ไม่พบผู้ใช้ที่ระบุในเซิร์ฟเวอร์นี้",
+                        color=0xff0000
+                    )
+                    await interaction.response.send_message(embed=embed)
+                    await self.log_cog.runcomplete('❔')
+                    return
+                    
+            except ValueError as e:
+                embed = discord.Embed(
+                    title="❌ รูปแบบไม่ถูกต้อง", 
+                    description="กรุณาใส่ไอดีของผู้ใช้ที่ถูกต้อง หรือ @mention ผู้ใช้",
+                    color=0xff0000
+                )
+                await interaction.response.send_message(embed=embed)
+                await self.log_cog.runcomplete('❌')
+                return
 
         # Separate guilds by comma
         if user.bot == False:
@@ -100,8 +143,17 @@ class User(commands.Cog):
         embed.set_thumbnail(url=user.display_avatar.url)
         embed.description = f"ไอดีของบัญชี : `{user.id}`\nข้อมูลจากเซิร์ฟเวอร์ : `{interaction.guild.name} ({interaction.guild_id})`"
         embed.add_field(name="**ชื่อเล่น**", value=f"`{user.display_name}`")
-        embed.add_field(name="**สร้างบัญชีเมื่อ**", value=f'{user.created_at.astimezone(tz=pytz.timezone("Asia/Bangkok")).strftime("`วันที่ %d/%m/%Y` `เวลา %H:%M:%S`")}')
-        embed.add_field(name="**เข้าร่วมเซิร์ฟเวอร์เมื่อ**", value=f'{user.joined_at.astimezone(tz=pytz.timezone("Asia/Bangkok")).strftime("`วันที่ %d/%m/%Y` `เวลา %H:%M:%S`")}')
+        
+        # Format created_at date safely without Thai text in strftime
+        created_time = user.created_at.astimezone(tz=pytz.timezone("Asia/Bangkok"))
+        created_date_str = f"`วันที่ {created_time.strftime('%d/%m/%Y')}` `เวลา {created_time.strftime('%H:%M:%S')}`"
+        embed.add_field(name="**สร้างบัญชีเมื่อ**", value=created_date_str)
+        
+        # Format joined_at date safely without Thai text in strftime
+        joined_time = user.joined_at.astimezone(tz=pytz.timezone("Asia/Bangkok"))
+        joined_date_str = f"`วันที่ {joined_time.strftime('%d/%m/%Y')}` `เวลา {joined_time.strftime('%H:%M:%S')}`"
+        embed.add_field(name="**เข้าร่วมเซิร์ฟเวอร์เมื่อ**", value=joined_date_str)
+        
         embed.add_field(name="**กิจกรรม**", value=activity)
         embed.add_field(name=f"**เซิร์ฟเวอร์ร่วมกับบอท : {len_mutual_guilds} เซิร์ฟเวอร์**", value=f"> {mutual_guilds}")
         embed.add_field(name="**เหรียญตรา**", value=f"> {message}")

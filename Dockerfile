@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM gorialis/discord.py:3.10.15-bookworm-master-minimal
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \

@@ -1,0 +1,35 @@
+# Git and documentation
+.git
+.gitignore
+README.md
+CONTRIBUTING.md
+LICENSE
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+temp/*
+
+# Large model files (download at runtime instead)
+utils/rvc/*.pth
+utils/rvc/*.zip
+
+# Docker
+Dockerfile
+.dockerignore

@@ -22,6 +22,6 @@ qrcode
 Pillow
 # pymediainfo
 rvc-python==0.1.5
-torch==2.1.1
-torchaudio==2.1.1
+torch==2.1.1+cpu
+torchaudio==2.1.1+cpu
 python-dotenv

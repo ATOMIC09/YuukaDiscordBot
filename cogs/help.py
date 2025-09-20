@@ -34,6 +34,7 @@ class Help(commands.Cog):
         util.add_field(name="**🐶 ตบหลังลูบหัว**", value="`/pet`", inline=True)
         util.add_field(name="**📸 QR Code Generator**", value="`/qr`", inline=True)
         util.add_field(name="**🎵 สร้างคลิปเสียงจากภาพ**", value="`/imgaudio`", inline=True)
+        util.add_field(name="**🏛️ ดูข้อมูลเซิร์ฟเวอร์**", value="`/guild`", inline=True)
 
         ai = discord.Embed(title="**❔ ช่วยเหลือ**",description="╰ *🧠 Ai*", color=0xfb17ff)
         ai.add_field(name="**⌨ แชทกับบอท**", value="`/ai chat `", inline=True)

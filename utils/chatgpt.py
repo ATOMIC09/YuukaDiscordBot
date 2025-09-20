@@ -4,7 +4,7 @@ import os
 client = OpenAI(
   api_key=os.environ['OPENAI_API_KEY'],  # this is also the default, it can be omitted
 )
-model_engine = "gpt-4o-mini"
+model_engine = "gpt-5-nano"
 
 def generate_response(prompt, chat_history, name = "User"):
     # Moderation

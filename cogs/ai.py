@@ -4,10 +4,14 @@ from discord import app_commands
 from typing import Optional
 import asyncio
 import functools
+import logging
 import utils.tts_language_check as tts_language_check
 import utils.chatgpt as chatgpt
 import utils.speech_synthesis as speech_synthesis
 import utils.rvc.gen_rvc_audio as rvc
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 class Ai(app_commands.Group):
     def __init__(self, client: commands.Bot, name):
@@ -198,9 +202,43 @@ class Ai(app_commands.Group):
         if message.author.id != self.client.user.id and message.channel.id == self.ai_active_channel[guild]:
             if self.talk_to_ai[guild] == 1: # Chat
                 async with message.channel.typing():
-                    response, self.chat_history[guild], log = chatgpt.generate_response(message.content, self.chat_history[guild], message.author.display_name)
-                    if log != None:
-                        await self.log_cog.openailog(None, data={'message': message, 'log_data': log})
+                    try:
+                        response, self.chat_history[guild], log = chatgpt.generate_response(message.content, self.chat_history[guild], message.author.display_name)
+                        logger.info(f"OpenAI API Success: Chat mode in guild {guild} - User: {message.author.display_name}")
+                        if log != None:
+                            await self.log_cog.openailog(None, data={'message': message, 'log_data': log})
+                    except Exception as e:
+                        if hasattr(e, 'status_code'):
+                            if e.status_code == 429:
+                                logger.error(f"OpenAI API Rate Limited (429): Chat mode in guild {guild} - Insufficient credits - {type(e).__name__}: {e}")
+                                await self.log_cog.send_error_log(error=e, context={'Mode': 'Chat', 'Guild': guild, 'User': message.author.display_name})
+                                embed = discord.Embed(
+                                    title="❌ OpenAI API Rate Limited",
+                                    description="ไม่มี credit เหลือหรือใช้งานเกินขีดจำกัด กรุณาลองใหม่อีกครั้งในภายหลัง",
+                                    color=0xff0000
+                                )
+                                await message.channel.send(embed=embed)
+                                return
+                            elif e.status_code == 401:
+                                logger.error(f"OpenAI API Authentication Error (401): Chat mode in guild {guild} - Invalid API key - {type(e).__name__}: {e}")
+                                await self.log_cog.send_error_log(error=e, context={'Mode': 'Chat', 'Guild': guild, 'User': message.author.display_name})
+                                embed = discord.Embed(
+                                    title="❌ OpenAI API Authentication Error",
+                                    description="API Key ไม่ถูกต้อง กรุณาตรวจสอบการตั้งค่า API Key",
+                                    color=0xff0000
+                                )
+                                await message.channel.send(embed=embed)
+                                return
+                        else:
+                            logger.error(f"OpenAI API Error: Chat mode in guild {guild} - {type(e).__name__}: {e}")
+                            await self.log_cog.send_error_log(error=e, context={'Mode': 'Chat', 'Guild': guild, 'User': message.author.display_name})
+                            embed = discord.Embed(
+                                title="❌ เกิดข้อผิดพลาด",
+                                description="เกิดข้อผิดพลาดในการเชื่อมต่อกับ OpenAI API กรุณาลองใหม่อีกครั้ง",
+                                color=0xff0000
+                            )
+                            await message.channel.send(embed=embed)
+                            return
 
                     raw_response = response.replace("Yuuka: ", "")
                     chunklength = 1950
@@ -210,9 +248,43 @@ class Ai(app_commands.Group):
 
             elif self.talk_to_ai[guild] == 3: # One-shot Chat 
                 async with message.channel.typing():
-                    response, self.chat_history[guild], log = chatgpt.generate_response(message.content, self.chat_history[guild], message.author.display_name)
-                    if log != None:
-                        await self.log_cog.openailog(None, data={'message': message, 'log_data': log})
+                    try:
+                        response, self.chat_history[guild], log = chatgpt.generate_response(message.content, self.chat_history[guild], message.author.display_name)
+                        logger.info(f"OpenAI API Success: One-shot chat mode in guild {guild} - User: {message.author.display_name}")
+                        if log != None:
+                            await self.log_cog.openailog(None, data={'message': message, 'log_data': log})
+                    except Exception as e:
+                        if hasattr(e, 'status_code'):
+                            if e.status_code == 429:
+                                logger.error(f"OpenAI API Rate Limited (429): One-shot chat mode in guild {guild} - Insufficient credits - {type(e).__name__}: {e}")
+                                await self.log_cog.send_error_log(error=e, context={'Mode': 'One-shot Chat', 'Guild': guild, 'User': message.author.display_name})
+                                embed = discord.Embed(
+                                    title="❌ OpenAI API Rate Limited",
+                                    description="ไม่มี credit เหลือหรือใช้งานเกินขีดจำกัด กรุณาลองใหม่อีกครั้งในภายหลัง",
+                                    color=0xff0000
+                                )
+                                await message.channel.send(embed=embed)
+                                return
+                            elif e.status_code == 401:
+                                logger.error(f"OpenAI API Authentication Error (401): One-shot chat mode in guild {guild} - Invalid API key - {type(e).__name__}: {e}")
+                                await self.log_cog.send_error_log(error=e, context={'Mode': 'One-shot Chat', 'Guild': guild, 'User': message.author.display_name})
+                                embed = discord.Embed(
+                                    title="❌ OpenAI API Authentication Error",
+                                    description="API Key ไม่ถูกต้อง กรุณาตรวจสอบการตั้งค่า API Key",
+                                    color=0xff0000
+                                )
+                                await message.channel.send(embed=embed)
+                                return
+                        else:
+                            logger.error(f"OpenAI API Error: One-shot chat mode in guild {guild} - {type(e).__name__}: {e}")
+                            await self.log_cog.send_error_log(error=e, context={'Mode': 'One-shot Chat', 'Guild': guild, 'User': message.author.display_name})
+                            embed = discord.Embed(
+                                title="❌ เกิดข้อผิดพลาด",
+                                description="เกิดข้อผิดพลาดในการเชื่อมต่อกับ OpenAI API กรุณาลองใหม่อีกครั้ง",
+                                color=0xff0000
+                            )
+                            await message.channel.send(embed=embed)
+                            return
 
                     raw_response = response.replace("Yuuka: ", "")
                     chunklength = 1950
@@ -223,9 +295,43 @@ class Ai(app_commands.Group):
 
             elif self.talk_to_ai[guild] == 2: # Speak
                 voice = self.voice[guild]
-                response, self.chat_history[guild],log = chatgpt.generate_response(message.content, self.chat_history[guild], message.author.display_name)
-                if log != None:
-                    await self.log_cog.openailog(None, data={'message': message, 'log_data': log})
+                try:
+                    response, self.chat_history[guild], log = chatgpt.generate_response(message.content, self.chat_history[guild], message.author.display_name)
+                    logger.info(f"OpenAI API Success: Speak mode in guild {guild} - User: {message.author.display_name}")
+                    if log != None:
+                        await self.log_cog.openailog(None, data={'message': message, 'log_data': log})
+                except Exception as e:
+                    if hasattr(e, 'status_code'):
+                        if e.status_code == 429:
+                            logger.error(f"OpenAI API Rate Limited (429): Speak mode in guild {guild} - Insufficient credits - {type(e).__name__}: {e}")
+                            await self.log_cog.send_error_log(error=e, context={'Mode': 'Speak', 'Guild': guild, 'User': message.author.display_name})
+                            embed = discord.Embed(
+                                title="❌ OpenAI API Rate Limited",
+                                description="ไม่มี credit เหลือหรือใช้งานเกินขีดจำกัด กรุณาลองใหม่อีกครั้งในภายหลัง",
+                                color=0xff0000
+                            )
+                            await message.channel.send(embed=embed)
+                            return
+                        elif e.status_code == 401:
+                            logger.error(f"OpenAI API Authentication Error (401): Speak mode in guild {guild} - Invalid API key - {type(e).__name__}: {e}")
+                            await self.log_cog.send_error_log(error=e, context={'Mode': 'Speak', 'Guild': guild, 'User': message.author.display_name})
+                            embed = discord.Embed(
+                                title="❌ OpenAI API Authentication Error",
+                                description="API Key ไม่ถูกต้อง กรุณาตรวจสอบการตั้งค่า API Key",
+                                color=0xff0000
+                            )
+                            await message.channel.send(embed=embed)
+                            return
+                    else:
+                        logger.error(f"OpenAI API Error: Speak mode in guild {guild} - {type(e).__name__}: {e}")
+                        await self.log_cog.send_error_log(error=e, context={'Mode': 'Speak', 'Guild': guild, 'User': message.author.display_name})
+                        embed = discord.Embed(
+                            title="❌ เกิดข้อผิดพลาด",
+                            description="เกิดข้อผิดพลาดในการเชื่อมต่อกับ OpenAI API กรุณาลองใหม่อีกครั้ง",
+                            color=0xff0000
+                        )
+                        await message.channel.send(embed=embed)
+                        return
 
                 speech_synthesis.tts(response.replace("Yuuka: ", ""), self.voice_language[guild], self.ai_active_channel[guild])
 

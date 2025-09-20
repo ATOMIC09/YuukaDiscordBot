@@ -87,9 +87,10 @@ class Guild(commands.Cog):
                 await self.log_cog.runcomplete('❌')
                 return
 
-        # Guild features
+        # Guild features - Enhanced with comprehensive list from DiscordLists repository
         features = guild.features
         feature_names = {
+            # Core Features
             'ANIMATED_BANNER': '🎬 แบนเนอร์เคลื่อนไหว',
             'ANIMATED_ICON': '🎭 ไอคอนเคลื่อนไหว',
             'AUTO_MODERATION': '🤖 ระบบดูแลอัตโนมัติ',
@@ -112,7 +113,174 @@ class Guild(commands.Cog):
             'VERIFIED': '✅ ยืนยันแล้ว',
             'VIP_REGIONS': '🌟 เซิร์ฟเวอร์ VIP',
             'WELCOME_SCREEN_ENABLED': '👋 หน้าจอต้อนรับ',
-            'SOUNDBOARD': '🔊 ซาวด์บอร์ด'
+            'SOUNDBOARD': '🔊 ซาวด์บอร์ด',
+            
+            # Activities & Voice Features
+            'ACTIVITIES_ALPHA': '🎮 กิจกรรมช่องเสียง (อัลฟ่า)',
+            'ACTIVITIES_EMPLOYEE': '🏢 กิจกรรมช่องเสียง (พนักงาน)',
+            'ACTIVITIES_INTERNAL_DEV': '🔧 กิจกรรมช่องเสียง (พัฒนา)',
+            'ACTIVITY_FEED_DISABLED_BY_USER': '📰 ปิดฟีดกิจกรรม',
+            'ACTIVITY_FEED_ENABLED_BY_USER': '📰 เปิดฟีดกิจกรรม',
+            'EXPOSED_TO_ACTIVITIES_WTP_EXPERIMENT': '🧪 ทดลองกิจกรรม',
+            'HAD_EARLY_ACTIVITIES_ACCESS': '🎯 เข้าถึงกิจกรรมก่อน',
+            
+            # Audio & Video Quality
+            'AUDIO_BITRATE_128_KBPS': '🔊 เสียง 128Kbps',
+            'AUDIO_BITRATE_256_KBPS': '🔊 เสียง 256Kbps',
+            'AUDIO_BITRATE_384_KBPS': '🔊 เสียง 384Kbps',
+            'VIDEO_BITRATE_ENHANCED': '📹 วิดีโอคุณภาพสูง',
+            'VIDEO_QUALITY_720_60FPS': '📹 วิดีโอ 720p 60fps',
+            'VIDEO_QUALITY_1080_60FPS': '📹 วิดีโอ 1080p 60fps',
+            'VOICE_CHANNEL_EFFECTS': '🎭 เอฟเฟกต์ช่องเสียง',
+            'VOICE_IN_THREADS': '🔊 เสียงในเธรด',
+            
+            # AutoMod Features
+            'AUTOMOD_TRIGGER_KEYWORD_FILTER': '🛡️ กรองคำหยาบ',
+            'AUTOMOD_TRIGGER_ML_SPAM_FILTER': '🤖 กรองสแปม AI',
+            'AUTOMOD_TRIGGER_SPAM_LINK_FILTER': '🔗 กรองลิงก์สแปม',
+            'AUTOMOD_TRIGGER_USER_PROFILE': '👤 ตรวจโปรไฟล์',
+            'GUILD_AUTOMOD_DEFAULT_LIST': '📋 รายการออโต้มอดเริ่มต้น',
+            
+            # Boost Features
+            'BOOSTING_TIERS_EXPERIMENT_MEDIUM_GUILD': '🚀 ทดลอง Boost (กลาง)',
+            'BOOSTING_TIERS_EXPERIMENT_SMALL_GUILD': '🚀 ทดลอง Boost (เล็ก)',
+            'EXPOSED_TO_BOOSTING_TIERS_EXPERIMENT': '🚀 ทดลอง Boost',
+            'PREMIUM_TIER_3_OVERRIDE': '💎 Boost ระดับ 3 บังคับ',
+            'TIERLESS_BOOSTING': '🆙 Boost ไร้ระดับ',
+            'TIERLESS_BOOSTING_CLIENT_TEST': '🧪 ทดลอง Boost ไร้ระดับ',
+            'TIERLESS_BOOSTING_SYSTEM_MESSAGE': '💬 ข้อความระบบ Boost',
+            'TIERLESS_BOOSTING_TEST': '🧪 ทดสอบ Boost ไร้ระดับ',
+            
+            # Channel Features
+            'CHANNEL_BANNER': '🖼️ แบนเนอร์ช่อง',
+            'CHANNEL_EMOJIS_GENERATED': '😀 อีโมจิช่องสร้างอัตโนมัติ',
+            'CHANNEL_HIGHLIGHTS': '⭐ ไฮไลท์ช่อง',
+            'CHANNEL_HIGHLIGHTS_DISABLED': '⭐ ปิดไฮไลท์ช่อง',
+            'CHANNEL_ICON_EMOJIS_GENERATED': '🎯 ไอคอนช่องสร้างอัตโนมัติ',
+            'THREADS_ENABLED': '🧵 เปิดใช้เธรด',
+            'THREE_DAY_THREAD_ARCHIVE': '📦 เก็บเธรด 3 วัน',
+            'SEVEN_DAY_THREAD_ARCHIVE': '📦 เก็บเธรด 7 วัน',
+            'NEW_THREAD_PERMISSIONS': '🔐 สิทธิ์เธรดใหม่',
+            'INCREASED_THREAD_LIMIT': '🔢 เพิ่มลิมิตเธรด',
+            
+            # Community Features
+            'COMMUNITY_CANARY': '🐦 ชุมชนทดลอง',
+            'COMMUNITY_EXP_LARGE_GATED': '🚪 ชุมชนใหญ่มีการกั้น',
+            'COMMUNITY_EXP_LARGE_UNGATED': '🌐 ชุมชนใหญ่ไม่กั้น',
+            'COMMUNITY_EXP_MEDIUM': '🏘️ ชุมชนขนาดกลาง',
+            'NON_COMMUNITY_RAID_ALERTS': '🚨 แจ้งเตือนบุกรุกไม่ใช่ชุมชน',
+            'RAID_ALERTS_DISABLED': '🚫 ปิดแจ้งเตือนบุกรุก',
+            'RAID_ALERTS_ENABLED': '🚨 เปิดแจ้งเตือนบุกรุก',
+            'RESTRICT_SPAM_RISK_GUILDS': '🛡️ จำกัดความเสี่ยงสแปม',
+            
+            # Creator & Monetization
+            'CREATOR_ACCEPTED_NEW_TERMS': '✅ ยอมรับเงื่อนไขใหม่',
+            'CREATOR_MONETIZABLE': '💰 สร้างรายได้ได้',
+            'CREATOR_MONETIZABLE_DISABLED': '🚫 ปิดการสร้างรายได้',
+            'CREATOR_MONETIZABLE_PENDING_NEW_OWNER_ONBOARDING': '⏳ รอเจ้าของใหม่',
+            'CREATOR_MONETIZABLE_PROVISIONAL': '⚠️ การสร้างรายได้ชั่วคราว',
+            'CREATOR_MONETIZABLE_RESTRICTED': '🔒 การสร้างรายได้ถูกจำกัด',
+            'CREATOR_MONETIZABLE_WHITEGLOVE': '🤝 การสร้างรายได้พิเศษ',
+            'CREATOR_STORE_PAGE': '🏪 หน้าร้านค้าผู้สร้าง',
+            'ROLE_SUBSCRIPTIONS_AVAILABLE_FOR_PURCHASE': '💰 สมัครบทบาทได้',
+            'ROLE_SUBSCRIPTIONS_ENABLED': '💳 เปิดสมัครบทบาท',
+            'ROLE_SUBSCRIPTIONS_ENABLED_FOR_PURCHASE': '🛒 เปิดซื้อบทบาท',
+            
+            # Developer Features
+            'BOT_DEVELOPER_EARLY_ACCESS': '🤖 เข้าถึงก่อนนักพัฒนาบอท',
+            'DEVELOPER_SUPPORT_SERVER': '💻 เซิร์ฟเวอร์สนับสนุนนักพัฒนา',
+            
+            # Discovery Features
+            'DISCOVERABLE_DISABLED': '🚫 ปิดการค้นพบถาวร',
+            'ENABLED_DISCOVERABLE_BEFORE': '📜 เคยเปิดการค้นพบ',
+            
+            # File & Storage
+            'MAX_FILE_SIZE_50_MB': '📁 ไฟล์ 50MB',
+            'MAX_FILE_SIZE_100_MB': '📁 ไฟล์ 100MB',
+            
+            # Guild Management
+            'FORWARDING_DISABLED': '🚫 ปิดการส่งต่อ',
+            'GUILD_COMMUNICATION_DISABLED_GUILDS': '🔇 ปิดการสื่อสาร',
+            'GUILD_HOME_OVERRIDE': '🏠 หน้าหลักพิเศษ',
+            'GUILD_MEMBER_VERIFICATION_EXPERIMENT': '🧪 ทดลองยืนยันสมาชิก',
+            'GUILD_ONBOARDING': '🎯 ระบบแนะนำ',
+            'GUILD_ONBOARDING_ADMIN_ONLY': '👑 แนะนำเฉพาะแอดมิน',
+            'GUILD_ONBOARDING_EVER_ENABLED': '📜 เคยเปิดระบบแนะนำ',
+            'GUILD_ONBOARDING_HAS_PROMPTS': '💬 มีคำถามแนะนำ',
+            'GUILD_ROLE_SUBSCRIPTIONS': '💳 สมัครบทบาทเซิร์ฟเวอร์',
+            'GUILD_SERVER_GUIDE': '📖 คู่มือเซิร์ฟเวอร์',
+            'GUILD_TAGS': '🏷️ แท็กเซิร์ฟเวอร์',
+            'GUILD_WEB_PAGE_VANITY_URL': '🌐 URL หน้าเว็บ',
+            
+            # Hub Features
+            'HUB': '🎓 ศูนย์กลางนักเรียน',
+            'LINKED_TO_HUB': '🔗 เชื่อมกับศูนย์กลาง',
+            'HAS_DIRECTORY_ENTRY': '📂 มีรายการไดเรกทอรี',
+            
+            # Member Features
+            'MEMBER_LIST_DISABLED': '👥 ปิดรายชื่อสมาชิก',
+            'MEMBER_PROFILES': '👤 โปรไฟล์สมาชิก',
+            'MEMBER_SAFETY_PAGE_ROLLOUT': '🛡️ หน้าความปลอดภัยสมาชิก',
+            'MEMBER_VERIFICATION_MANUAL_APPROVAL': '✋ อนุมัติสมาชิกแบบแมนนวล',
+            'MEMBER_VERIFICATION_ROLLOUT_TEST': '🧪 ทดสอบยืนยันสมาชิก',
+            'ENABLED_MODERATION_EXPERIENCE_FOR_NON_COMMUNITY': '🛡️ ประสบการณ์ดูแลไม่ใช่ชุมชน',
+            
+            # More Features
+            'MORE_EMOJI': '😀 อีโมจิเพิ่มเติม',
+            'MORE_SOUNDBOARD': '🔊 ซาวด์บอร์ดเพิ่มเติม',
+            
+            # Product Features
+            'GUILD_PRODUCTS': '🛍️ ผลิตภัณฑ์เซิร์ฟเวอร์',
+            'GUILD_PRODUCTS_ALLOW_ARCHIVED_FILE': '📦 อนุญาตไฟล์บีบอัด',
+            'PRODUCTS_AVAILABLE_FOR_PURCHASE': '🛒 ผลิตภัณฑ์ซื้อได้',
+            
+            # Special Features
+            'BURST_REACTIONS': '💥 รีแอคชั่นระเบิด',
+            'ENHANCED_ROLE_COLORS': '🎨 สีบทบาทขั้นสูง',
+            'GUESTS_ENABLED': '👥 เปิดใช้แขก',
+            'INTERNAL_EMPLOYEE_ONLY': '🏢 พนักงานเท่านั้น',
+            'LURKABLE': '👀 ดูได้โดยไม่เข้าร่วม',
+            'MOBILE_WEB_ROLE_SUBSCRIPTION_PURCHASE_PAGE': '📱 หน้าซื้อบทบาทมือถือ',
+            'TEXT_IN_STAGE_ENABLED': '📝 ข้อความในเวที',
+            'STAGE_CHANNEL_VIEWERS_50': '👥 ผู้ชมเวที 50 คน',
+            'STAGE_CHANNEL_VIEWERS_150': '👥 ผู้ชมเวที 150 คน',
+            'STAGE_CHANNEL_VIEWERS_300': '👥 ผู้ชมเวที 300 คน',
+            
+            # Testing & Experimental
+            'AGE_VERIFICATION_LARGE_GUILD': '🔞 ยืนยันอายุเซิร์ฟเวอร์ใหญ่',
+            'BFG': '🔥 เซิร์ฟเวอร์พิเศษขนาดใหญ่',
+            'GENERATED_TEST_GUILD': '🧪 เซิร์ฟเวอร์ทดสอบ',
+            'HIDE_FROM_EXPERIMENT_UI': '🫥 ซ่อนจาก UI ทดลอง',
+            'RAPIDASH_TEST': '⚡ ทดสอบ Rapidash',
+            'RAPIDASH_TEST_REBIRTH': '🔄 ทดสอบ Rapidash ใหม่',
+            'SHARD': '⚡ เชิร์ด',
+            'RELAY_ENABLED': '🔄 เปิดรีเลย์',
+            'FORCE_RELAY': '🔄 บังคับรีเลย์',
+            
+            # Game-Specific Features
+            'GENSHIN_L30': '⚔️ Genshin Impact L30',
+            'VALORANT_L30': '🎯 Valorant L30',
+            
+            # Deprecated Features (still showing for info)
+            'APPLICATION_COMMAND_PERMISSIONS_V2': '⚙️ สิทธิ์คำสั่งแอปฯ v2',
+            'CLAN': '⚔️ กิลด์',
+            'CLAN_DISCOVERY_DISABLED': '🚫 ปิดค้นพบกิลด์',
+            'COMMERCE': '🛒 พาณิชย์',
+            'PUBLIC': '🌐 สาธารณะ (เก่า)',
+            'PUBLIC_DISABLED': '🚫 ปิดสาธารณะ (เก่า)',
+            
+            # Summary Features  
+            'SUMMARIES_DISABLED': '📋 ปิดสรุป',
+            'SUMMARIES_ENABLED': '📋 เปิดสรุป',
+            'SUMMARIES_DISABLED_BY_USER': '🚫 ผู้ใช้ปิดสรุป',
+            'SUMMARIES_ENABLED_BY_USER': '✅ ผู้ใช้เปิดสรุป',
+            
+            # Other Features
+            'LEADERBOARD_ENABLED': '🏆 เปิดลีดเดอร์บอร์ด',
+            'MARKETPLACES_CONNECTION_ROLES': '🛒 บทบาทเชื่อมตลาด',
+            'REPORT_TO_MOD_PILOT': '📢 รายงานถึงมอดไพลอต',
+            'REPORT_TO_MOD_SURVEY': '📊 สำรวจรายงานมอด',
+            'SERVER_PROFILES_TEST': '👤 ทดสอบโปรไฟล์เซิร์ฟเวอร์'
         }
         
         guild_features = [feature_names.get(feature, f'`{feature}`') for feature in features]
@@ -187,28 +355,73 @@ class Guild(commands.Cog):
         system_channels = []
         if is_member_guild:
             if guild.system_channel:
-                system_channels.append(f"📢 ระบบ : {guild.system_channel.mention}")
+                system_channels.append(f"📢 ระบบ: {guild.system_channel.mention}")
             if guild.rules_channel:
-                system_channels.append(f"📜 กฎระเบียบ : {guild.rules_channel.mention}")
+                system_channels.append(f"📜 กฎระเบียบ: {guild.rules_channel.mention}")
             if guild.public_updates_channel:
-                system_channels.append(f"📰 อัปเดต : {guild.public_updates_channel.mention}")
+                system_channels.append(f"📰 อัปเดต: {guild.public_updates_channel.mention}")
         else:
             if guild.system_channel:
-                system_channels.append(f"📢 ระบบ : #{guild.system_channel.name}")
+                system_channels.append(f"📢 ระบบ: #{guild.system_channel.name}")
             if guild.rules_channel:
-                system_channels.append(f"📜 กฎระเบียบ : #{guild.rules_channel.name}")
+                system_channels.append(f"📜 กฎระเบียบ: #{guild.rules_channel.name}")
             if guild.public_updates_channel:
-                system_channels.append(f"📰 อัปเดต : #{guild.public_updates_channel.name}")
+                system_channels.append(f"📰 อัปเดต: #{guild.public_updates_channel.name}")
         
         system_channels_text = '\n'.join(system_channels) if system_channels else '`ไม่มี`'
 
-        # Get guild limits based on boost level
-        emoji_limit = 50 + (50 * boost_level)  # 50 base + 50 per level
-        bitrate_limits = {0: "96", 1: "128", 2: "256", 3: "384"}
-        file_size_limits = {0: "8.0", 1: "8.0", 2: "50.0", 3: "100.0"}
+        # Get comprehensive guild limits based on boost level - Enhanced from DiscordLists
+        # Emoji limits: Base 50, Level 1: 100, Level 2: 150, Level 3: 250
+        emoji_limits = {0: 50, 1: 100, 2: 150, 3: 250}
+        emoji_limit = emoji_limits.get(boost_level, 50)
         
-        bitrate_limit = bitrate_limits.get(boost_level, "96")
-        file_size_limit = file_size_limits.get(boost_level, "8.0")
+        # Sticker limits: Base 5, Level 1: 15, Level 2: 30, Level 3: 60
+        sticker_limits = {0: 5, 1: 15, 2: 30, 3: 60}
+        sticker_limit = sticker_limits.get(boost_level, 5)
+        
+        # Soundboard limits: Base 8, Level 1: 24, Level 2: 36, Level 3: 48
+        soundboard_limits = {0: 8, 1: 24, 2: 36, 3: 48}
+        soundboard_limit = soundboard_limits.get(boost_level, 8)
+        
+        # Audio quality limits
+        audio_bitrate_limits = {0: "96kbps", 1: "128kbps", 2: "256kbps", 3: "384kbps"}
+        audio_bitrate_limit = audio_bitrate_limits.get(boost_level, "96kbps")
+        
+        # File size limits
+        file_size_limits = {0: "8MB", 1: "8MB", 2: "50MB", 3: "100MB"}
+        file_size_limit = file_size_limits.get(boost_level, "8MB")
+        
+        # Video quality limits
+        stream_quality_limits = {0: "720p@30fps", 1: "720p@60fps", 2: "720p@60fps", 3: "720p@60fps"}
+        go_live_quality_limits = {0: "720p@60fps", 1: "720p@60fps", 2: "1080p@60fps", 3: "1080p@60fps"}
+        stream_quality = stream_quality_limits.get(boost_level, "720p@30fps")
+        go_live_quality = go_live_quality_limits.get(boost_level, "720p@60fps")
+        
+        # Video stage seats limits: Base 50, Level 1: 50, Level 2: 150, Level 3: 300 (+30 per boost past 14)
+        video_stage_limits = {0: 50, 1: 50, 2: 150, 3: 300}
+        video_stage_limit = video_stage_limits.get(boost_level, 50)
+        if boost_level == 3 and boost_count > 14:
+            video_stage_limit += (boost_count - 14) * 30
+        
+        # Maximum concurrent activities based on boost level
+        concurrent_activities_limits = {0: 2, 1: 3, 2: 5, 3: "ไม่จำกัด"}
+        concurrent_activities_limit = concurrent_activities_limits.get(boost_level, 2)
+        
+        # Universal Discord limits (applies to all servers regardless of boost level)
+        universal_limits = {
+            'max_members': '25,000,000',
+            'max_categories': '50',
+            'max_channels': '500',
+            'max_channels_per_category': '50',
+            'max_roles': '250',
+            'max_invites': '999',
+            'audit_log_retention': '45 วัน',
+            'max_followed_channels': '10 ต่อช่อง',
+            'max_thread_members': '1,000',
+            'max_thread_role_mentions': '10',
+            'video_channel_members': '25',
+            'stage_channel_viewers': '10,000'
+        }
 
         # Calculate time since creation
         now = discord.utils.utcnow()
@@ -309,7 +522,7 @@ class Guild(commands.Cog):
         if guild.icon:
             embed.set_thumbnail(url=guild.icon.url)
         
-        embed.description = f"ไอดีของเซิร์ฟเวอร์ : `{guild.id}`\nเจ้าของเซิร์ฟเวอร์ : <@{guild.owner_id}> (`{guild.owner_id}`)"
+        embed.description = f"ไอดีของเซิร์ฟเวอร์: `{guild.id}`\nเจ้าของเซิร์ฟเวอร์: <@{guild.owner_id}> `({guild.owner_id})`"
 
         # Format created date safely with time ago
         created_time = guild.created_at.astimezone(tz=pytz.timezone("Asia/Bangkok"))
@@ -332,22 +545,22 @@ class Guild(commands.Cog):
         
         # Channel info
         if isinstance(text_channels, str):  # Limited data
-            channel_info = f"`📝 ข้อความ: {text_channels}`\n`🔊 เสียง: {voice_channels}`\n`📁 หมวดหมู่: {categories}`"
+            channel_info = f"📝 ข้อความ: `{text_channels}`\n🔊 เสียง: `{voice_channels}`\n📁 หมวดหมู่: `{categories}`"
         else:  # Full data
-            channel_info = f"`📝 ข้อความ: {text_channels}`\n`🔊 เสียง: {voice_channels}`"
+            channel_info = f"📝 ข้อความ: `{text_channels}`\n🔊 เสียง: `{voice_channels}`"
             if stage_channels > 0:
-                channel_info += f"\n`🎭 เวที: {stage_channels}`"
+                channel_info += f"\n🎭 เวที: `{stage_channels}`"
             if forum_channels > 0:
-                channel_info += f"\n`💬 ฟอรัม: {forum_channels}`"
-            channel_info += f"\n`📁 หมวดหมู่: {categories}`"
+                channel_info += f"\n💬 ฟอรัม: `{forum_channels}`"
+            channel_info += f"\n📁 หมวดหมู่: `{categories}`"
         
         embed.add_field(name="**ช่องทั้งหมด**", value=channel_info)
         
         # Role breakdown
         if isinstance(role_count, str):  # Limited data
-            role_info = f"`บทบาททั้งหมด: {role_count}`\n`- ข้อมูลเพิ่มเติม: ไม่ทราบ`"
+            role_info = f"บทบาททั้งหมด: `{role_count}`\n- ข้อมูลเพิ่มเติม: `ไม่ทราบ`"
         else:  # Full data
-            role_info = f"`บทบาททั้งหมด: {role_count}`\n`- ไม่ได้จัดการอัตโนมัติ: {len(non_managed_roles)}`\n`- จัดการอัตโนมัติ: {len(managed_roles)}`"
+            role_info = f"บทบาททั้งหมด: `{role_count}`\n- ไม่ได้จัดการอัตโนมัติ: `{len(non_managed_roles)}`\n- จัดการอัตโนมัติ: `{len(managed_roles)}`"
         embed.add_field(name="**บทบาท**", value=role_info)
         
         # System channels
@@ -359,75 +572,83 @@ class Guild(commands.Cog):
             displayed_boosters = '\n'.join(boosters[:10])
             booster_display = f"{displayed_boosters}\n`และอีก {len(boosters) - 10} คน...`"
         
-        boost_info = f"**ระดับ:** `{boost_level}/3`\n**Boost:** `{boost_count} ครั้ง`"
+        boost_info = f"ระดับ: `{boost_level}/3`\nBoost: `{boost_count} ครั้ง`"
         if boosters:
-            boost_info += f"\n**ผู้ Boost:**\n{booster_display}"
+            boost_info += f"\nผู้ Boost:\n{booster_display}"
         
         embed.add_field(name="**🚀 Nitro Boost**", value=boost_info)
         
         # URL information
         url_info = ""
         if guild.icon:
-            url_info += f"[ไอคอน]({guild.icon.url})\n"
+            url_info += f"ไอคอน: [ดูไอคอน]({guild.icon.url})\n"
         else:
-            url_info += "ไอคอน : `ไม่มี`\n"
+            url_info += "ไอคอน: `ไม่มี`\n"
             
         if guild.banner:
-            url_info += f"[แบนเนอร์]({guild.banner.url})\n"
+            url_info += f"แบนเนอร์: [ดูแบนเนอร์]({guild.banner.url})\n"
         else:
-            url_info += "แบนเนอร์ : `ไม่มี`\n"
+            url_info += "แบนเนอร์: `ไม่มี`\n"
             
         if guild.splash:
-            url_info += f"[หน้าแรกเริ่ม]({guild.splash.url})\n"
+            url_info += f"หน้าแรกเริ่ม: [ดูหน้าแรกเริ่ม]({guild.splash.url})\n"
         else:
-            url_info += "หน้าแรกเริ่ม : `ไม่มี`\n"
+            url_info += "หน้าแรกเริ่ม: `ไม่มี`\n"
             
         if guild.discovery_splash:
-            url_info += f"[หน้าแรกเริ่มหน้าค้นพบ]({guild.discovery_splash.url})"
+            url_info += f"หน้าแรกเริ่มหน้าค้นพบ: [ดูหน้าแรกเริ่ม]({guild.discovery_splash.url})"
         else:
-            url_info += "หน้าแรกเริ่มหน้าค้นพบ : `ไม่ปรากฏ`"
+            url_info += "หน้าแรกเริ่มหน้าค้นพบ: `ไม่ปรากฏ`"
         
         embed.add_field(name="**🔗 URL**", value=url_info)
         
-        # Limits
-        limits_info = f"`😀 อีโมจิ: {emoji_limit}`\n`🎵 บิตเรต: {bitrate_limit}Kbps`\n`📁 ขนาดไฟล์: {file_size_limit} MB`"
-        embed.add_field(name="**การจำกัด**", value=limits_info)
+        # Enhanced Server Limits & Boost Benefits
+        limits_info = f"😀 อีโมจิ: `{emoji_limit} สล็อต`\n🔖 สติกเกอร์: `{sticker_limit} สล็อต`\n🔊 ซาวด์บอร์ด: `{soundboard_limit} สล็อต`\n🎵 เสียง: `{audio_bitrate_limit}`\n📁 อัปโหลด: `{file_size_limit}`\n📹 สตรีม: `{stream_quality}`\n🎥 Go Live: `{go_live_quality}`"
+        embed.add_field(name="**🚀 ขีดจำกัดตาม Boost**", value=limits_info)
         
-        # Emoji and stickers
-        emoji_sticker_info = f"`😀 อีโมจิ: {emoji_count}/{emoji_limit}`\n`🔖 สติกเกอร์: {sticker_count}`"
-        embed.add_field(name="**อีโมจิและสติกเกอร์**", value=emoji_sticker_info)
+        # Universal Discord Limits
+        universal_info = f"👥 สมาชิกสูงสุด: `{universal_limits['max_members']}`\n📁 หมวดหมู่: `{universal_limits['max_categories']}`\n#️⃣ ช่องทั้งหมด: `{universal_limits['max_channels']}`\n🎭 บทบาท: `{universal_limits['max_roles']}`\n📨 คำเชิญ: `{universal_limits['max_invites']}`\n📊 Audit Log: `{universal_limits['audit_log_retention']}`"
+        embed.add_field(name="**📋 ขีดจำกัดสากล**", value=universal_info)
+        
+        # Advanced Limits & Features  
+        advanced_info = f"🧵 เธรดสมาชิก: `{universal_limits['max_thread_members']}`\n🎭 ที่เธรด: `{universal_limits['max_thread_role_mentions']} บทบาท`\n📹 วิดีโอช่อง: `{universal_limits['video_channel_members']}`\n🎭 เวทีผู้ชม: `{universal_limits['stage_channel_viewers']}`\n🎬 เวทีวิดีโอ: `{video_stage_limit} ที่นั่ง`\n🎮 กิจกรรมพร้อมกัน: `{concurrent_activities_limit}`"
+        embed.add_field(name="**⚙️ ขีดจำกัดขั้นสูง**", value=advanced_info)
+        
+        # Current Usage vs Limits
+        emoji_sticker_info = f"😀 อีโมจิ: `{emoji_count}/{emoji_limit}`\n🔖 สติกเกอร์: `{sticker_count}/{sticker_limit}`"
+        embed.add_field(name="**📊 การใช้งานปัจจุบัน**", value=emoji_sticker_info)
         
         embed.add_field(name="**ตัวกรองเนื้อหา**", value=f"`{content_filters.get(guild.explicit_content_filter, 'ไม่ทราบ')}`")
         
         # Member statistics
         if isinstance(human_count, str):  # Limited data
-            member_stats = f"`👥 ทั้งหมด: {guild.member_count:,}`\n`👤 มนุษย์: {human_count}`\n`🤖 บอท: {bot_count}`\n`🟢 ออนไลน์: {online_members}`"
+            member_stats = f"👥 ทั้งหมด: `{guild.member_count:,}`\n👤 มนุษย์: `{human_count}`\n🤖 บอท: `{bot_count}`\n🟢 ออนไลน์: `{online_members}`"
         else:  # Full data
-            member_stats = f"`👥 ทั้งหมด: {guild.member_count:,}`\n`👤 มนุษย์: {human_count:,}`\n`🤖 บอท: {bot_count:,}`\n`🟢 ออนไลน์: {online_members:,}`"
+            member_stats = f"👥 ทั้งหมด: `{guild.member_count:,}`\n👤 มนุษย์: `{human_count:,}`\n🤖 บอท: `{bot_count:,}`\n🟢 ออนไลน์: `{online_members:,}`"
             if voice_members > 0:
-                member_stats += f"\n`🔊 ในห้องเสียง: {voice_members}`"
+                member_stats += f"\n🔊 ในห้องเสียง: `{voice_members}`"
         embed.add_field(name="**สถิติสมาชิก**", value=member_stats)
 
         # Security & Moderation
-        security_info = f"`🔐 2FA: {mfa_required}`\n`🔞 NSFW: {nsfw_level}`\n`🔔 การแจ้งเตือน: {default_notifications}`"
+        security_info = f"🔐 2FA: `{mfa_required}`\n🔞 NSFW: `{nsfw_level}`\n🔔 การแจ้งเตือน: `{default_notifications}`"
         embed.add_field(name="**ความปลอดภัย**", value=security_info)
 
         # Server Settings
-        server_settings = f"`🌍 ภาษา: {locale_display}`\n`💤 AFK: {afk_info}`\n`📺 Widget: {widget_enabled}`"
+        server_settings = f"🌍 ภาษา: `{locale_display}`\n💤 AFK: `{afk_info}`\n📺 Widget: `{widget_enabled}`"
         if guild.afk_channel:
-            server_settings += f"\n`💤 ช่อง AFK: {afk_channel_info}`"
+            server_settings += f"\n💤 ช่อง AFK: {afk_channel_info}"
         if guild.widget_channel:
-            server_settings += f"\n`📺 ช่อง Widget: {widget_channel}`"
+            server_settings += f"\n📺 ช่อง Widget: {widget_channel}"
         embed.add_field(name="**การตั้งค่าเซิร์ฟเวอร์**", value=server_settings)
 
         # Technical Information
-        technical_info = f"`🔗 การเชื่อมโยง: {integration_count}`\n`🎛️ Permission Overwrites: {total_overwrites}`"
+        technical_info = f"🔗 การเชื่อมโยง: `{integration_count}`\n🎛️ Permission Overwrites: `{total_overwrites}`"
         if isinstance(invite_count, int):
-            technical_info += f"\n`📨 คำเชิญ: {invite_count} ({total_invite_uses:,} ครั้ง)`"
+            technical_info += f"\n📨 คำเชิญ: `{invite_count} ({total_invite_uses:,} ครั้ง)`"
         elif invite_count == "ไม่ทราบ":
-            technical_info += f"\n`📨 คำเชิญ: {invite_count}`"
+            technical_info += f"\n📨 คำเชิญ: `{invite_count}`"
         else:
-            technical_info += f"\n`📨 คำเชิญ: {invite_count}`"
+            technical_info += f"\n📨 คำเชิญ: `{invite_count}`"
         embed.add_field(name="**ข้อมูลเทคนิค**", value=technical_info)
 
         # Activity Statistics (if available)
@@ -436,13 +657,103 @@ class Guild(commands.Cog):
             newest_member_age = min(member_ages)
             oldest_member_age = max(member_ages)
             
-            activity_stats = f"`📊 อายุสมาชิกเฉลี่ย: {int(avg_member_age)} วัน`\n`🆕 สมาชิกใหม่สุด: {newest_member_age} วันที่แล้ว`\n`👴 สมาชิกเก่าสุด: {oldest_member_age} วันที่แล้ว`"
+            activity_stats = f"📊 อายุสมาชิกเฉลี่ย: `{int(avg_member_age)} วัน`\n🆕 สมาชิกใหม่สุด: `{newest_member_age} วันที่แล้ว`\n👴 สมาชิกเก่าสุด: `{oldest_member_age} วันที่แล้ว`"
             embed.add_field(name="**สถิติกิจกรรม**", value=activity_stats)
 
-        embed.add_field(name="**คุณสมบัติพิเศษ**", value=f"> {features_text}")
+        # Boost Level Details & Benefits
+        boost_descriptions = {
+            0: "⚪ ไม่มี Boost - คุณสมบัติพื้นฐาน",
+            1: "🔷 Level 1 - ไอคอนเคลื่อนไหว, เสียงคุณภาพดี",
+            2: "🔶 Level 2 - แบนเนอร์, อัปโหลด 50MB, บทบาทไอคอน",
+            3: "💎 Level 3 - URL สั้น, แบนเนอร์เคลื่อนไหว, อัปโหลด 100MB"
+        }
+        boost_description = boost_descriptions.get(boost_level, "❓ ไม่ทราบ")
         
-        # Additional metadata in footer
-        embed.set_footer(text=f"Region: {guild.region if hasattr(guild, 'region') else 'Auto'} • Shard: {guild.shard_id if guild.shard_id is not None else 0}")
+        # Check for special community program status
+        special_status = []
+        if 'PARTNERED' in features:
+            special_status.append("🤝 Discord Partner")
+        if 'VERIFIED' in features:
+            special_status.append("✅ Verified Server")
+        if 'DISCOVERABLE' in features:
+            special_status.append("🔍 Public Discovery")
+        if 'COMMUNITY' in features:
+            special_status.append("🏘️ Community Server")
+        if 'HUB' in features:
+            special_status.append("🎓 Student Hub")
+        if 'DEVELOPER_SUPPORT_SERVER' in features:
+            special_status.append("💻 Developer Support")
+        
+        special_status_text = '\n'.join(special_status) if special_status else '`ไม่มีสถานะพิเศษ`'
+        
+        boost_info_detailed = f"ระดับ: `{boost_description}`\nBoost: `{boost_count} ครั้ง`"
+        if special_status:
+            boost_info_detailed += f"\nสถานะพิเศษ:\n{special_status_text}"
+        
+        embed.add_field(name="**🚀 ข้อมูล Boost & สถานะ**", value=boost_info_detailed)
+
+        # Enhanced Features Display
+        # Categorize features for better readability
+        feature_categories = {
+            'core': [],
+            'boost': [],
+            'community': [],
+            'experimental': [],
+            'special': []
+        }
+        
+        # Categorize features
+        for feature in features:
+            feature_name = feature_names.get(feature, f'`{feature}`')
+            if feature in ['ANIMATED_ICON', 'ANIMATED_BANNER', 'BANNER', 'VANITY_URL', 'ROLE_ICONS']:
+                feature_categories['boost'].append(feature_name)
+            elif feature in ['COMMUNITY', 'DISCOVERABLE', 'PARTNERED', 'VERIFIED', 'NEWS', 'HUB']:
+                feature_categories['community'].append(feature_name)
+            elif feature in ['AUTO_MODERATION', 'MEMBER_VERIFICATION_GATE_ENABLED', 'WELCOME_SCREEN_ENABLED', 'PRIVATE_THREADS']:
+                feature_categories['core'].append(feature_name)
+            elif 'TEST' in feature or 'EXPERIMENT' in feature or 'ALPHA' in feature or 'BETA' in feature:
+                feature_categories['experimental'].append(feature_name)
+            else:
+                feature_categories['special'].append(feature_name)
+        
+        # Build categorized features text
+        categorized_features = []
+        if feature_categories['community']:
+            categorized_features.append(f"**🏘️ ชุมชน & การยืนยัน:**\n> " + '\n> '.join(feature_categories['community'][:8]))
+        if feature_categories['boost']:
+            categorized_features.append(f"**🚀 คุณสมบัติ Boost:**\n> " + '\n> '.join(feature_categories['boost'][:6]))
+        if feature_categories['core']:
+            categorized_features.append(f"**⚙️ หลัก & ความปลอดภัย:**\n> " + '\n> '.join(feature_categories['core'][:6]))
+        if feature_categories['special']:
+            categorized_features.append(f"**✨ พิเศษ & อื่นๆ:**\n> " + '\n> '.join(feature_categories['special'][:6]))
+        if feature_categories['experimental']:
+            categorized_features.append(f"**🧪 ทดลอง & ทดสอบ:**\n> " + '\n> '.join(feature_categories['experimental'][:4]))
+        
+        features_display = '\n\n'.join(categorized_features) if categorized_features else '`ไม่มีคุณสมบัติพิเศษ`'
+        
+        embed.add_field(name="🌟 คุณสมบัติของเซิร์ฟเวอร์", value=features_display, inline=False)
+        
+        # Enhanced metadata in footer with comprehensive information
+        footer_text = f"API Version: v{discord.__version__}"
+        if hasattr(guild, 'region'):
+            footer_text += f" • Region: {guild.region}"
+        else:
+            footer_text += " • Region: Auto"
+        if guild.shard_id is not None:
+            footer_text += f" • Shard: {guild.shard_id}"
+        footer_text += f" • Features: {len(features)} รายการ"
+        if boost_count > 0:
+            footer_text += f" • Boosters: {len(boosters)} คน"
+        
+        embed.set_footer(text=footer_text)
+        
+        # Add comprehensive info about Discord limits in footer note
+        if boost_level == 3:
+            embed.add_field(
+                name="📌 หมายเหตุสำคัญ", 
+                value=f"เซิร์ฟเวอร์นี้มี Boost ระดับสูงสุด! คุณสมบัติพิเศษ: `URL สั้น`, `อัปโหลด 100MB`, `เสียง 384kbps`, `วิดีโอ 1080p@60fps`, และ `อีโมจิ 250 สล็อต`\nข้อมูลจาก `DiscordLists repository`", 
+                inline=False
+            )
         
         # Set banner as image if available
         if guild.banner:

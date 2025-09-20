@@ -9,7 +9,10 @@ WORKDIR /app
 
 # Install Python dependencies
 COPY requirements.txt ./
+
+# Install PyTorch CPU-only versions first (using PyTorch index)
 RUN pip install --no-cache-dir "pip<24.1" && \
+    pip install --no-cache-dir torch==2.1.1+cpu torchaudio==2.1.1+cpu -f https://download.pytorch.org/whl/torch_stable.html && \
     pip install --no-cache-dir -r requirements.txt && \
     pip cache purge
 

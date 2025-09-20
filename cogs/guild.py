@@ -442,7 +442,7 @@ class Guild(commands.Cog):
         embed.add_field(name="**คุณสมบัติพิเศษ**", value=f"> {features_text}")
         
         # Additional metadata in footer
-        embed.set_footer(text=f"Guild ID: {guild.id} • Region: {guild.region if hasattr(guild, 'region') else 'Auto'} • Shard: {guild.shard_id if guild.shard_id is not None else 0}")
+        embed.set_footer(text=f"Region: {guild.region if hasattr(guild, 'region') else 'Auto'} • Shard: {guild.shard_id if guild.shard_id is not None else 0}")
         
         # Set banner as image if available
         if guild.banner:

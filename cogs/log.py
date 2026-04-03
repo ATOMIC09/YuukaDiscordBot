@@ -23,7 +23,12 @@ class Log(commands.Cog):
         sendlog.set_author(name=interaction.user, icon_url=interaction.user.display_avatar.url)
         sendlog.timestamp = interaction.created_at
         sendlog.add_field(name="เซิร์ฟเวอร์",value=f"`{interaction.guild}` ({interaction.guild_id})")
-        sendlog.add_field(name="หมวดหมู่",value=f"`{interaction.channel.category.name}` ({interaction.channel.category.id})")
+        category = getattr(interaction.channel, 'category', None)
+        if category:
+            category_value = f"`{category.name}` ({category.id})"
+        else:
+            category_value = "ไม่มี"
+        sendlog.add_field(name="หมวดหมู่",value=category_value)
         sendlog.add_field(name="ช่อง",value=f"`{interaction.channel}` ({interaction.channel_id})")
         sendlog.add_field(name="ผู้เขียน",value=f"`{interaction.user}` ({interaction.user.id})")
         sendlog.add_field(name="คำสั่ง",value=f"```/{interaction.command.name} {data['content']}```")

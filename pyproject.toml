@@ -6,6 +6,9 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "py-cord[speed,voice]>=2.8.0",
+    "python-dotenv>=1.0.0",
+    "loguru>=0.7.0",
+    "yt-dlp>=2024.0.0",
 ]
 
 [dependency-groups]

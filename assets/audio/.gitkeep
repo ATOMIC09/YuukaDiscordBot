@@ -1,0 +1,8 @@
+# This directory stores local audio files used by the bot.
+# Examples:
+#   - Sound effects (.mp3, .wav, .ogg)
+#   - Cached TTS audio output
+#   - Background music tracks
+#
+# Files in this directory are NOT committed to git (see .gitignore).
+# Add 'assets/audio/*.mp3' etc. to .gitignore if needed.

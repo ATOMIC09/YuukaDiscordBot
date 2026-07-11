@@ -125,3 +125,9 @@ async def transcribe_wav_bytes(
         logger.debug(f"[STT] {user_display}: (no speech detected)")
 
     return transcript
+
+
+def setup(bot: discord.Bot) -> None:
+    """Pre-load the STT model at bot startup."""
+    load_model()
+

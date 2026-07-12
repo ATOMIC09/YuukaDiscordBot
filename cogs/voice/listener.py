@@ -118,11 +118,14 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
                 found_guild_id = guild_id
                 break
 
-        if active_sink is None or channel is None:
+        if active_sink is None or channel is None or found_guild_id is None:
             logger.debug("_on_recording_done fired but no active sink found")
             return
 
         guild_id = found_guild_id
+        
+        # Pop early to prevent duplicate executions from py-cord thread race conditions
+        self._active_sinks.pop(guild_id, None)
         logger.info(f"Recording finished in guild {guild_id}. Processing audio...")
 
         if exception:
@@ -140,7 +143,6 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
                 "• No one spoke during the recording\n"
                 "• DAVE decryption is not working (check `davey` is installed)",
             ))
-            self._active_sinks.pop(guild_id, None)
             return
 
         transcripts: dict[str, str] = {}
@@ -165,9 +167,18 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
             # (WaveSink.format_audio is broken in 2.8, we do it ourselves)
             wav_buf = _pcm_to_wav(raw_pcm)
 
-            # Transcribe — runs in thread pool, logs [STT] username: text to terminal
-            transcript = await transcribe_wav_bytes(wav_buf, display)
-            transcripts[display] = transcript if transcript else "*(no speech detected)*"
+            # --- STT Temporarily Disabled ---
+            # transcript = await transcribe_wav_bytes(wav_buf, display)
+            # transcripts[display] = transcript if transcript else "*(no speech detected)*"
+            
+            import os
+            os.makedirs("assets/audio", exist_ok=True)
+            filename = f"assets/audio/recorded_{user_id}.wav"
+            with open(filename, "wb") as f:
+                f.write(wav_buf.read())
+            
+            logger.info(f"Saved audio from {display} to {filename}")
+            transcripts[display] = f"*(Audio saved to {filename})*"
 
             # TODO: AI PIPELINE HOOK
             # Forward transcript to AI pipeline here:
@@ -176,11 +187,10 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
         # Post summary embed to Discord
         lines = [f"🎙️ **{name}**\n> {text}" for name, text in transcripts.items()]
         await channel.send(embed=success_embed(
-            "Transcription Complete",
-            f"Transcribed **{len(transcripts)}** speaker(s):\n\n" + "\n\n".join(lines),
+            "Recording Saved",
+            f"Processed **{len(transcripts)}** speaker(s):\n\n" + "\n\n".join(lines),
         ))
 
-        self._active_sinks.pop(guild_id, None)
         logger.info(f"Transcription done for guild {guild_id}")
 
     # ------------------------------------------------------------------

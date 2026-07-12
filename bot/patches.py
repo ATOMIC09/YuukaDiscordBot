@@ -123,6 +123,190 @@ def apply_patches() -> None:
 
         Sink.write = _patched_write  # type: ignore[method-assign]
 
+        # ------------------------------------------------------------------
+        # DAVE Voice Receive Patches
+        try:
+            from discord.opus import PacketDecoder, OpusError
+            from discord.voice.receive.reader import PacketDecryptor, OPUS_SILENCE, _log as reader_log, davey
+            from discord.voice.receive.router import PacketRouter
+            import nacl.secret
+
+            # Patch 1: PacketDecoder._decode_packet (opus.py)
+            def _patched_decode_packet(self, packet):
+                assert self._decoder is not None
+                assert self.sink.client
+
+                user_id = self._cached_id
+                dave = self.sink.client._connection.dave_session
+                in_dave = dave is not None
+
+                reader_log.debug(
+                    "Decrypting packet for user %s (DAVE enabled: %s). Has decrypted data?: %s",
+                    user_id,
+                    in_dave,
+                    packet.decrypted_data is not None,
+                )
+
+                other_code = True
+
+                if packet:
+                    other_code = False
+                    pcm = self._decoder.decode(packet.decrypted_data, fec=False)
+
+                if other_code:
+                    next_packet = self._buffer.peek_next()
+
+                    if next_packet is not None:
+                        nextdata = next_packet.decrypted_data
+                        reader_log.debug(
+                            "Generating fec packet: fake=%s, fec=%s",
+                            packet.sequence,
+                            next_packet.sequence,
+                        )
+                        pcm = self._decoder.decode(nextdata, fec=True)
+                    else:
+                        pcm = self._decoder.decode(None, fec=False)
+
+                return packet, pcm
+                
+            PacketDecoder._decode_packet = _patched_decode_packet
+
+            # Patch 2: PacketDecryptor.decrypt_rtp (reader.py)
+            def _patched_decrypt_rtp(self, packet):
+                state = self.client._connection
+                dave = state.dave_session
+
+                raw_payload = self._decryptor_rtp(packet)
+
+                if dave is not None and dave.ready:
+                    uid = state.ssrc_user_map.get(packet.ssrc)
+                    decrypted = False
+
+                    if not uid:
+                        # SSRC->user_id mapping not yet populated (race with member_connect).
+                        # Try every user ID known to the DAVE session until one decrypts.
+                        for candidate_uid in dave.get_user_ids():
+                            try:
+                                decrypted_audio = dave.decrypt(
+                                    candidate_uid,
+                                    davey.MediaType.audio,
+                                    raw_payload,
+                                )
+                                # Successfully decrypted — cache the mapping for next time
+                                self.client._connection.user_ssrc_map[candidate_uid] = packet.ssrc
+                                uid = candidate_uid
+                                packet.decrypted_data = decrypted_audio
+                                decrypted = True
+                                reader_log.debug(
+                                    "DAVE: inferred ssrc %s -> user_id %s from decryption",
+                                    packet.ssrc, uid,
+                                )
+                                break
+                            except Exception:
+                                continue
+
+                    if uid and not decrypted:
+                        try:
+                            decrypted_audio = dave.decrypt(
+                                uid,
+                                davey.MediaType.audio,
+                                raw_payload,
+                            )
+                            # dave.decrypt() returns raw Opus — no extension headers.
+                            # The extension was already stripped by _decryptor_rtp above.
+                            packet.decrypted_data = decrypted_audio
+                        except Exception as exc:
+                            reader_log.error("dave.decrypt failed for SSRC %s: %s", packet.ssrc, exc)
+                            packet.decrypted_data = OPUS_SILENCE
+
+                return getattr(packet, "decrypted_data", raw_payload)
+
+            PacketDecryptor.decrypt_rtp = _patched_decrypt_rtp
+
+            # Patch 3: PacketDecryptor._decrypt_rtp_aead_xchacha20_poly1305_rtpsize (reader.py)
+            def _patched_decrypt_rtp_aead(self, packet):
+                from discord.voice.receive.reader import CryptoError
+                reader_log.debug(
+                    "Decrypting RTP AEAD XChaCha20 Poly1305 RTPSize, has decrypted data?: %s",
+                    packet.decrypted_data is not None,
+                )
+                packet.adjust_rtpsize()
+                nonce = packet.nonce + b"\x00" * 20
+
+                assert isinstance(self.box, nacl.secret.Aead)
+
+                try:
+                    result = self.box.decrypt(
+                        packet.decrypted_data or packet.data,
+                        bytes(packet.header),
+                        nonce,
+                    )
+                except Exception as exc:
+                    reader_log.error("Critical error at AEAD: %s", exc)
+                    raise CryptoError(exc)
+
+                if packet.extended:
+                    packet.update_extended_header(result)
+
+                # Pycord hardcodes 8 bytes for all packets here.
+                result = result[8:]
+
+                if getattr(packet, "padding", False) and result:
+                    pad_len = result[-1]
+                    if 0 < pad_len <= len(result):
+                        result = result[:-pad_len]
+
+                return result
+
+            PacketDecryptor._decrypt_rtp_aead_xchacha20_poly1305_rtpsize = _patched_decrypt_rtp_aead
+
+            def _patched_do_run(self):
+                dave_warned = False
+                while not self._end_thread.is_set():
+                    self.waiter.wait()
+
+                    with self._lock:
+                        for decoder in self.waiter.items:
+                            try:
+                                data = decoder.pop_data()
+                                if data is not None:
+                                    self.sink.write(data, data.source)
+                            except (OpusError, AssertionError) as exc:
+                                reader_log.debug("Skipping OpusError in router: %s", exc)
+
+            PacketRouter._do_run = _patched_do_run
+
+            # Patch 5: PacketDecoder.pop_data (opus.py)
+            # Fixes Pycord 2.8.0's JitterBuffer bug where it constantly flushes itself
+            # before reaching pref_size, completely breaking packet reordering and PLC generation.
+            from discord.opus import PacketDecoder
+            old_pop_data = PacketDecoder.pop_data
+            def _patched_pop_data(self, *, timeout: float = 0):
+                # Don't pop until the jitter buffer is sufficiently full, to allow reordering
+                if len(self._buffer._buffer) <= self._buffer.pref_size:
+                    self._flag_ready_state()
+                    return None
+                
+                # Now the buffer is full enough, so we can actually pop and use PLC if needed.
+                packet = self._get_next_packet(timeout)
+                self._flag_ready_state()
+
+                if packet is None:
+                    return None
+                
+                try:
+                    return self._process_packet(packet)
+                except Exception as exc:
+                    reader_log.warning("Decoder process_packet failed: %s", exc)
+                    # Return PLC silence instead of skipping
+                    pcm = self._decoder.decode(None, fec=False)
+                    from discord.voice.packets import VoiceData
+                    return VoiceData(pcm, self._get_user(self._cached_id), packet)
+
+            PacketDecoder.pop_data = _patched_pop_data
+        except ImportError:
+            log.warning("Could not patch pycord DAVE classes — voice receive may fail")
+
     except ImportError:
         log.warning("Could not patch discord.sinks.Sink — voice receive may fail")
 

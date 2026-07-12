@@ -1,19 +1,15 @@
 """
 cogs/voice/listener.py
-Voice receive cog — listens to users speaking and transcribes in real-time.
+Voice receive cog — listens to users speaking and saves audio.
 
 How it works
 ------------
 1. Bot joins a voice channel (or reuses an existing VoiceClient)
 2. `voice_client.start_recording(sink, callback)` begins capturing audio.
-   bot/patches.py fixes the interface mismatch between the new receive stack
-   (which passes VoiceData objects) and the old WaveSink (which expects bytes).
 3. When `voice_client.stop_recording()` is called, the callback fires.
 4. sink.audio_data contains raw PCM BytesIO per user (keyed by user_id int).
-   We wrap each one in a proper WAV container ourselves (skipping the broken
-   WaveSink.format_audio which relies on vc.recording / vc.decoder).
-5. Each user's WAV is passed to Typhoon ASR for transcription.
-6. Transcript is logged to terminal: [STT] username: text
+   We wrap each one in a proper WAV container ourselves.
+5. The audio files are attached to a message and sent back to the channel.
 
 PCM format from Opus decoder (pycord hardcoded):
   - Sample rate : 48 000 Hz
@@ -23,13 +19,12 @@ PCM format from Opus decoder (pycord hardcoded):
 DAVE note
 ---------
 pycord 2.8.0 fully supports DAVE (Discord E2E Encryption) when `davey` is
-installed. The RuntimeWarning from start_recording() is a stale TODO comment
-— it is suppressed by bot/patches.py. Voice receive works correctly.
+installed. Voice receive works correctly out of the box.
 
 Slash Commands
 --------------
   /listen start  — Join voice channel and start recording
-  /listen stop   — Stop recording, transcribe, print transcripts to terminal
+  /listen stop   — Stop recording and send audio files to channel
 """
 
 from __future__ import annotations
@@ -42,7 +37,6 @@ import discord
 from discord.ext import commands
 
 from bot.logger import logger
-from cogs.voice.stt import load_model, transcribe_wav_bytes
 from utils.embeds import error_embed, info_embed, success_embed, warning_embed
 
 # Opus decoder output constants (pycord hardcoded values)
@@ -70,21 +64,12 @@ def _pcm_to_wav(pcm_bytes: bytes) -> io.BytesIO:
 
 
 class ListenerCog(commands.Cog, name="Voice Listener"):
-    """Voice receive — listen to users speaking and transcribe via Typhoon ASR."""
+    """Voice receive — listen to users speaking and save audio."""
 
     def __init__(self, bot: discord.Bot) -> None:
         self.bot = bot
-        # guild_id → active WaveSink
+        # guild_id -> active WaveSink
         self._active_sinks: dict[int, discord.sinks.WaveSink] = {}
-
-        # Kick off model load in the background when the cog loads
-        import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-            loop.run_in_executor(None, load_model)
-        except RuntimeError:
-            # No running loop yet — model will lazy-load on first transcription
-            pass
 
     # ------------------------------------------------------------------
     # Recording callback (pycord 2.7+ single-parameter style)
@@ -145,7 +130,8 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
             ))
             return
 
-        transcripts: dict[str, str] = {}
+        files_to_send: list[discord.File] = []
+        summary_lines: list[str] = []
 
         for user_id, audio_data in active_sink.audio_data.items():
             user = self.bot.get_user(user_id)
@@ -160,38 +146,26 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
 
             if byte_count < 1024:
                 logger.debug(f"Skipping {display} — audio too short ({byte_count} bytes)")
-                transcripts[display] = "*(no speech)*"
+                summary_lines.append(f"🎙️ **{display}**: *(audio too short)*")
                 continue
 
-            # Wrap raw PCM in a proper WAV container for Typhoon ASR
-            # (WaveSink.format_audio is broken in 2.8, we do it ourselves)
+            # Wrap raw PCM in a proper WAV container
             wav_buf = _pcm_to_wav(raw_pcm)
-
-            # --- STT Temporarily Disabled ---
-            # transcript = await transcribe_wav_bytes(wav_buf, display)
-            # transcripts[display] = transcript if transcript else "*(no speech detected)*"
             
-            import os
-            os.makedirs("assets/audio", exist_ok=True)
-            filename = f"assets/audio/recorded_{user_id}.wav"
-            with open(filename, "wb") as f:
-                f.write(wav_buf.read())
+            # Create a discord.File object to send
+            filename = f"recorded_{user_id}.wav"
+            files_to_send.append(discord.File(wav_buf, filename=filename))
             
-            logger.info(f"Saved audio from {display} to {filename}")
-            transcripts[display] = f"*(Audio saved to {filename})*"
+            summary_lines.append(f"🎙️ **{display}**: Audio attached.")
 
-            # TODO: AI PIPELINE HOOK
-            # Forward transcript to AI pipeline here:
-            # await ai_pipeline.process(user_id, transcript)
-
-        # Post summary embed to Discord
-        lines = [f"🎙️ **{name}**\n> {text}" for name, text in transcripts.items()]
-        await channel.send(embed=success_embed(
+        # Post summary embed to Discord with the audio files attached
+        embed = success_embed(
             "Recording Saved",
-            f"Processed **{len(transcripts)}** speaker(s):\n\n" + "\n\n".join(lines),
-        ))
+            f"Processed **{len(active_sink.audio_data)}** speaker(s):\n\n" + "\n".join(summary_lines),
+        )
+        await channel.send(embed=embed, files=files_to_send)
 
-        logger.info(f"Transcription done for guild {guild_id}")
+        logger.info(f"Audio sent for guild {guild_id}")
 
     # ------------------------------------------------------------------
     # Slash commands
@@ -236,16 +210,8 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
         elif voice_client.channel != voice_channel:
             await voice_client.move_to(voice_channel)
 
-        # bot/patches.py already added __sink_listeners__, walk_children, is_opus,
-        # and the critical write() fix at the Sink class level — no per-instance
-        # patching needed here.
+        # PR 3159 provides native sink and DAVE support!
         sink = discord.sinks.WaveSink()
-        # CRITICAL: sink.client is a property returning self.vc.
-        # PacketDecoder._process_packet() asserts self.sink.client and uses
-        # self.sink.client._ssrc_to_id to resolve SSRC→user.
-        # The new AudioReader never calls sink.init(), so vc stays None.
-        # Setting it manually fixes the AssertionError that crashes the PacketRouter.
-        sink.vc = voice_client  # type: ignore[attr-defined]
         sink._text_channel = ctx.channel  # type: ignore[attr-defined]
 
         self._active_sinks[guild_id] = sink
@@ -256,19 +222,24 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
         # bot's event loop via run_coroutine_threadsafe().
         loop = asyncio.get_event_loop()
 
-        def _callback_shim(exception: Exception | None) -> None:
+        def _callback_shim(sink: discord.sinks.Sink, *args) -> None:
+            # In Pycord 2.8+, the callback receives (sink, *args).
+            # The exception is no longer passed as a parameter.
             asyncio.run_coroutine_threadsafe(
-                self._on_recording_done(exception), loop
+                self._on_recording_done(None), loop
             )
 
-        voice_client.start_recording(sink, _callback_shim)
+        # PYCORD 2.8.0 / PR 3159 BUG WORKAROUND:
+        # AudioReader.run() checks `if self.after and self.args:`.
+        # If no *args are provided, self.args is `()` which evaluates to False,
+        # silently dropping the callback! We pass a dummy `True` to prevent this.
+        voice_client.start_recording(sink, _callback_shim, True)
 
         logger.info(f"Started recording in guild {guild_id}, channel '{voice_channel.name}'")
         await ctx.respond(embed=info_embed(
             "🔴 Recording Started",
             f"Now listening in **{voice_channel.name}**.\n\n"
-            "Speak in **Thai** for best accuracy with Typhoon ASR.\n"
-            "Run `/listen stop` when done — transcripts appear in the terminal.",
+            "Run `/listen stop` when done — audio files will be sent to this channel.",
         ))
 
     @listen.command(name="stop", description="Stop recording and transcribe captured audio")
@@ -300,7 +271,7 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
         logger.info(f"Stopped recording in guild {guild_id}")
         await ctx.respond(embed=info_embed(
             "⏹️ Recording Stopped",
-            "Transcribing audio… results will appear in the terminal and here shortly.",
+            "Processing audio... files will be sent here shortly.",
         ))
 
 

@@ -3283,15 +3283,11 @@ wheels = [
 
 [[package]]
 name = "py-cord"
-version = "2.8.0"
-source = { registry = "https://pypi.org/simple" }
+version = "2.8.1.dev57+g05cf65fa6"
+source = { git = "https://github.com/Pycord-Development/pycord.git?rev=refs%2Fpull%2F3159%2Fhead#05cf65fa6d81567a8a4347ac961a093981554137" }
 dependencies = [
     { name = "aiohttp" },
     { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/24/73/02ad1b5ced7685e2868c25d574edc6b4eb154a214cf4caf36270480fc65c/py_cord-2.8.0.tar.gz", hash = "sha256:57a7efefa80e7f6ef890fbfc054d686782c347c9e4d86fa7c91f7ae5285b353f", size = 1173848, upload-time = "2026-05-18T13:02:09.092Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b1/52/cd690a9103b3deadc5c047d3823b750a9afd61c35e57373bbd9e5dbd765f/py_cord-2.8.0-py3-none-any.whl", hash = "sha256:24f9180b4df432ddef732e388a905aa7d9cdf8f2f26318f18a193bccb2d7f642", size = 1264552, upload-time = "2026-05-18T13:02:06.959Z" },
 ]
 
 [package.optional-dependencies]
@@ -5082,7 +5078,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "loguru", specifier = ">=0.7.0" },
-    { name = "py-cord", extras = ["speed", "voice"], specifier = ">=2.8.0" },
+    { name = "py-cord", extras = ["speed", "voice"], git = "https://github.com/Pycord-Development/pycord.git?rev=refs%2Fpull%2F3159%2Fhead" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "typhoon-asr", specifier = ">=0.1.1" },
     { name = "yt-dlp", specifier = ">=2024.0.0" },

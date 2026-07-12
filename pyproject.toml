@@ -29,3 +29,6 @@ message = "Bump version: {current_version} → {new_version}"
 filename = "pyproject.toml"
 search = 'version = "{current_version}"'
 replace = 'version = "{new_version}"'
+
+[tool.uv.sources]
+py-cord = { git = "https://github.com/Pycord-Development/pycord.git", rev = "refs/pull/3159/head" }

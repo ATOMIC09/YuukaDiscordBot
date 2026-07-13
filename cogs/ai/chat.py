@@ -14,8 +14,7 @@ from utils.embeds import error_embed, success_embed
 from utils.llm import generate_chat_response
 
 # Safe maximum to keep history well within limits. 
-# 100 messages is plenty of context and won't bloat memory or the JSON payload too much.
-MAX_HISTORY_LENGTH = 100
+MAX_HISTORY_LENGTH = 50
 
 
 class AIChatCog(commands.Cog, name="AI Chat"):
@@ -40,9 +39,9 @@ class AIChatCog(commands.Cog, name="AI Chat"):
         # Initialize the history with the system prompt
         history = [{"role": "system", "content": config.ollama_system_prompt}]
         
-        # Fetch the last 50 messages to build immediate context
+        # Fetch the recent messages to build immediate context up to MAX_HISTORY_LENGTH
         recent_messages = []
-        async for msg in ctx.channel.history(limit=50):
+        async for msg in ctx.channel.history(limit=MAX_HISTORY_LENGTH):
             recent_messages.append(msg)
             
         # History yields newest to oldest. Reverse it so it's chronological.
@@ -106,7 +105,7 @@ class AIChatCog(commands.Cog, name="AI Chat"):
         history.append({"role": "user", "content": user_content})
 
         # Prune history if it gets too large (keep the system prompt at index 0)
-        if len(history) > MAX_HISTORY_LENGTH:
+        while len(history) > MAX_HISTORY_LENGTH:
             history.pop(1)
 
         # Only trigger the LLM to generate a response if the bot is explicitly mentioned

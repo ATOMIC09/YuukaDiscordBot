@@ -16,6 +16,11 @@ class InterceptHandler(logging.Handler):
     """Logs standard library log messages through loguru."""
 
     def emit(self, record: logging.LogRecord) -> None:
+        # Aggressively filter out annoying framework warnings before they reach Loguru
+        if record.name.startswith(("nemo", "nv_one_logger", "lhotse", "numexpr")):
+            if record.levelno < logging.ERROR:
+                return
+
         # Get corresponding Loguru level if it exists.
         try:
             level = _logger.level(record.levelname).name

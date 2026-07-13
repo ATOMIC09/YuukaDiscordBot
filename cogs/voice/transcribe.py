@@ -1,5 +1,5 @@
 """
-cogs/voice/stt.py
+cogs/voice/transcribe.py
 Speech-to-Text provider using Typhoon ASR Real-Time.
 
 Model: typhoon-ai/typhoon-asr-realtime (FastConformer-Transducer, 114M params)
@@ -37,154 +37,7 @@ from utils.embeds import error_embed, info_embed, success_embed, warning_embed
 if TYPE_CHECKING:
     pass
 
-# Module-level state
-_model_loaded: bool = False
-_executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="stt")
-_transcribe_fn = None  # set after model load
-_device: str = "cpu"  # dynamic device flag
-
-# Opus decoder output constants (pycord hardcoded values)
-_OPUS_CHANNELS = 2
-_OPUS_SAMPLE_WIDTH = 2      # bytes per sample per channel (16-bit)
-_OPUS_SAMPLE_RATE = 48_000  # Hz
-
-
-def _pcm_to_wav(pcm_bytes: bytes) -> io.BytesIO:
-    """Wrap raw PCM bytes in a proper WAV container."""
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wf:
-        wf.setnchannels(_OPUS_CHANNELS)
-        wf.setsampwidth(_OPUS_SAMPLE_WIDTH)
-        wf.setframerate(_OPUS_SAMPLE_RATE)
-        wf.writeframes(pcm_bytes)
-    buf.seek(0)
-    return buf
-
-
-def load_model(device: str | None = None) -> None:
-    """
-    Load the Typhoon ASR model. Call once at startup.
-    Safe to call multiple times — subsequent calls are no-ops.
-
-    Args:
-        device: "cpu" or "cuda". If None, auto-detects based on CUDA availability.
-    """
-    global _model_loaded, _transcribe_fn, _device
-
-    if _model_loaded:
-        return
-
-    try:
-        import torch
-        if device is None:
-            if torch.cuda.is_available():
-                _device = "cuda"
-                logger.info("CUDA is available! Using GPU for Typhoon ASR.")
-            else:
-                _device = "cpu"
-                logger.info("CUDA is not available. Using CPU for Typhoon ASR.")
-        else:
-            _device = device
-            logger.info(f"Loading Typhoon ASR model on {_device.upper()}...")
-    except ImportError:
-        _device = "cpu" if device is None else device
-        logger.info(f"Loading Typhoon ASR model on {_device.upper()}...")
-    try:
-        # Pre-configure NeMo logging before importing typhoon_asr to ensure
-        # all initialization logs are routed through loguru and not printed raw.
-        import logging
-        try:
-            from nemo.utils import logging as nemo_logging
-            nemo_logger = logging.getLogger("nemo_logger")
-            nemo_logger.handlers = []
-            nemo_logger.propagate = True
-            nemo_logger.setLevel(logging.ERROR)
-        except ImportError:
-            pass
-
-        from typhoon_asr import transcribe as _typhoon_transcribe  # type: ignore[import]
-
-        # Clean up any other related loggers (like lightning) that were initialized during import
-        for logger_name in list(logging.root.manager.loggerDict.keys()):
-            if any(prefix in logger_name for prefix in ("nemo", "lightning", "pytorch_lightning")):
-                l = logging.getLogger(logger_name)
-                l.handlers = []
-                l.propagate = True
-                l.setLevel(logging.ERROR)
-
-        # Warm-up: import triggers model download on first run.
-        # Store the function reference for later calls.
-        _transcribe_fn = _typhoon_transcribe
-        _model_loaded = True
-        logger.info("Typhoon ASR ready")
-    except ImportError:
-        logger.error(
-            "typhoon-asr is not installed. Run: uv add typhoon-asr\n"
-            "STT transcription will be disabled."
-        )
-
-
-def _run_transcribe(wav_path: str) -> str:
-    """
-    Blocking transcription call — runs in a thread pool.
-    Returns the transcript string (empty string on failure).
-    """
-    if _transcribe_fn is None:
-        return ""
-    try:
-        result = _transcribe_fn(wav_path, device=_device)
-        text_val = result.get("text", "")
-        if hasattr(text_val, "text"):
-            text_val = text_val.text
-        return str(text_val).strip()
-    except Exception as exc:
-        logger.error(f"STT transcription error: {exc}")
-        return ""
-
-
-async def transcribe_wav_bytes(
-    wav_bytes: io.BytesIO,
-    user_display: str,
-) -> str:
-    """
-    Transcribe audio from a BytesIO WAV file asynchronously.
-
-    WaveSink produces 48kHz 16-bit stereo WAV. We write it to a temp file
-    so typhoon-asr can read and resample it internally.
-
-    Args:
-        wav_bytes: BytesIO from sink.audio_data[user_id].file (already seeked to 0)
-        user_display: Human-readable username string for logging
-
-    Returns:
-        Transcript text, or empty string if model not loaded / silence.
-    """
-    if not _model_loaded:
-        logger.warning("STT model not loaded — skipping transcription for %s", user_display)
-        return ""
-
-    loop = asyncio.get_running_loop()
-
-    # Write to a temp .wav file that typhoon-asr can open
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-        tmp.write(wav_bytes.read())
-        tmp_path = tmp.name
-
-    transcript = await loop.run_in_executor(_executor, _run_transcribe, tmp_path)
-
-    # Clean up temp file
-    try:
-        import os
-        os.unlink(tmp_path)
-    except OSError:
-        pass
-
-    if transcript:
-        logger.info(f"[STT] {user_display}: {transcript}")
-    else:
-        logger.debug(f"[STT] {user_display}: (no speech detected)")
-
-    return transcript
+from utils.stt import _pcm_to_wav, load_model, transcribe_wav_bytes
 
 
 class RealtimeWaveSink(discord.sinks.WaveSink):
@@ -205,7 +58,6 @@ class RealtimeWaveSink(discord.sinks.WaveSink):
             try:
                 users = list(self.audio_data.keys())
             except RuntimeError:
-                # Dictionary changed size during iteration
                 continue
 
             for user_id in users:
@@ -217,14 +69,11 @@ class RealtimeWaveSink(discord.sinks.WaveSink):
                 last_size = self.last_sizes.get(user_id, 0)
                 
                 if current_size > last_size:
-                    # User is currently speaking
                     self.last_sizes[user_id] = current_size
                     self.silence_time[user_id] = now
                 elif current_size > 0:
-                    # Size hasn't changed. Have they been silent for long enough?
                     last_speak = self.silence_time.get(user_id, now)
                     if now - last_speak >= 0.5:
-                        # 1 second of silence -> trigger STT and reset
                         await self._process_and_clear(user_id)
 
     async def _process_and_clear(self, user_id: int):
@@ -262,7 +111,6 @@ class STTCog(commands.Cog, name="Realtime STT"):
 
     def __init__(self, bot: discord.Bot) -> None:
         self.bot = bot
-        # guild_id -> active RealtimeWaveSink
         self._active_sinks: dict[int, RealtimeWaveSink] = {}
 
     async def _on_recording_done(self, exception: Exception | None, /) -> None:

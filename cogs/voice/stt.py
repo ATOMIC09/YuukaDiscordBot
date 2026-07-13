@@ -41,6 +41,7 @@ if TYPE_CHECKING:
 _model_loaded: bool = False
 _executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="stt")
 _transcribe_fn = None  # set after model load
+_device: str = "cpu"  # dynamic device flag
 
 # Opus decoder output constants (pycord hardcoded values)
 _OPUS_CHANNELS = 2
@@ -60,22 +61,56 @@ def _pcm_to_wav(pcm_bytes: bytes) -> io.BytesIO:
     return buf
 
 
-def load_model(device: str = "cpu") -> None:
+def load_model(device: str | None = None) -> None:
     """
     Load the Typhoon ASR model. Call once at startup.
     Safe to call multiple times — subsequent calls are no-ops.
 
     Args:
-        device: "cpu" (default) or "cuda" if a GPU is available.
+        device: "cpu" or "cuda". If None, auto-detects based on CUDA availability.
     """
-    global _model_loaded, _transcribe_fn
+    global _model_loaded, _transcribe_fn, _device
 
     if _model_loaded:
         return
 
-    logger.info(f"Loading Typhoon ASR model on {device.upper()}...")
     try:
+        import torch
+        if device is None:
+            if torch.cuda.is_available():
+                _device = "cuda"
+                logger.info("CUDA is available! Using GPU for Typhoon ASR.")
+            else:
+                _device = "cpu"
+                logger.info("CUDA is not available. Using CPU for Typhoon ASR.")
+        else:
+            _device = device
+            logger.info(f"Loading Typhoon ASR model on {_device.upper()}...")
+    except ImportError:
+        _device = "cpu" if device is None else device
+        logger.info(f"Loading Typhoon ASR model on {_device.upper()}...")
+    try:
+        # Pre-configure NeMo logging before importing typhoon_asr to ensure
+        # all initialization logs are routed through loguru and not printed raw.
+        import logging
+        try:
+            from nemo.utils import logging as nemo_logging
+            nemo_logger = logging.getLogger("nemo_logger")
+            nemo_logger.handlers = []
+            nemo_logger.propagate = True
+            nemo_logger.setLevel(logging.ERROR)
+        except ImportError:
+            pass
+
         from typhoon_asr import transcribe as _typhoon_transcribe  # type: ignore[import]
+
+        # Clean up any other related loggers (like lightning) that were initialized during import
+        for logger_name in list(logging.root.manager.loggerDict.keys()):
+            if any(prefix in logger_name for prefix in ("nemo", "lightning", "pytorch_lightning")):
+                l = logging.getLogger(logger_name)
+                l.handlers = []
+                l.propagate = True
+                l.setLevel(logging.ERROR)
 
         # Warm-up: import triggers model download on first run.
         # Store the function reference for later calls.
@@ -97,7 +132,7 @@ def _run_transcribe(wav_path: str) -> str:
     if _transcribe_fn is None:
         return ""
     try:
-        result = _transcribe_fn(wav_path, device="cpu")
+        result = _transcribe_fn(wav_path, device=_device)
         text_val = result.get("text", "")
         if hasattr(text_val, "text"):
             text_val = text_val.text

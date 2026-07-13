@@ -29,9 +29,18 @@ async def generate_chat_response(messages: list[dict], model: str = None) -> str
     # Use the model passed in, or fallback to the one in config
     actual_model = model or config.ollama_model
     
+    # Most instruct models (like Qwen) expect strict User -> Assistant -> User alternating turns.
+    squashed_messages = []
+    for msg in messages:
+        if squashed_messages and squashed_messages[-1]["role"] == msg["role"]:
+            squashed_messages[-1]["content"] += f"\n{msg['content']}"
+        else:
+            # Create a new dict so we don't accidentally mutate the original history
+            squashed_messages.append({"role": msg["role"], "content": msg["content"]})
+    
     payload = {
         "model": actual_model,
-        "messages": messages,
+        "messages": squashed_messages,
         "stream": False,
         "options": {
             "num_ctx": 65536

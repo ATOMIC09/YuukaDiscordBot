@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import asyncio
 import io
+import pathlib
+import time
 import wave
 
 import discord
@@ -152,20 +154,39 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
             # Wrap raw PCM in a proper WAV container
             wav_buf = _pcm_to_wav(raw_pcm)
             
+            # Save the WAV file locally in case it's too large to send
+            save_dir = pathlib.Path("assets/audio/recordings")
+            save_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = int(time.time())
+            filepath = save_dir / f"recorded_{user_id}_{timestamp}.wav"
+            
+            with open(filepath, "wb") as f:
+                f.write(wav_buf.getvalue())
+            
+            logger.info(f"Saved audio locally to {filepath}")
+            
             # Create a discord.File object to send
             filename = f"recorded_{user_id}.wav"
             files_to_send.append(discord.File(wav_buf, filename=filename))
             
-            summary_lines.append(f"🎙️ **{display}**: Audio attached.")
+            summary_lines.append(f"🎙️ **{display}**: Audio saved locally as `{filepath.name}`.")
 
         # Post summary embed to Discord with the audio files attached
         embed = success_embed(
             "Recording Saved",
             f"Processed **{len(active_sink.audio_data)}** speaker(s):\n\n" + "\n".join(summary_lines),
         )
-        await channel.send(embed=embed, files=files_to_send)
-
-        logger.info(f"Audio sent for guild {guild_id}")
+        
+        try:
+            await channel.send(embed=embed, files=files_to_send)
+            logger.info(f"Audio sent for guild {guild_id}")
+        except discord.HTTPException as exc:
+            logger.error(f"Failed to send audio (likely due to file size): {exc}")
+            error_msg_embed = warning_embed(
+                "Files Too Large",
+                "The audio files were too large to upload to Discord.\n\nThey have been saved locally in the `assets/audio/recordings/` folder."
+            )
+            await channel.send(embed=error_msg_embed)
 
     # ------------------------------------------------------------------
     # Slash commands

@@ -98,7 +98,11 @@ class RealtimeWaveSink(discord.sinks.WaveSink):
         display = str(user) if user else f"Unknown ({user_id})"
         
         # Trigger realtime STT
-        await transcribe_wav_bytes(wav_buf, display)
+        transcript = await transcribe_wav_bytes(wav_buf, display)
+        if transcript:
+            channel = getattr(self, "_text_channel", None)
+            if channel:
+                await channel.send(f"🎙️ **{display}**: {transcript}")
 
     def cleanup(self):
         super().cleanup()

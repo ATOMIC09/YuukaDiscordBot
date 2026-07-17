@@ -26,8 +26,9 @@ class YuukaBot(discord.Bot):
         _configure_logger(config.log_level)
 
         intents = discord.Intents.default()
+        intents.members = True 
         intents.voice_states = True
-        intents.message_content = True  # Required for message context menus
+        intents.message_content = True
 
         # Use aiohttp's ThreadedResolver (stdlib getaddrinfo) instead of aiodns/c-ares.
         # aiodns uses the c-ares library which has known DNS failures on Windows.

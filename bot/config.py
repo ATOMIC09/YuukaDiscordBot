@@ -2,6 +2,9 @@
 bot/config.py
 Loads environment variables from .env and exposes a typed Config dataclass.
 Import the singleton `config` object — never access os.environ directly elsewhere.
+
+OpenRouter settings use the `OPENROUTER_*` env var prefix.
+Legacy `OLLAMA_*` vars are left in .env for optional local Ollama use.
 """
 
 from __future__ import annotations
@@ -19,9 +22,10 @@ class Config:
     """Typed configuration loaded from environment variables."""
 
     bot_token: str
-    ollama_base_url: str
-    ollama_model: str
-    ollama_system_prompt: str
+    openrouter_api_key: str
+    openrouter_model: str
+    openrouter_system_prompt: str
+    max_history_length: int
     guild_ids: list[int] = field(default_factory=list)
     log_level: str = "INFO"
 
@@ -36,26 +40,31 @@ class Config:
         guild_ids = [int(g.strip()) for g in raw_guild_ids.split(",") if g.strip().isdigit()]
 
         log_level = os.getenv("LOG_LEVEL", "INFO").upper()
-        
-        ollama_base_url = os.getenv("OLLAMA_BASE_URL")
-        if not ollama_base_url:
-            raise ValueError("OLLAMA_BASE_URL is not set. Please add it to your .env file.")
-            
-        ollama_model = os.getenv("OLLAMA_MODEL")
-        if not ollama_model:
-            raise ValueError("OLLAMA_MODEL is not set. Please add it to your .env file.")
-            
-        ollama_system_prompt = os.getenv("OLLAMA_SYSTEM_PROMPT")
-        if not ollama_system_prompt:
-            raise ValueError("OLLAMA_SYSTEM_PROMPT is not set. Please add it to your .env file.")
+
+        openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+        if not openrouter_api_key:
+            raise ValueError(
+                "OPENROUTER_API_KEY is not set. Add your OpenRouter API key to .env."
+            )
+
+        openrouter_model = os.getenv("OPENROUTER_MODEL", "openrouter/free")
+
+        openrouter_system_prompt = os.getenv("OPENROUTER_SYSTEM_PROMPT")
+        if not openrouter_system_prompt:
+            raise ValueError(
+                "OPENROUTER_SYSTEM_PROMPT is not set. Please add it to your .env file."
+            )
+
+        max_history_length = int(os.getenv("MAX_HISTORY_LENGTH", "50"))
 
         return cls(
             bot_token=token,
             guild_ids=guild_ids,
             log_level=log_level,
-            ollama_base_url=ollama_base_url,
-            ollama_model=ollama_model,
-            ollama_system_prompt=ollama_system_prompt,
+            openrouter_api_key=openrouter_api_key,
+            openrouter_model=openrouter_model,
+            openrouter_system_prompt=openrouter_system_prompt,
+            max_history_length=max_history_length,
         )
 
 

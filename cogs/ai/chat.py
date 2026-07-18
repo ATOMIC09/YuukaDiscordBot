@@ -140,10 +140,13 @@ class AIChatCog(commands.Cog, name="AI Chat"):
         async with message.channel.typing():
             logger.info(f"[AI Chat] Reacting to {user.display_name}'s reaction {reaction.emoji} in {channel_id}")
             
+            timestamp = discord.utils.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+            react_content = f"[{timestamp}] {user.display_name} reacted with {reaction.emoji}"
+            
             short_history = [
                 {"role": "system", "content": config.openrouter_system_prompt + "\n\nINSTRUCTION: The user just reacted to your last message. Give a short response (1-3 sentences) reacting to their emoji. Keep it in character."},
                 {"role": "assistant", "content": message.clean_content},
-                {"role": "user", "content": f"*[Reacted with {reaction.emoji}]*"}
+                {"role": "user", "content": react_content}
             ]
             
             response = await generate_chat_response(short_history)
@@ -152,7 +155,7 @@ class AIChatCog(commands.Cog, name="AI Chat"):
                 return
 
             history = self.active_channels[channel_id]
-            history.append({"role": "user", "content": f"*[Reacted with {reaction.emoji}]*"})
+            history.append({"role": "user", "content": react_content})
             history.append({"role": "assistant", "content": response})
             
             while len(history) > config.max_history_length:

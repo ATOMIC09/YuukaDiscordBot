@@ -60,9 +60,9 @@ class AIChatCog(commands.Cog, name="AI Chat"):
         
         logger.info(f"[AI Chat] Started session in channel {channel_id} by {ctx.author}. Loaded {len(history)-1} past messages.")
         await ctx.respond(embed=success_embed(
-            "AI Chat Started", 
-            "Yuuka is now listening to this channel.\n\n"
-            "She has read the recent channel history for context, but will **only** reply if you `@mention` her."
+            "🌸 เริ่มต้นการสนทนา", 
+            "รับทราบค่ะ! หนูกำลังฟังทุกคนอยู่นะคะ (´｡• ᵕ •｡\`) \n\n"
+            "หนูอ่านข้อความก่อนหน้านี้มาแล้วค่ะ ถ้าอยากคุยกับหนู อย่าลืม `@mention` เรียกหนูด้วยนะคะ!"
         ))
 
     @ai.command(name="stop", description="Stop the AI chat session in this channel")
@@ -76,7 +76,7 @@ class AIChatCog(commands.Cog, name="AI Chat"):
         del self.active_channels[channel_id]
         
         logger.info(f"[AI Chat] Stopped session in channel {channel_id}")
-        await ctx.respond(embed=success_embed("AI Chat Stopped", "Yuuka is no longer listening to this channel."))
+        await ctx.respond(embed=success_embed("💤 หยุดการสนทนา", "รับทราบค่ะ! หนูขอตัวไปพักก่อนนะคะ ถ้ามีอะไรเรียกหนูใหม่ได้เลยน้า (๑>◡<๑)"))
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:

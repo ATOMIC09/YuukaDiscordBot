@@ -71,29 +71,9 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
 
     def __init__(self, bot: discord.Bot) -> None:
         self.bot = bot
-        # guild_id -> active WaveSink
         self._active_sinks: dict[int, discord.sinks.WaveSink] = {}
 
-    # ------------------------------------------------------------------
-    # Recording callback (pycord 2.7+ single-parameter style)
-    # ------------------------------------------------------------------
-
     async def _on_recording_done(self, exception: Exception | None, /) -> None:
-        """
-        Called by pycord when stop_recording() is invoked.
-
-        Signature: exactly ONE positional-only parameter (exception).
-        The text channel is stored on sink._text_channel at recording start.
-
-        After bot/patches.py is applied:
-        - sink.audio_data = {user_id (int): AudioData(BytesIO of raw PCM)}
-        - We wrap each BytesIO in a WAV container manually (_pcm_to_wav)
-        - Each WAV is transcribed by Typhoon ASR and logged to terminal
-
-        TODO: AI PIPELINE HOOK
-        After transcription, forward `transcript` to your AI pipeline here.
-        """
-        # Locate the active sink and its paired text channel
         active_sink: discord.sinks.WaveSink | None = None
         channel: discord.TextChannel | None = None
         found_guild_id: int | None = None
@@ -126,10 +106,9 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
 
         if not active_sink.audio_data:
             await channel.send(embed=warning_embed(
-                "No Audio Captured",
-                "No speech was detected. This can happen if:\n"
-                "• No one spoke during the recording\n"
-                "• DAVE decryption is not working (check `davey` is installed)",
+                "ไม่ได้ยินเสียงเลยค่ะ",
+                "หนูไม่เห็นได้ยินใครพูดอะไรเลยค่ะ... ไม่แน่ใจว่าไมค์ช็อตรึเปล่าน้า (´-ω-`)\n"
+                "หรือว่าระบบถอดรหัสของ Discord (DAVE) อาจจะมีปัญหาค่ะ",
             ))
             return
 
@@ -174,8 +153,8 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
 
         # Post summary embed to Discord with the audio files attached
         embed = success_embed(
-            "Recording Saved",
-            f"Processed **{len(active_sink.audio_data)}** speaker(s):\n\n" + "\n".join(summary_lines),
+            "บันทึกเสียงเรียบร้อยค่ะ",
+            f"เย้! หนูรวบรวมเสียงของ **{len(active_sink.audio_data)}** คนมาให้แล้วน้า 🎵\n\n" + "\n".join(summary_lines),
         )
         
         try:
@@ -184,8 +163,8 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
         except discord.HTTPException as exc:
             logger.error(f"Failed to send audio (likely due to file size): {exc}")
             error_msg_embed = warning_embed(
-                "Files Too Large",
-                "The audio files were too large to upload to Discord.\n\nThey have been saved locally in the `assets/audio/recordings/` folder."
+                "ไฟล์ใหญ่เกินไปค่ะ",
+                "ไฟล์เสียงใหญ่เกินไป หนูส่งเข้า Discord ไม่ไหวค่ะ (｡•́︿•̀｡)\n\nแต่ไม่ต้องห่วงนะคะ หนูเซฟเก็บไว้ที่ `assets/audio/recordings/` ให้แล้วน้า"
             )
             await channel.send(embed=error_msg_embed)
 
@@ -202,16 +181,16 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
 
         if not ctx.author.voice or not ctx.author.voice.channel:
             raise UserError(
-                "Not in a Voice Channel",
-                "You must be in a voice channel for me to start listening.",
+                "ยังไม่ได้เข้าห้องเสียงค่ะ",
+                "ตัวเองยังไม่ได้เข้าห้องเสียงเลยนะคะ เข้าห้องก่อนแล้วค่อยเรียกหนูน้า (・`ω´・)",
             )
 
         guild_id = ctx.guild.id
 
         if guild_id in self._active_sinks:
             raise UserWarning(
-                "Already Recording",
-                "I'm already recording in this server. Use `/listen stop` first.",
+                "หนูทำงานอยู่นะคะ",
+                "หนูกำลังอัดเสียงอยู่ที่ห้องอื่นนะคะ ต้องให้หนูหยุดอัดก่อนน้า ลองใช้คำสั่ง `/listen stop` ดูนะคะ (｡>﹏<)",
             )
 
         voice_channel = ctx.author.voice.channel
@@ -223,8 +202,8 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
             except discord.ClientException as exc:
                 logger.error(f"Failed to connect to voice channel: {exc}")
                 raise UserError(
-                    "Connection Failed",
-                    f"Could not join **{voice_channel.name}**: `{exc}`",
+                    "เข้าห้องไม่ได้ค่ะ",
+                    f"แงงง หนูเข้าไปในห้อง **{voice_channel.name}** ไม่ได้ค่ะ... เกิดข้อผิดพลาดนิดหน่อย (T⌓T): `{exc}`",
                 )
         elif voice_client.channel != voice_channel:
             await voice_client.move_to(voice_channel)
@@ -256,9 +235,9 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
 
         logger.info(f"Started recording in guild {guild_id}, channel '{voice_channel.name}'")
         await ctx.respond(embed=info_embed(
-            "🔴 Recording Started",
-            f"Now listening in **{voice_channel.name}**.\n\n"
-            "Run `/listen stop` when done — audio files will be sent to this channel.",
+            "🔴 เริ่มอัดเสียงแล้วค่ะ",
+            f"หนูเข้ามาแล้วค่ะ! ตอนนี้กำลังตั้งใจฟังทุกคนอยู่ในห้อง **{voice_channel.name}** น้า 🎧\n\n"
+            "ถ้าคุยกันเสร็จแล้ว อย่าลืมใช้คำสั่ง `/listen stop` นะคะ!",
         ))
 
     @listen.command(name="stop", description="Stop recording and transcribe captured audio")
@@ -271,8 +250,8 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
 
         if guild_id not in self._active_sinks or voice_client is None:
             raise UserWarning(
-                "Not Recording",
-                "There is no active recording session.\nUse `/listen start` to begin.",
+                "ยังไม่ได้อัดเสียงค่ะ",
+                "เอ๊ะ... หนูยังไม่ได้อัดเสียงเลยนะคะ ถ้าอยากให้หนูอัด ใช้คำสั่ง `/listen start` ก่อนน้า (・_・;)",
             )
 
         # stop_recording() raises ClientException if the recording already
@@ -288,8 +267,8 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
 
         logger.info(f"Stopped recording in guild {guild_id}")
         await ctx.respond(embed=info_embed(
-            "⏹️ Recording Stopped",
-            "Processing audio... files will be sent here shortly.",
+            "⏹️ หยุดอัดเสียงแล้วค่ะ",
+            "หนูหยุดอัดเสียงแล้วค่ะ! ขอเวลาประมวลผลแป๊บนึงนะคะ เดี๋ยวหนูส่งไฟล์ให้ค่า (´• ω •`) ♡",
         ))
 
 

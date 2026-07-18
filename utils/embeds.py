@@ -65,19 +65,19 @@ def build_embed(
 
 def success_embed(title: str, description: str = "") -> discord.Embed:
     """Green success embed."""
-    return build_embed(title=f"✅ {title}", description=description, color=COLOR_SUCCESS)
+    return build_embed(title=f"{title}", description=description, color=COLOR_SUCCESS)
 
 
 def error_embed(title: str, description: str = "") -> discord.Embed:
     """Red error embed."""
-    return build_embed(title=f"❌ {title}", description=description, color=COLOR_ERROR)
+    return build_embed(title=f"{title}", description=description, color=COLOR_ERROR)
 
 
 def info_embed(title: str, description: str = "") -> discord.Embed:
     """Blurple info embed."""
-    return build_embed(title=f"ℹ️ {title}", description=description, color=COLOR_INFO)
+    return build_embed(title=f"{title}", description=description, color=COLOR_INFO)
 
 
 def warning_embed(title: str, description: str = "") -> discord.Embed:
     """Yellow warning embed."""
-    return build_embed(title=f"⚠️ {title}", description=description, color=COLOR_WARNING)
+    return build_embed(title=f"{title}", description=description, color=COLOR_WARNING)

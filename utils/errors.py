@@ -52,18 +52,18 @@ def setup_error_handler(bot: discord.Bot) -> None:
         elif isinstance(error, UserWarning):
             embed = warning_embed(error.title, error.description)
         elif isinstance(error, commands.CheckFailure):
-            embed = error_embed("Permission Denied", str(error) or "You don't have permission to run this command.")
+            embed = error_embed("ไม่มีสิทธิ์ค่ะ", str(error) or "แง... ตัวเองไม่มีสิทธิ์ใช้คำสั่งนี้นะคะ (╥﹏╥)")
         elif isinstance(error, commands.NoPrivateMessage):
-            embed = error_embed("Server Only", "This command can only be used in a server, not in DMs.")
+            embed = error_embed("ใช้ในนี้ไม่ได้ค่ะ", "คำสั่งนี้ใช้ในแชทส่วนตัวไม่ได้นะคะ ต้องไปใช้ในเซิร์ฟเวอร์น้า (´・ω・)")
         elif isinstance(error, commands.MissingPermissions):
             missing = ", ".join(f"`{p}`" for p in error.missing_permissions)
-            embed = error_embed("Missing Permissions", f"You need the following permissions: {missing}")
+            embed = error_embed("สิทธิ์ไม่พอนะคะ", f"หนูหรือตัวเองอาจจะขาดสิทธิ์บางอย่างนะคะ: {missing} (｡>﹏<)")
         elif isinstance(error, discord.HTTPException):
             logger.warning(f"HTTPException in command '{ctx.command}': {error}")
-            embed = error_embed("Discord Error", "A Discord API error occurred. Please try again.")
+            embed = error_embed("Discord มีปัญหาค่ะ", "เซิร์ฟเวอร์ของ Discord ดื้อนิดหน่อยค่ะ ลองใหม่อีกทีน้า (｀ε´ )")
         else:
             logger.exception(f"Unhandled error in command '{ctx.command}': {error}")
-            embed = error_embed("Unexpected Error", "Something went wrong. The issue has been logged.")
+            embed = error_embed("เกิดข้อผิดพลาดค่ะ", "อ๊ะ! มีอะไรบางอย่างผิดพลาดแหละค่ะ... หนูจดบันทึกไว้ให้ผู้พัฒนาดูแล้วน้า ขอโทษด้วยนะคะ (´-ω-`)")
 
         try:
             if ctx.response.is_done():

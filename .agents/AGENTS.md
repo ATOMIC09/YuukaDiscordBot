@@ -14,9 +14,9 @@ Read this file before making any changes to understand the architecture, convent
 
 The bot's primary features are:
 1. **Application commands** — slash commands (`/command`) and context menus (right-click menus)
-2. **Voice speaking** — join voice channels and play audio (music, TTS, sound effects)
+2. **AI chat** — stateful per-channel LLM conversations via OpenRouter
 3. **Voice listening** — receive and process audio from users via pycord's sink API
-4. **AI integration** — future AI features will hook into voice listening and command outputs
+4. **Voice transcription** — real-time STT using Typhoon ASR (scb10x/typhoon-asr-realtime)
 
 ---
 
@@ -38,27 +38,29 @@ YuukaDiscordBot/
 │
 ├── cogs/                     # Feature cogs (auto-loaded by main.py)
 │   ├── __init__.py
+│   ├── ai/                   # AI chat feature
+│   │   ├── __init__.py
+│   │   └── chat.py           # /ai chat, /ai stop — stateful LLM chat sessions
 │   ├── voice/                # Voice feature group
 │   │   ├── __init__.py
-│   │   ├── player.py         # Audio playback — join/leave/play/pause/stop/queue
-│   │   ├── listener.py       # Voice receive — pycord sinks, AI audio pipeline hook
-│   │   └── tts.py            # Text-to-speech via voice channel
-│   ├── general/              # General commands
-│   │   ├── __init__.py
-│   │   ├── help.py           # /help — custom help command
-│   │   └── info.py           # /ping, /botinfo, /serverinfo
-│   └── moderation/           # Moderation commands
-│       ├── __init__.py
-│       └── mod.py            # /kick, /ban, /timeout, etc.
+│   │   ├── listener.py       # /listen start, /listen stop — pycord Sink API, saves WAV files
+│   │   └── transcribe.py     # /transcribe start, /transcribe stop — real-time STT via Typhoon ASR
+│   ├── general/              # (empty — stub cogs removed; re-add when implementing)
+│   │   └── __init__.py
+│   └── moderation/           # (empty — stub cog removed; re-add when implementing)
+│       └── __init__.py
 │
 ├── utils/                    # Shared utilities (no Discord state — pure helpers)
 │   ├── __init__.py
 │   ├── checks.py             # Custom @commands.check() decorators
 │   ├── embeds.py             # Embed builder factories
-│   └── errors.py             # Global on_application_command_error handler
+│   ├── errors.py             # Global on_application_command_error handler
+│   ├── llm.py                # Async OpenRouter chat client (generate_chat_response)
+│   └── stt.py                # Typhoon ASR inference engine (load_model, transcribe_wav_bytes)
 │
 └── assets/
-    └── audio/                # Local audio files (sfx, cached TTS, etc.)
+    └── audio/
+        └── recordings/       # WAV files saved by listener.py (auto-created at runtime)
 ```
 
 ---
@@ -68,7 +70,7 @@ YuukaDiscordBot/
 ### 1. Bot Subclass (`bot/bot.py`)
 - The bot is an instance of `YuukaBot(discord.Bot)`.
 - Use `discord.Bot` (NOT `commands.Bot`) since we use **slash/application commands only**.
-- Required intents: `guilds`, `voice_states`, `message_content` (for message context menus).
+- Required intents: `guilds`, `voice_states`, `message_content` (for the `on_message` listener in AI chat).
 - `YuukaBot` is responsible for recursive cog loading via `load_cogs()`.
 
 ### 2. Cog Structure
@@ -91,17 +93,24 @@ def setup(bot: discord.Bot):
 ### 3. Slash Commands
 - Use `@discord.slash_command()` for slash commands.
 - Use `@discord.user_command()` / `@discord.message_command()` for context menus.
-- During **development**, pass `guild_ids=config.GUILD_IDS` to sync commands instantly to test servers.
+- During **development**, pass `guild_ids=config.guild_ids` to sync commands instantly to test servers.
 - In **production**, omit `guild_ids` for global command sync.
 
 ### 4. Config (`bot/config.py`)
 - All secrets and settings are loaded from `.env` via `python-dotenv`.
 - Access config via the singleton `config` object imported from `bot.config`.
 - **Never** hardcode tokens, IDs, or secrets anywhere else.
-- Key config values:
+- Key config values (all required unless noted):
   - `BOT_TOKEN` — Discord bot token
   - `GUILD_IDS` — comma-separated guild IDs for dev slash command sync
-  - `LOG_LEVEL` — logging verbosity (`DEBUG`, `INFO`, `WARNING`)
+  - `LOG_LEVEL` — logging verbosity (`DEBUG`, `INFO`, `WARNING`) — default: `INFO`
+  - `OLLAMA_BASE_URL` — OpenRouter base URL (e.g. `https://openrouter.ai/api/v1`)
+  - `OLLAMA_MODEL` — OpenRouter model string (e.g. `google/gemini-2.5-flash-lite`)
+  - `OLLAMA_SYSTEM_PROMPT` — system prompt injected at the start of every AI chat session
+
+> **Note**: The config keys are named `OLLAMA_*` for historical reasons, but the LLM backend is now
+> **OpenRouter** (not Ollama). The actual HTTP client in `utils/llm.py` targets the OpenRouter
+> `/chat/completions` endpoint with an `Authorization: Bearer` header.
 
 ### 5. Logging (`bot/logger.py`)
 - Uses **loguru** (`from loguru import logger`).
@@ -112,6 +121,7 @@ def setup(bot: discord.Bot):
 ### 6. Embeds (`utils/embeds.py`)
 - All user-facing responses should use Discord embeds, not plain text.
 - Use factory functions from `utils.embeds` to build consistent-looking embeds.
+- Standard helpers: `success_embed`, `error_embed`, `info_embed`, `warning_embed`, `build_embed`.
 - Standard color palette: success=green, error=red, info=blurple, warning=yellow.
 
 ### 7. Error Handling (`utils/errors.py`)
@@ -121,39 +131,95 @@ def setup(bot: discord.Bot):
 
 ---
 
+## AI Chat Architecture — `cogs/ai/chat.py`
+
+- **Slash commands**: `/ai chat` (start session), `/ai stop` (stop session)
+- **Activation**: `/ai chat` activates Yuuka in the current channel. She reads recent history for context, then listens passively.
+- **Response trigger**: Yuuka only generates a reply when she is `@mentioned` in an active channel.
+- **State**: `AIChatCog.active_channels` is a dict mapping `channel_id → list[dict]` (OpenAI-format message history).
+- **History pruning**: History is capped at `MAX_HISTORY_LENGTH = 5` turns to stay within token limits.
+- **LLM backend**: Calls `utils.llm.generate_chat_response(messages)` → OpenRouter.
+- **Message formatting**: Each user message is prefixed with timestamp and display name for context.
+
+---
+
 ## Voice Architecture
 
-### Speaking (Playback) — `cogs/voice/player.py`
-- Manages one `VoiceClient` per guild, stored in a dict keyed by `guild.id`.
-- Audio queue is a `collections.deque` per guild.
-- Uses `discord.FFmpegPCMAudio` wrapped in `discord.PCMVolumeTransformer`.
-- For streaming URLs (YouTube, etc.), use **yt-dlp** to extract the stream URL before passing to FFmpeg.
-- Key slash commands: `/join`, `/leave`, `/play <query>`, `/pause`, `/resume`, `/stop`, `/skip`, `/queue`
+### Listening (Save) — `cogs/voice/listener.py`
+- **Slash commands**: `/listen start`, `/listen stop`
+- Uses pycord's **Sink API** (`discord.sinks.WaveSink`).
+- State: `ListenerCog._active_sinks` is a dict mapping `guild_id → WaveSink`.
+- PCM audio (48kHz stereo 16-bit) from the Opus decoder is wrapped into a proper WAV container via the local `_pcm_to_wav()` helper function (NOT from `utils.stt` — listener.py has its own inline copy).
+- Recordings are saved locally to `assets/audio/recordings/` and also attached to the Discord channel as `discord.File` uploads.
+- **Pycord 2.8 callback workaround**: `start_recording()` silently drops the callback if no `*args` are passed (the `AudioReader.run()` checks `if self.after and self.args:`). We pass a dummy `True` as the third argument to prevent this.
+- **TODO: AI PIPELINE HOOK** — forward audio to AI pipeline (STT, hotword detection) after the recording callback fires.
 
-### Listening (Receive) — `cogs/voice/listener.py`
-- Uses pycord's **Sink API** (`discord.sinks`).
-- `bot.voice_clients` holds active voice connections.
-- Recording is started with `voice_client.start_recording(sink, callback, *args)`.
-- The `callback` is called when recording stops — audio data is available as `sink.audio_data` (dict of `user_id → AudioData`).
-- **AI hook**: The callback should forward raw PCM audio to an AI pipeline (STT, hotword detection, etc.). This pipeline is NOT implemented yet — leave a clearly marked `# TODO: AI PIPELINE HOOK` comment.
-- Key slash commands: `/listen start`, `/listen stop`
+### Real-time Transcription — `cogs/voice/transcribe.py`
+- **Slash commands**: `/transcribe start`, `/transcribe stop`
+- Uses a custom `RealtimeWaveSink(discord.sinks.WaveSink)` that:
+  - Monitors for silence via an `asyncio.Task` (`_monitor()`) polling every 0.3 s.
+  - After 0.5 s of silence per user, extracts and clears that user's audio buffer.
+  - Runs Typhoon ASR on the chunk via `utils.stt.transcribe_wav_bytes()`.
+  - Posts the transcript directly to the text channel: `🎙️ **Username**: transcript`.
+- Model is pre-loaded at bot startup in `setup()` via `utils.stt.load_model()`.
 
-### TTS — `cogs/voice/tts.py`
-- Converts text to audio and plays it through the voice channel.
-- Implementation is a stub — the actual TTS engine (e.g., edge-tts, Google TTS, OpenAI TTS) will be chosen later.
-- Leave a clearly marked `# TODO: TTS ENGINE` comment.
+### STT Engine — `utils/stt.py`
+- Singleton model: loaded once via `load_model()`, stored in module-level `_asr_model`.
+- Model: `scb10x/typhoon-asr-realtime` (NeMo FastConformer-Transducer, 114M params).
+- Optimized for **Thai** language; works on CPU.
+- Inference is offloaded to a `ThreadPoolExecutor` (1 worker) to avoid blocking the event loop.
+- Audio pipeline: raw PCM → WAV container → temp file → librosa resample to 16kHz mono → NeMo transcribe.
+- All NeMo/lightning/lhotse loggers are silenced to `ERROR` level to keep the terminal clean.
+
+### TTS — (not yet implemented)
+- **Planned slash commands**: `/tts speak <text>`, `/tts voice <name>`
+- No cog file exists yet. When implementing, create `cogs/voice/tts.py`.
+- Recommended engine: **edge-tts** (`uv add edge-tts`) — free, Microsoft Edge TTS voices.
+- Alternative engines: `openai TTS`, `gTTS`, `pyttsx3`.
+- Pipeline: `edge_tts.Communicate(text, voice).save("output.mp3")` → `discord.FFmpegPCMAudio("output.mp3")` → `voice_client.play(source)`.
+
+### Audio Playback — (not yet implemented)
+- **Planned slash commands**: `/join`, `/leave`, `/play <query>`, `/pause`, `/resume`, `/stop`, `/skip`, `/queue`, `/volume`
+- No cog file exists yet. When implementing, create `cogs/voice/player.py`.
+- Architecture: one `VoiceClient` per guild (dict keyed by `guild.id`), per-guild audio queue (`collections.deque`).
+- Audio source: `discord.FFmpegPCMAudio` wrapped in `discord.PCMVolumeTransformer`.
+- For URL/search playback: use **yt-dlp** to extract the direct stream URL before passing to FFmpeg.
+
+### General Commands — (not yet implemented)
+- **Planned**: `/help`, `/ping`, `/botinfo`, `/serverinfo`
+- No cog files exist yet. When implementing, create `cogs/general/help.py` and `cogs/general/info.py`.
+
+### Moderation Commands — (not yet implemented)
+- **Planned**: `/kick`, `/ban`, `/unban`, `/timeout`, `/untimeout`, `/purge`
+- No cog file exists yet. When implementing, create `cogs/moderation/mod.py`.
+- All commands should require appropriate permissions via decorators (`@commands.has_permissions(...)`).
+
+---
+
+## LLM Backend — `utils/llm.py`
+
+- **Provider**: [OpenRouter](https://openrouter.ai/) — OpenAI-compatible API.
+- **Endpoint**: `{OLLAMA_BASE_URL}/chat/completions`
+- **Auth**: `Authorization: Bearer <API_KEY>` header.
+- **Payload**: standard OpenAI `messages` array + `model` field. No streaming.
+- **History squashing**: consecutive messages with the same `role` are merged (required by some instruct models).
+- **Timeout**: 60 seconds total per request.
 
 ---
 
 ## Dependency Management (uv)
 
 ```toml
-# pyproject.toml dependencies
+# pyproject.toml — key dependencies
 dependencies = [
     "py-cord[speed,voice]>=2.8.0",
     "python-dotenv>=1.0.0",
     "loguru>=0.7.0",
-    "yt-dlp>=2024.0.0",
+    "aiohttp>=3.9.0",
+    # STT (only needed for /transcribe commands)
+    # "nemo-toolkit",
+    # "librosa",
+    # "soundfile",
 ]
 ```
 
@@ -170,8 +236,14 @@ Copy `.env.example` to `.env` and fill in values. Never commit `.env`.
 
 ```ini
 BOT_TOKEN=your_discord_bot_token_here
-GUILD_IDS=123456789,987654321   # Comma-separated dev server IDs
+GUILD_IDS=123456789,987654321       # Comma-separated dev server IDs
+
 LOG_LEVEL=DEBUG
+
+# LLM (OpenRouter) — variable names kept as OLLAMA_* for historical reasons
+OLLAMA_BASE_URL=https://openrouter.ai/api/v1
+OLLAMA_MODEL=google/gemini-2.5-flash-lite
+OLLAMA_SYSTEM_PROMPT=You are Yuuka, a helpful Discord bot assistant.
 ```
 
 ---
@@ -179,7 +251,7 @@ LOG_LEVEL=DEBUG
 ## Development Workflow
 
 1. `uv sync` — install/update dependencies
-2. Copy `.env.example` → `.env` and fill in `BOT_TOKEN`
+2. Copy `.env.example` → `.env` and fill in `BOT_TOKEN` and OpenRouter keys
 3. `uv run main.py` — start the bot
 4. Test slash commands in the dev guild(s) listed in `GUILD_IDS`
 
@@ -204,3 +276,5 @@ git push origin main --tags
 - ❌ Do NOT manually add cog imports to `main.py` — the auto-loader handles it
 - ❌ Do NOT commit `.env`
 - ❌ Do NOT use `pip install` — use `uv add`
+- ❌ Do NOT call `start_recording()` without a third dummy argument — pycord 2.8 silently drops the callback if no `*args` are passed (see Pycord 2.8.0 PR 3159 bug workaround in `listener.py`)
+- ❌ Do NOT confuse `OLLAMA_*` env vars with actual Ollama — the LLM backend is now **OpenRouter**

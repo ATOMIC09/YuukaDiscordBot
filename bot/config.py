@@ -26,6 +26,7 @@ class Config:
     openrouter_model: str
     openrouter_system_prompt: str
     max_history_length: int
+    log_channel_id: int | None = None
     guild_ids: list[int] = field(default_factory=list)
     log_level: str = "INFO"
 
@@ -56,6 +57,9 @@ class Config:
             )
 
         max_history_length = int(os.getenv("MAX_HISTORY_LENGTH", "50"))
+        
+        log_channel_id_str = os.getenv("LOG_CHANNEL_ID")
+        log_channel_id = int(log_channel_id_str) if log_channel_id_str and log_channel_id_str.isdigit() else None
 
         return cls(
             bot_token=token,
@@ -65,6 +69,7 @@ class Config:
             openrouter_model=openrouter_model,
             openrouter_system_prompt=openrouter_system_prompt,
             max_history_length=max_history_length,
+            log_channel_id=log_channel_id,
         )
 
 

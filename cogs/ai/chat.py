@@ -12,6 +12,7 @@ from discord.ext import commands
 from bot.config import config
 from bot.logger import logger
 from utils.embeds import error_embed, success_embed
+from utils.errors import UserWarning
 from utils.llm import generate_chat_response
 
 
@@ -30,8 +31,7 @@ class AIChatCog(commands.Cog, name="AI Chat"):
         channel_id = ctx.channel.id
         
         if channel_id in self.active_channels:
-            await ctx.respond("หนูกำลังฟังอยู่นี่ไง (´･ω･`)?", ephemeral=True)
-            return
+            raise UserWarning("Already Listening", "หนูกำลังฟังอยู่นี่ไง (´･ω･`)?")
 
         # Initialize history with the system prompt
         history = [{"role": "system", "content": config.openrouter_system_prompt}]
@@ -71,8 +71,7 @@ class AIChatCog(commands.Cog, name="AI Chat"):
         channel_id = ctx.channel.id
         
         if channel_id not in self.active_channels:
-            await ctx.respond("หนูไม่ได้คุยอยู่สักหน่อย (⊙_⊙)？", ephemeral=True)
-            return
+            raise UserWarning("Not Listening", "หนูไม่ได้คุยอยู่สักหน่อย (⊙_⊙)？")
 
         del self.active_channels[channel_id]
         

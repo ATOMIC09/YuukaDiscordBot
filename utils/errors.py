@@ -19,7 +19,21 @@ import discord
 from discord.ext import commands
 
 from bot.logger import logger
-from utils.embeds import error_embed
+from utils.embeds import error_embed, warning_embed
+
+class UserError(discord.ApplicationCommandError):
+    """Raised when a user doesn't meet the requirements or provides invalid input."""
+    def __init__(self, title: str, description: str):
+        self.title = title
+        self.description = description
+        super().__init__(f"{title}: {description}")
+
+class UserWarning(discord.ApplicationCommandError):
+    """Raised for soft warnings (e.g. stopping a command that isn't running)."""
+    def __init__(self, title: str, description: str):
+        self.title = title
+        self.description = description
+        super().__init__(f"{title}: {description}")
 
 
 def setup_error_handler(bot: discord.Bot) -> None:
@@ -33,7 +47,11 @@ def setup_error_handler(bot: discord.Bot) -> None:
         # Unwrap the original error if wrapped by discord
         error = getattr(error, "original", error)
 
-        if isinstance(error, commands.CheckFailure):
+        if isinstance(error, UserError):
+            embed = error_embed(error.title, error.description)
+        elif isinstance(error, UserWarning):
+            embed = warning_embed(error.title, error.description)
+        elif isinstance(error, commands.CheckFailure):
             embed = error_embed("Permission Denied", str(error) or "You don't have permission to run this command.")
         elif isinstance(error, commands.NoPrivateMessage):
             embed = error_embed("Server Only", "This command can only be used in a server, not in DMs.")
@@ -49,8 +67,8 @@ def setup_error_handler(bot: discord.Bot) -> None:
 
         try:
             if ctx.response.is_done():
-                await ctx.followup.send(embed=embed, ephemeral=True)
+                await ctx.followup.send(embed=embed)
             else:
-                await ctx.respond(embed=embed, ephemeral=True)
+                await ctx.respond(embed=embed)
         except discord.HTTPException:
             pass  # If we can't even send the error embed, just swallow it

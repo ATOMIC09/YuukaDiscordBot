@@ -40,6 +40,7 @@ from discord.ext import commands
 
 from bot.logger import logger
 from utils.embeds import error_embed, info_embed, success_embed, warning_embed
+from utils.errors import UserError, UserWarning
 
 # Opus decoder output constants (pycord hardcoded values)
 _OPUS_CHANNELS = 2
@@ -200,20 +201,18 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
         await ctx.defer()
 
         if not ctx.author.voice or not ctx.author.voice.channel:
-            await ctx.respond(embed=error_embed(
+            raise UserError(
                 "Not in a Voice Channel",
                 "You must be in a voice channel for me to start listening.",
-            ))
-            return
+            )
 
         guild_id = ctx.guild.id
 
         if guild_id in self._active_sinks:
-            await ctx.respond(embed=warning_embed(
+            raise UserWarning(
                 "Already Recording",
                 "I'm already recording in this server. Use `/listen stop` first.",
-            ))
-            return
+            )
 
         voice_channel = ctx.author.voice.channel
         voice_client: discord.VoiceClient | None = ctx.guild.voice_client
@@ -223,11 +222,10 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
                 voice_client = await voice_channel.connect()
             except discord.ClientException as exc:
                 logger.error(f"Failed to connect to voice channel: {exc}")
-                await ctx.respond(embed=error_embed(
+                raise UserError(
                     "Connection Failed",
                     f"Could not join **{voice_channel.name}**: `{exc}`",
-                ))
-                return
+                )
         elif voice_client.channel != voice_channel:
             await voice_client.move_to(voice_channel)
 
@@ -272,11 +270,10 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
         voice_client: discord.VoiceClient | None = ctx.guild.voice_client
 
         if guild_id not in self._active_sinks or voice_client is None:
-            await ctx.respond(embed=warning_embed(
+            raise UserWarning(
                 "Not Recording",
                 "There is no active recording session.\nUse `/listen start` to begin.",
-            ))
-            return
+            )
 
         # stop_recording() raises ClientException if the recording already
         # auto-stopped internally (e.g. PacketRouter died). Handle gracefully.

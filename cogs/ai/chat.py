@@ -5,6 +5,7 @@ Cog for stateful AI chat commands.
 
 from __future__ import annotations
 
+import asyncio
 import discord
 from discord.ext import commands
 
@@ -120,6 +121,44 @@ class AIChatCog(commands.Cog, name="AI Chat"):
                     await message.reply(chunks[0])
                     for chunk in chunks[1:]:
                         await message.channel.send(chunk)
+
+    @commands.Cog.listener()
+    async def on_reaction_add(self, reaction: discord.Reaction, user: discord.Member | discord.User) -> None:
+        if user.bot:
+            return
+            
+        message = reaction.message
+        if message.author != self.bot.user:
+            return
+            
+        channel_id = message.channel.id
+        if channel_id not in self.active_channels:
+            return
+
+        await asyncio.sleep(5)
+        
+        async with message.channel.typing():
+            logger.info(f"[AI Chat] Reacting to {user.display_name}'s reaction {reaction.emoji} in {channel_id}")
+            
+            short_history = [
+                {"role": "system", "content": config.openrouter_system_prompt + "\n\nINSTRUCTION: The user just reacted to your last message. Give a short response (1-3 sentences) reacting to their emoji. Keep it in character."},
+                {"role": "assistant", "content": message.clean_content},
+                {"role": "user", "content": f"*[Reacted with {reaction.emoji}]*"}
+            ]
+            
+            response = await generate_chat_response(short_history)
+            
+            if response.startswith("❌"):
+                return
+
+            history = self.active_channels[channel_id]
+            history.append({"role": "user", "content": f"*[Reacted with {reaction.emoji}]*"})
+            history.append({"role": "assistant", "content": response})
+            
+            while len(history) > config.max_history_length:
+                history.pop(1)
+                
+            await message.channel.send(f"{user.mention} {response}")
 
 
 def setup(bot: discord.Bot) -> None:

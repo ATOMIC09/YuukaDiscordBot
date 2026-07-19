@@ -32,25 +32,22 @@ def _squash_messages(messages: list[dict]) -> list[dict]:
     return squashed
 
 
-async def _call_openrouter(
+async def _stream_openrouter(
     messages: list[dict],
     model: str,
-    tools: list[dict] | None,
     headers: dict,
-) -> dict:
+) -> AsyncGenerator[str, None]:
     """
-    Make a single POST to OpenRouter and return the parsed JSON response dict.
-    Raises on network/timeout errors so the caller can handle them.
+    Make a single streaming POST to OpenRouter and yield content chunks.
+    Raises on network/timeout errors.
     """
     payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "stream": False,
+        "stream": True,
     }
-    if tools:
-        payload["tools"] = tools
 
-    timeout = aiohttp.ClientTimeout(total=60)
+    timeout = aiohttp.ClientTimeout(total=180)
     connector = aiohttp.TCPConnector(resolver=aiohttp.ThreadedResolver())
     async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
         async with session.post(_OPENROUTER_URL, json=payload, headers=headers) as response:
@@ -58,12 +55,63 @@ async def _call_openrouter(
                 error_text = await response.text()
                 logger.error(f"[LLM] OpenRouter API error {response.status}: {error_text}")
                 raise RuntimeError(f"OpenRouter returned status {response.status}")
-            return await response.json()
+                
+            async for line in response.content:
+                line_str = line.decode('utf-8').strip()
+                if not line_str:
+                    continue
+                if line_str == "data: [DONE]":
+                    break
+                if line_str.startswith("data: "):
+                    try:
+                        data = json.loads(line_str[6:])
+                        delta = data["choices"][0].get("delta", {})
+                        if "content" in delta:
+                            yield delta["content"]
+                    except Exception:
+                        pass
 
 
-async def generate_chat_response(messages: list[dict], model: str = None) -> str:
+async def _filter_search_tags(stream: AsyncGenerator[str, None]) -> AsyncGenerator[str, None]:
+    """Filters out any [SEARCH: ...] or [SEARCH_DETAIL: ...] tags from a stream."""
+    buffer = ""
+    async for chunk in stream:
+        buffer += chunk
+        
+        idx = buffer.rfind("[")
+        if idx != -1:
+            potential_tag = buffer[idx:]
+            
+            if "[SEARCH:".startswith(potential_tag) or "[SEARCH_DETAIL:".startswith(potential_tag):
+                if idx > 0:
+                    yield buffer[:idx]
+                buffer = potential_tag
+                continue
+                
+            if potential_tag.startswith("[SEARCH:") or potential_tag.startswith("[SEARCH_DETAIL:"):
+                if "]" in potential_tag:
+                    if idx > 0:
+                        yield buffer[:idx]
+                    
+                    # Tag complete, silently drop it and keep any text that follows
+                    tag_end = potential_tag.find("]") + 1
+                    buffer = potential_tag[tag_end:]
+                else:
+                    if idx > 0:
+                        yield buffer[:idx]
+                    buffer = potential_tag
+                continue
+                
+        yield buffer
+        buffer = ""
+
+    if buffer:
+        yield buffer
+
+
+async def generate_chat_stream_response(messages: list[dict], model: str = None) -> AsyncGenerator[tuple[str, str], None]:
     """
-    Send a message history to OpenRouter and return the AI's response.
+    Send a message history to OpenRouter and yield the AI's response in chunks.
 
     Implements an agentic web-search loop:
       - Pass 1: LLM may emit a tool_call for web_search.
@@ -76,8 +124,10 @@ async def generate_chat_response(messages: list[dict], model: str = None) -> str
                   The system prompt should be the first element with role "system".
         model: Override the model to use. Falls back to config.openrouter_model.
 
-    Returns:
-        The generated text response, or an error message string if the call fails.
+    Yields:
+        Tuples of (type, text):
+            - ("status", "status message")
+            - ("content", "text chunk")
     """
     from utils.web_search import web_search
 
@@ -102,73 +152,84 @@ async def generate_chat_response(messages: list[dict], model: str = None) -> str
         "X-Title": "Yuuka-Bot",
     }
 
-    logger.debug(
-        f"[LLM] Pass 1 → OpenRouter | model={actual_model} | messages={len(messages)}"
-    )
+    logger.debug(f"[LLM] Pass 1 (Stream) → OpenRouter | model={actual_model} | messages={len(messages)}")
+
+    buffer = ""
+    search_query = ""
+    search_detail_index = None
 
     try:
-        # ── Pass 1: Let the LLM decide whether to search ────────────────────────
-        data = await _call_openrouter(squashed, actual_model, None, headers)
+        async for chunk in _stream_openrouter(squashed, actual_model, headers):
+            buffer += chunk
+            
+            idx = buffer.rfind("[")
+            if idx != -1:
+                potential_tag = buffer[idx:]
+                
+                if "[SEARCH:".startswith(potential_tag) or "[SEARCH_DETAIL:".startswith(potential_tag):
+                    if idx > 0:
+                        yield ("content", buffer[:idx])
+                    buffer = potential_tag
+                    continue
+                    
+                if potential_tag.startswith("[SEARCH:") or potential_tag.startswith("[SEARCH_DETAIL:"):
+                    if "]" in potential_tag:
+                        if idx > 0:
+                            yield ("content", buffer[:idx])
+                        
+                        search_match = re.search(r'\[SEARCH:\s*(.+?)\]', potential_tag)
+                        detail_match = re.search(r'\[SEARCH_DETAIL:\s*(.+?)\s*\|\s*(\d+)\]', potential_tag)
+                        
+                        if search_match:
+                            search_query = search_match.group(1).strip()
+                            yield ("status", f"<a:MagnifierGIF:1052563354910216252> ค้นหาข้อมูลบนเว็บ: `{search_query}`...")
+                            logger.info(f"[LLM] 🔎 LLM requested SEARCH('{search_query}')")
+                            break
+                        elif detail_match:
+                            search_query = detail_match.group(1).strip()
+                            search_detail_index = int(detail_match.group(2))
+                            yield ("status", f"<a:AppleLoadingGIF:1052465926487953428> กำลังอ่านรายละเอียดของ: `{search_query}`...")
+                            logger.info(f"[LLM] 📖 LLM requested SEARCH_DETAIL('{search_query}', {search_detail_index})")
+                            break
+                        else:
+                            yield ("content", buffer)
+                            buffer = ""
+                    else:
+                        if idx > 0:
+                            yield ("content", buffer[:idx])
+                        buffer = potential_tag
+                    continue
+            
+            yield ("content", buffer)
+            buffer = ""
 
-        choices = data.get("choices", [])
-        if not choices:
-            logger.error(f"[LLM] No choices returned (Pass 1): {data}")
-            return "❌ AI Error: No response generated."
+        if buffer and not search_query:
+            yield ("content", buffer)
 
-        message = choices[0].get("message", {})
-        reply = message.get("content", "").strip()
-
-        # ── Parse Custom Tool Calling ─────────────────────────────────────────
-        search_match = re.search(r'\[SEARCH:\s*(.+?)\]', reply)
-        detail_match = re.search(r'\[SEARCH_DETAIL:\s*(.+?)\s*\|\s*(\d+)\]', reply)
-
-        if not search_match and not detail_match:
-            logger.info(f"[LLM] ✅ Reply (no search) — {len(reply)} chars")
-            logger.debug(f"[LLM] Full response: {data}")
-            return reply
-
-        # ── Tool call detected → execute web search ──────────────────────────────
-        query = ""
-        result_index = None
-
-        if detail_match:
-            query = detail_match.group(1).strip()
-            result_index = int(detail_match.group(2))
-            logger.info(f"[LLM] 📖 LLM requested SEARCH_DETAIL('{query}', {result_index})")
-        elif search_match:
-            query = search_match.group(1).strip()
-            logger.info(f"[LLM] 🔎 LLM requested SEARCH('{query}')")
-
-        tool_content = await web_search(query, max_results=5, result_index=result_index)
-
-        # ── Pass 2: Feed results back and get the final grounded answer ──────────
-        pass2_messages = squashed + [
-            {"role": "assistant", "content": reply},
-            {"role": "user", "content": f"Search Results:\n{tool_content}"},
-        ]
-
-        logger.debug(f"[LLM] Pass 2 → OpenRouter (with search results injected)")
-        data2 = await _call_openrouter(pass2_messages, actual_model, None, headers)
-
-        choices2 = data2.get("choices", [])
-        if not choices2:
-            logger.error(f"[LLM] No choices returned (Pass 2): {data2}")
-            return "❌ AI Error: No response generated after search."
-
-        final_reply = choices2[0].get("message", {}).get("content", "").strip()
-        logger.info(f"[LLM] ✅ Reply (with search) — {len(final_reply)} chars")
-        logger.debug(f"[LLM] Full response (Pass 2): {data2}")
-        return final_reply
+        if search_query:
+            # We broke out early to perform a search
+            tool_content = await web_search(search_query, max_results=5, result_index=search_detail_index)
+            
+            pass2_messages = squashed + [
+                {"role": "assistant", "content": buffer.strip()},
+                {"role": "user", "content": f"Search Results:\n{tool_content}"},
+            ]
+            
+            yield ("status", "<a:ThinkingSpining:1528490272588038284> หนูอ่านข้อมูลเสร็จแล้ว กำลังเรียบเรียงคำตอบให้ค่ะ")
+            logger.debug(f"[LLM] Pass 2 (Stream) → OpenRouter (with search results injected)")
+            
+            async for chunk in _filter_search_tags(_stream_openrouter(pass2_messages, actual_model, headers)):
+                yield ("content", chunk)
+                
+        logger.info(f"[LLM] ✅ Stream completed successfully")
 
     except aiohttp.ClientConnectorError:
         logger.error(f"[LLM] Failed to connect to OpenRouter at {_OPENROUTER_URL}")
-        return (
-            "❌ Connection Error: Could not reach OpenRouter. "
-            "Please check your internet connection."
-        )
+        yield ("content", "❌ Connection Error: Could not reach OpenRouter. Please check your internet connection.")
     except asyncio.TimeoutError:
         logger.error("[LLM] Request to OpenRouter timed out.")
-        return "❌ Timeout Error: The AI took too long to respond."
+        yield ("content", "❌ Timeout Error: The AI took too long to respond.")
     except Exception as exc:
         logger.exception(f"[LLM] Unexpected error: {exc}")
-        return f"❌ Unexpected Error: {exc}"
+        yield ("content", f"❌ Unexpected Error: {exc}")
+

@@ -13,7 +13,7 @@ from bot.config import config
 from bot.logger import logger
 from utils.embeds import error_embed, success_embed
 from utils.errors import UserWarning
-from utils.llm import generate_chat_response
+from utils.llm import generate_chat_stream_response
 
 
 class AIChatCog(commands.Cog, name="AI Chat"):
@@ -101,25 +101,51 @@ class AIChatCog(commands.Cog, name="AI Chat"):
             history.pop(1)
 
         if self.bot.user in message.mentions:
+            import time
             async with message.channel.typing():
                 logger.info(f"[AI Chat] Triggered by {message.author} in {channel_id}")
                 
-                response = await generate_chat_response(history)
+                active_msg = None
+                current_chunk_text = ""
+                full_response = ""
+                last_edit = time.time()
                 
-                if response.startswith("❌"):
-                    await message.reply(embed=error_embed("AI Error", response))
-                    return
+                async for msg_type, content in generate_chat_stream_response(history):
+                    if msg_type == "status":
+                        embed = discord.Embed(description=content, color=discord.Color.blue())
+                        if not active_msg:
+                            active_msg = await message.reply(embed=embed)
+                        else:
+                            await active_msg.edit(content=current_chunk_text or None, embed=embed)
+                            
+                    elif msg_type == "content":
+                        current_chunk_text += content
+                        full_response += content
+                        
+                        if current_chunk_text.startswith("❌") and not active_msg:
+                            active_msg = await message.reply(embed=error_embed("AI Error", current_chunk_text))
+                            continue
+                            
+                        if len(current_chunk_text) > 1950:
+                            if active_msg:
+                                await active_msg.edit(content=current_chunk_text, embed=None)
+                            current_chunk_text = ""
+                            active_msg = await message.reply("...")
+                            last_edit = time.time()
+                            continue
+                            
+                        if not active_msg:
+                            active_msg = await message.reply(current_chunk_text)
+                        else:
+                            if time.time() - last_edit > 1.0:
+                                await active_msg.edit(content=current_chunk_text, embed=None)
+                                last_edit = time.time()
                 
-                history.append({"role": "assistant", "content": response})
-
-                if len(response) <= 2000:
-                    await message.reply(response)
-                else:
-                    # If the response is too long, slice into chunks
-                    chunks = [response[i:i+1997] for i in range(0, len(response), 1997)]
-                    await message.reply(chunks[0])
-                    for chunk in chunks[1:]:
-                        await message.channel.send(chunk)
+                if active_msg and current_chunk_text and active_msg.content != current_chunk_text:
+                    await active_msg.edit(content=current_chunk_text, embed=None)
+                
+                if full_response and not full_response.startswith("❌"):
+                    history.append({"role": "assistant", "content": full_response})
 
     @commands.Cog.listener()
     async def on_reaction_add(self, reaction: discord.Reaction, user: discord.Member | discord.User) -> None:
@@ -148,19 +174,47 @@ class AIChatCog(commands.Cog, name="AI Chat"):
                 {"role": "user", "content": react_content}
             ]
             
-            response = await generate_chat_response(short_history)
-            
-            if response.startswith("❌"):
-                return
+            import time
+            active_msg = None
+            current_chunk_text = ""
+            full_response = ""
+            last_edit = time.time()
 
-            history = self.active_channels[channel_id]
-            history.append({"role": "user", "content": react_content})
-            history.append({"role": "assistant", "content": response})
+            async for msg_type, content in generate_chat_stream_response(short_history):
+                if msg_type == "status":
+                    embed = discord.Embed(description=content, color=discord.Color.blue())
+                    if not active_msg:
+                        active_msg = await message.channel.send(embed=embed)
+                    else:
+                        await active_msg.edit(content=current_chunk_text or None, embed=embed)
+                elif msg_type == "content":
+                    current_chunk_text += content
+                    full_response += content
+                    
+                    if current_chunk_text.startswith("❌") and not active_msg:
+                        active_msg = await message.channel.send(embed=error_embed("AI Error", current_chunk_text))
+                        continue
+                        
+                    if not active_msg:
+                        active_msg = await message.channel.send(f"{user.mention} {current_chunk_text}")
+                    else:
+                        if time.time() - last_edit > 1.5:
+                            prefix = f"{user.mention} " if active_msg.content.startswith("<@") else ""
+                            await active_msg.edit(content=f"{prefix}{current_chunk_text}", embed=None)
+                            last_edit = time.time()
             
-            while len(history) > config.max_history_length:
-                history.pop(1)
+            if active_msg and current_chunk_text:
+                prefix = f"{user.mention} " if active_msg.content.startswith("<@") else ""
+                if active_msg.content != f"{prefix}{current_chunk_text}":
+                    await active_msg.edit(content=f"{prefix}{current_chunk_text}", embed=None)
+            
+            if full_response and not full_response.startswith("❌"):
+                history = self.active_channels[channel_id]
+                history.append({"role": "user", "content": react_content})
+                history.append({"role": "assistant", "content": full_response})
                 
-            await message.channel.send(f"{user.mention} {response}")
+                while len(history) > config.max_history_length:
+                    history.pop(1)
 
 
 def setup(bot: discord.Bot) -> None:

@@ -26,6 +26,8 @@ class Config:
     openrouter_model: str
     openrouter_system_prompt: str
     max_history_length: int
+    tavily_api_key: str
+    search_cache_ttl_minutes: int
     log_channel_id: int | None = None
     guild_ids: list[int] = field(default_factory=list)
     log_level: str = "INFO"
@@ -57,7 +59,10 @@ class Config:
             )
 
         max_history_length = int(os.getenv("MAX_HISTORY_LENGTH", "50"))
-        
+
+        tavily_api_key = os.getenv("TAVILY_API_KEY", "")
+        search_cache_ttl_minutes = int(os.getenv("SEARCH_CACHE_TTL_MINUTES", "30"))
+
         log_channel_id_str = os.getenv("LOG_CHANNEL_ID")
         log_channel_id = int(log_channel_id_str) if log_channel_id_str and log_channel_id_str.isdigit() else None
 
@@ -69,6 +74,8 @@ class Config:
             openrouter_model=openrouter_model,
             openrouter_system_prompt=openrouter_system_prompt,
             max_history_length=max_history_length,
+            tavily_api_key=tavily_api_key,
+            search_cache_ttl_minutes=search_cache_ttl_minutes,
             log_channel_id=log_channel_id,
         )
 

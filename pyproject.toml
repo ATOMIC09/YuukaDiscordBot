@@ -10,6 +10,7 @@ dependencies = [
     "loguru>=0.7.0",
     "yt-dlp>=2024.0.0",
     "typhoon-asr>=0.1.1",
+    "tavily-python>=0.7.26",
 ]
 
 [dependency-groups]

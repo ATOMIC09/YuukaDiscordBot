@@ -129,7 +129,7 @@ async def generate_chat_stream_response(messages: list[dict], model: str = None)
             - ("status", "status message")
             - ("content", "text chunk")
     """
-    from utils.web_search import web_search
+    from utils.web_search import web_search, get_all_cached_tocs
 
     actual_model = model or config.openrouter_model
     squashed = _squash_messages(messages)
@@ -143,6 +143,18 @@ async def generate_chat_stream_response(messages: list[dict], model: str = None)
             "[SEARCH_DETAIL: your search query | result_index]\n"
             "Do not include any other text if you are triggering a search."
         )
+        
+        toc_count, tocs_str = get_all_cached_tocs()
+        if toc_count > 0:
+            search_instruction += (
+                f"\n\n[CACHED SEARCH RESULTS]\n"
+                f"You have recently searched the web. The results are available below in Table of Contents (TOC) format.\n"
+                f"If the answer to the user's question is present in these snippets, you can answer immediately.\n"
+                f"If you need to read the full content of a specific result, use [SEARCH_DETAIL: query | result_index].\n"
+                f"If the information is NOT in the cache, you can use [SEARCH: new query] to search the web.\n"
+                f"--- START CACHE ---\n{tocs_str}\n--- END CACHE ---"
+            )
+            
         squashed[0]["content"] += search_instruction
 
     headers = {

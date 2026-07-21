@@ -63,6 +63,18 @@ def _get_cached(query: str) -> dict | None:
     return entry["data"]
 
 
+def get_all_cached_tocs() -> tuple[int, str]:
+    """Return a tuple of (count, combined_string) of all currently cached search TOCs."""
+    now = time.monotonic()
+    tocs = []
+    for key, entry in list(_cache.items()):
+        if (now - entry["ts"]) / 60 > config.search_cache_ttl_minutes:
+            del _cache[key]
+        else:
+            tocs.append(_format_toc(entry["data"]))
+    return len(tocs), "\n\n".join(tocs)
+
+
 def _store_cache(query: str, data: dict) -> None:
     key = _normalize(query)
     _cache[key] = {"ts": time.monotonic(), "data": data}
@@ -246,6 +258,8 @@ async def web_search(
 
     if result_index is not None:
         logger.info(f"[SEARCH] 📖 Detail requested — result_index={result_index} (cache hit, 0 credits)")
-        return _format_result_detail(cached, result_index)
+        out = _format_result_detail(cached, result_index)
+    else:
+        out = _format_toc(cached)
 
-    return _format_toc(cached)
+    return out

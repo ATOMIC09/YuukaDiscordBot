@@ -5,4 +5,4 @@
 
 import discord
 
-ai_group = discord.SlashCommandGroup("ai", "AI related commands")
+ai_group = discord.SlashCommandGroup("ai", "🤖 คำสั่งเกี่ยวกับระบบ AI")

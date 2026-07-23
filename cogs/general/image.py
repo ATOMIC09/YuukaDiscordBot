@@ -42,7 +42,7 @@ class ImageCog(commands.Cog):
             return f"ขนาดไฟล์: {size_str} | ความละเอียด: {old_size[0]}x{old_size[1]} ➔ {new_size[0]}x{new_size[1]}"
 
     # --- Slash Commands ---
-    image = discord.SlashCommandGroup("image", "จัดการและตกแต่งรูปภาพ (Image Manipulation)")
+    image = discord.SlashCommandGroup("image", "จัดการและตกแต่งรูปภาพ")
 
     @image.command(name="pet", description="🐶 สร้างภาพลูบหัว (Petpet)")
     async def pet(self, ctx: discord.ApplicationContext, image: discord.Option(discord.Attachment, "รูปภาพที่ต้องการ (ถ้าไม่ใส่จะดึงจากแชทล่าสุด)", required=False)): # type: ignore

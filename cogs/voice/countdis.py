@@ -47,8 +47,8 @@ class CountdisCog(commands.Cog):
         # Track active countdowns per channel to prevent duplicates
         self.active_countdowns: set[int] = set()
 
-    @discord.slash_command(name="countdis", description="นับถอยหลังและตัดการเชื่อมต่อ (Countdown and Disconnect)")
-    async def countdis(self, ctx: discord.ApplicationContext, timer: discord.Option(int, description="เวลาเป็นหน่วยวินาที (Time in seconds)")): # type: ignore
+    @discord.slash_command(name="countdis", description="⏰ นับถอยหลังและตัดการเชื่อมต่อ")
+    async def countdis(self, ctx: discord.ApplicationContext, timer: discord.Option(int, description="เวลาเป็นหน่วยวินาที")): # type: ignore
         # Must be in a voice channel
         if not ctx.author.voice or not ctx.author.voice.channel:
             raise UserError("ยังไม่ได้เข้าห้องเสียง", "เซนเซย์ต้องเข้าห้องเสียงก่อนนะคะ ถึงจะให้หนูเริ่มนับถอยหลังได้ (・`ω´・)")

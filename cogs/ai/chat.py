@@ -42,7 +42,7 @@ class AIChatCog(commands.Cog, name="AI Chat"):
     # /ai chat
     # ──────────────────────────────────────────────────────────────────────
 
-    @ai.command(name="chat", description="Start an AI chat session in this channel")
+    @ai.command(name="chat", description="💬 เริ่มการสนทนากับ AI ในช่องแชทนี้")
     async def ai_chat(self, ctx: discord.ApplicationContext) -> None:
         await ctx.defer()
         channel_id = ctx.channel.id
@@ -88,7 +88,7 @@ class AIChatCog(commands.Cog, name="AI Chat"):
     # /ai voice  — delegates to AIVoiceChatCog.start_session()
     # ──────────────────────────────────────────────────────────────────────
 
-    @ai.command(name="voice", description="Join your voice channel and start an AI voice chat session")
+    @ai.command(name="voice", description="🎙️ เข้าห้องเสียงและเริ่มการสนทนากับ AI ด้วยเสียง")
     async def ai_voice(self, ctx: discord.ApplicationContext) -> None:
         voice_cog = self.bot.cogs.get("AI Voice Chat")
         if voice_cog is None:
@@ -99,7 +99,7 @@ class AIChatCog(commands.Cog, name="AI Chat"):
     # /ai stop  — kills any active AI session (text or voice) in this guild
     # ──────────────────────────────────────────────────────────────────────
 
-    @ai.command(name="stop", description="Stop any active AI session (text or voice) in this server")
+    @ai.command(name="stop", description="🛑 หยุดการทำงานของ AI ทั้งหมดในเซิร์ฟเวอร์นี้")
     async def ai_stop(self, ctx: discord.ApplicationContext) -> None:
         guild_id = ctx.guild.id
         stopped_something = False

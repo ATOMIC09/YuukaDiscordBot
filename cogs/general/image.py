@@ -30,6 +30,10 @@ class ImageCog(commands.Cog):
                 return await attachment.read(), attachment.filename
         raise UserError("ไม่พบรูปภาพ", "ข้อความที่เซนเซย์เลือกไม่มีรูปภาพเลยนี่คะ! หลอกหนูเหรอ (,,#ﾟДﾟ)")
 
+    def _format_size(self, size_bytes: int) -> str:
+        size_mb = size_bytes / (1024 * 1024)
+        return f"{size_mb:.2f} MB" if size_mb >= 1 else f"{size_bytes/1024:.2f} KB"
+
     # --- Slash Commands ---
     image = discord.SlashCommandGroup("image", "จัดการและตกแต่งรูปภาพ (Image Manipulation)")
 
@@ -41,7 +45,10 @@ class ImageCog(commands.Cog):
         try:
             output_io = await asyncio.to_thread(img_utils.make_petpet, img_bytes)
             file = discord.File(output_io, filename="petpet.gif")
-            await ctx.respond(embed=success_embed("Petpet!", "ลูบหัวเรียบร้อยแล้วค่ะเซนเซย์ (๑>◡<๑)"), file=file)
+            
+            embed = success_embed("Petpet!", "ลูบหัวเรียบร้อยแล้วค่ะเซนเซย์ (๑>◡<๑)")
+            embed.set_footer(text=f"ขนาดไฟล์: {self._format_size(output_io.getbuffer().nbytes)}")
+            await ctx.respond(embed=embed, file=file)
         except Exception as e:
             logger.error(f"Error in pet: {e}")
             raise UserError("เกิดข้อผิดพลาด", "หนูทำรูปนี้ไม่ได้ค่ะ ไฟล์อาจจะเสียหรือใหญ่เกินไป (╥﹏╥)")
@@ -54,7 +61,10 @@ class ImageCog(commands.Cog):
         try:
             output_io = await asyncio.to_thread(img_utils.make_resize, img_bytes, width, height)
             file = discord.File(output_io, filename="resized.png")
-            await ctx.respond(embed=success_embed("Resize", f"ปรับขนาดเป็น `{width}x{height}` เรียบร้อยแล้วค่ะ!"), file=file)
+            
+            embed = success_embed("Resize", f"ปรับขนาดเป็น `{width}x{height}` เรียบร้อยแล้วค่ะ!")
+            embed.set_footer(text=f"ขนาดไฟล์: {self._format_size(output_io.getbuffer().nbytes)}")
+            await ctx.respond(embed=embed, file=file)
         except Exception as e:
             logger.error(f"Error in resize: {e}")
             raise UserError("เกิดข้อผิดพลาด", "ปรับขนาดไม่สำเร็จค่ะ เซนเซย์ลองอีกรอบนะคะ (；￣Д￣)")
@@ -67,7 +77,10 @@ class ImageCog(commands.Cog):
         try:
             output_io = await asyncio.to_thread(img_utils.make_scale, img_bytes, multiplier)
             file = discord.File(output_io, filename="scaled.png")
-            await ctx.respond(embed=success_embed("Scale", f"ปรับสัดส่วน `x{multiplier}` เรียบร้อยแล้วค่ะ!"), file=file)
+            
+            embed = success_embed("Scale", f"ปรับสัดส่วน `x{multiplier}` เรียบร้อยแล้วค่ะ!")
+            embed.set_footer(text=f"ขนาดไฟล์: {self._format_size(output_io.getbuffer().nbytes)}")
+            await ctx.respond(embed=embed, file=file)
         except Exception as e:
             logger.error(f"Error in scale: {e}")
             raise UserError("เกิดข้อผิดพลาด", "ย่อขยายรูปไม่สำเร็จค่ะ เซนเซย์ ( ˘︹˘ )")
@@ -85,7 +98,10 @@ class ImageCog(commands.Cog):
         try:
             output_io = await asyncio.to_thread(img_utils.make_qr, text, logo_bytes)
             file = discord.File(output_io, filename="qrcode.png")
-            await ctx.respond(embed=success_embed("QR Code", "สร้างคิวอาร์โค้ดเสร็จแล้วค่ะเซนเซย์! ( • ̀ω•́ )"), file=file)
+            
+            embed = success_embed("QR Code", "สร้างคิวอาร์โค้ดเสร็จแล้วค่ะเซนเซย์! ( • ̀ω•́ )")
+            embed.set_footer(text=f"ขนาดไฟล์: {self._format_size(output_io.getbuffer().nbytes)}")
+            await ctx.respond(embed=embed, file=file)
         except Exception as e:
             logger.error(f"Error in qr: {e}")
             raise UserError("เกิดข้อผิดพลาด", "สร้าง QR Code ไม่สำเร็จค่ะ (；¬д¬)")
@@ -100,8 +116,11 @@ class ImageCog(commands.Cog):
         try:
             output_io = await asyncio.to_thread(img_utils.make_deepfry, img_bytes)
             base_name, _ = os.path.splitext(filename)
-            file = discord.File(output_io, filename=f"deepfried_{base_name}.jpg")
-            await ctx.respond(embed=success_embed("Deepfry", "ทอดกรอบเสร็จแล้วค่ะ! ร้อน ๆ เลย (๑•̀ㅂ•́)و✧"), file=file)
+            file = discord.File(output_io, filename=f"{base_name}_deepfried.jpg")
+            
+            embed = success_embed("Deepfry", "ทอดกรอบเสร็จแล้วค่ะ! ร้อน ๆ เลย (๑•̀ㅂ•́)و✧")
+            embed.set_footer(text=f"ขนาดไฟล์: {self._format_size(output_io.getbuffer().nbytes)}")
+            await ctx.respond(embed=embed, file=file)
         except Exception as e:
             logger.error(f"Error in deepfry: {e}")
             raise UserError("เกิดข้อผิดพลาด", "ทอดไม่สำเร็จค่ะ รูปอาจจะไหม้ไปแล้ว (＠_＠)")
@@ -114,8 +133,11 @@ class ImageCog(commands.Cog):
         try:
             output_io = await asyncio.to_thread(img_utils.make_grayscale, img_bytes)
             base_name, _ = os.path.splitext(filename)
-            file = discord.File(output_io, filename=f"gray_{base_name}.png")
-            await ctx.respond(embed=success_embed("Grayscale", "เปลี่ยนเป็นสีขาวดำเรียบร้อยค่ะ เซนเซย์! ( ⁎ᵕᴗᵕ⁎ )"), file=file)
+            file = discord.File(output_io, filename=f"{base_name}_gray.png")
+            
+            embed = success_embed("Grayscale", "เปลี่ยนเป็นสีขาวดำเรียบร้อยค่ะ เซนเซย์! ( ⁎ᵕᴗᵕ⁎ )")
+            embed.set_footer(text=f"ขนาดไฟล์: {self._format_size(output_io.getbuffer().nbytes)}")
+            await ctx.respond(embed=embed, file=file)
         except Exception as e:
             logger.error(f"Error in grayscale: {e}")
             raise UserError("เกิดข้อผิดพลาด", "เปลี่ยนสีไม่สำเร็จค่ะ (。-`ω´-)")
@@ -128,8 +150,11 @@ class ImageCog(commands.Cog):
         try:
             output_io = await asyncio.to_thread(img_utils.make_wide, img_bytes)
             base_name, _ = os.path.splitext(filename)
-            file = discord.File(output_io, filename=f"wide_{base_name}.png")
-            await ctx.respond(embed=success_embed("Wide", "ยืดภาพให้กว้าง ๆ แล้วนะคะ! (・`ω´・)"), file=file)
+            file = discord.File(output_io, filename=f"{base_name}_wide.png")
+            
+            embed = success_embed("Wide", "ยืดภาพให้กว้าง ๆ แล้วนะคะ! (・`ω´・)")
+            embed.set_footer(text=f"ขนาดไฟล์: {self._format_size(output_io.getbuffer().nbytes)}")
+            await ctx.respond(embed=embed, file=file)
         except Exception as e:
             logger.error(f"Error in wide: {e}")
             raise UserError("เกิดข้อผิดพลาด", "ยืดภาพไม่สำเร็จค่ะ (￣︿￣)")
@@ -143,8 +168,7 @@ class ImageCog(commands.Cog):
             info = await asyncio.to_thread(img_utils.get_image_info, img_bytes)
             
             # Format size nicely
-            size_mb = len(img_bytes) / (1024 * 1024)
-            size_str = f"{size_mb:.2f} MB" if size_mb >= 1 else f"{len(img_bytes)/1024:.2f} KB"
+            size_str = self._format_size(len(img_bytes))
             
             embed = info_embed("คุณสมบัติรูปภาพ 🔦", f"ข้อมูลของไฟล์ `{filename}` ค่ะเซนเซย์")
             embed.add_field(name="📂 ขนาดไฟล์", value=f"`{size_str}`", inline=True)

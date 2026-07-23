@@ -2,6 +2,10 @@ import discord
 from discord.ext import commands
 import pytz
 from datetime import datetime
+import psutil
+import platform
+import sys
+import time
 
 
 class InfoCog(commands.Cog):
@@ -14,6 +18,47 @@ class InfoCog(commands.Cog):
             return "ไม่ทราบ"
         dt_bkk = dt.astimezone(self.tz)
         return f"`วันที่ {dt_bkk.strftime('%d/%m/%Y')}` `เวลา {dt_bkk.strftime('%H:%M:%S')}`"
+
+    # ─────────────────────────────────────────────
+    #  /status
+    # ─────────────────────────────────────────────
+    @discord.slash_command(name="status", description="🤖 ดูสถานะของบอท")
+    async def status(self, ctx: discord.ApplicationContext):
+        await ctx.defer()
+        
+        process = psutil.Process()
+        memory_mb = process.memory_info().rss / (1024 * 1024)
+        cpu_usage = process.cpu_percent(interval=0.1)
+        
+        guilds = len(self.bot.guilds)
+        users = sum(g.member_count for g in self.bot.guilds if g.member_count)
+        latency = round(self.bot.latency * 1000)
+        
+        uptime_seconds = int(time.time() - process.create_time())
+        days, rem = divmod(uptime_seconds, 86400)
+        hours, rem = divmod(rem, 3600)
+        minutes, seconds = divmod(rem, 60)
+        
+        uptime_str = []
+        if days > 0: uptime_str.append(f"{days} วัน")
+        if hours > 0: uptime_str.append(f"{hours} ชม.")
+        if minutes > 0: uptime_str.append(f"{minutes} นาที")
+        uptime_str.append(f"{seconds} วิ")
+        
+        py_version = sys.version.split()[0]
+        pycord_version = discord.__version__
+        os_name = platform.system()
+        
+        embed = discord.Embed(title="🤖 สถานะของบอท Yuuka", color=0x0091FF)
+        if self.bot.user.display_avatar:
+            embed.set_thumbnail(url=self.bot.user.display_avatar.url)
+            
+        embed.add_field(name="⏱️ ระยะเวลาทำงาน (Uptime)", value=f"`{' '.join(uptime_str)}`", inline=False)
+        embed.add_field(name="📊 สถิติพื้นฐาน", value=f"เซิร์ฟเวอร์: `{guilds:,}`\nสมาชิก: `{users:,}`\nความหน่วง: `{latency}ms`", inline=True)
+        embed.add_field(name="💻 การใช้ทรัพยากร", value=f"CPU: `{cpu_usage}%`\nRAM: `{memory_mb:.2f} MB`", inline=True)
+        embed.add_field(name="⚙️ ระบบ", value=f"OS: `{os_name}`\nPython: `{py_version}`\nPy-cord: `{pycord_version}`", inline=False)
+        
+        await ctx.followup.send(embed=embed)
 
     # ─────────────────────────────────────────────
     #  /user

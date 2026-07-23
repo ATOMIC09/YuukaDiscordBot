@@ -34,6 +34,13 @@ class ImageCog(commands.Cog):
         size_mb = size_bytes / (1024 * 1024)
         return f"{size_mb:.2f} MB" if size_mb >= 1 else f"{size_bytes/1024:.2f} KB"
 
+    def _format_footer(self, size_bytes: int, old_size: tuple[int, int], new_size: tuple[int, int]) -> str:
+        size_str = self._format_size(size_bytes)
+        if old_size == new_size:
+            return f"ขนาดไฟล์: {size_str} | ความละเอียด: {new_size[0]}x{new_size[1]}"
+        else:
+            return f"ขนาดไฟล์: {size_str} | ความละเอียด: {old_size[0]}x{old_size[1]} ➔ {new_size[0]}x{new_size[1]}"
+
     # --- Slash Commands ---
     image = discord.SlashCommandGroup("image", "จัดการและตกแต่งรูปภาพ (Image Manipulation)")
 
@@ -43,11 +50,11 @@ class ImageCog(commands.Cog):
         img_bytes = await self._get_image_bytes(ctx, image)
         
         try:
-            output_io = await asyncio.to_thread(img_utils.make_petpet, img_bytes)
-            file = discord.File(output_io, filename="petpet.gif")
+            output_io, ext, old_size, new_size = await asyncio.to_thread(img_utils.make_petpet, img_bytes)
+            file = discord.File(output_io, filename=f"petpet.{ext}")
             
             embed = success_embed("Petpet!", "ลูบหัวเรียบร้อยแล้วค่ะเซนเซย์ (๑>◡<๑)")
-            embed.set_footer(text=f"ขนาดไฟล์: {self._format_size(output_io.getbuffer().nbytes)}")
+            embed.set_footer(text=self._format_footer(output_io.getbuffer().nbytes, old_size, new_size))
             await ctx.respond(embed=embed, file=file)
         except Exception as e:
             logger.error(f"Error in pet: {e}")
@@ -59,11 +66,11 @@ class ImageCog(commands.Cog):
         img_bytes = await self._get_image_bytes(ctx, image)
         
         try:
-            output_io, ext = await asyncio.to_thread(img_utils.make_resize, img_bytes, width, height)
+            output_io, ext, old_size, new_size = await asyncio.to_thread(img_utils.make_resize, img_bytes, width, height)
             file = discord.File(output_io, filename=f"resized.{ext}")
             
             embed = success_embed("Resize", f"ปรับขนาดเป็น `{width}x{height}` เรียบร้อยแล้วค่ะ!")
-            embed.set_footer(text=f"ขนาดไฟล์: {self._format_size(output_io.getbuffer().nbytes)}")
+            embed.set_footer(text=self._format_footer(output_io.getbuffer().nbytes, old_size, new_size))
             await ctx.respond(embed=embed, file=file)
         except Exception as e:
             logger.error(f"Error in resize: {e}")
@@ -75,11 +82,11 @@ class ImageCog(commands.Cog):
         img_bytes = await self._get_image_bytes(ctx, image)
         
         try:
-            output_io, ext = await asyncio.to_thread(img_utils.make_scale, img_bytes, multiplier)
+            output_io, ext, old_size, new_size = await asyncio.to_thread(img_utils.make_scale, img_bytes, multiplier)
             file = discord.File(output_io, filename=f"scaled.{ext}")
             
             embed = success_embed("Scale", f"ปรับสัดส่วน `x{multiplier}` เรียบร้อยแล้วค่ะ!")
-            embed.set_footer(text=f"ขนาดไฟล์: {self._format_size(output_io.getbuffer().nbytes)}")
+            embed.set_footer(text=self._format_footer(output_io.getbuffer().nbytes, old_size, new_size))
             await ctx.respond(embed=embed, file=file)
         except Exception as e:
             logger.error(f"Error in scale: {e}")
@@ -96,11 +103,11 @@ class ImageCog(commands.Cog):
             logo_bytes = await logo.read()
             
         try:
-            output_io = await asyncio.to_thread(img_utils.make_qr, text, logo_bytes)
-            file = discord.File(output_io, filename="qrcode.png")
+            output_io, ext, old_size, new_size = await asyncio.to_thread(img_utils.make_qr, text, logo_bytes)
+            file = discord.File(output_io, filename=f"qrcode.{ext}")
             
             embed = success_embed("QR Code", "สร้างคิวอาร์โค้ดเสร็จแล้วค่ะเซนเซย์! ( • ̀ω•́ )")
-            embed.set_footer(text=f"ขนาดไฟล์: {self._format_size(output_io.getbuffer().nbytes)}")
+            embed.set_footer(text=self._format_footer(output_io.getbuffer().nbytes, old_size, new_size))
             await ctx.respond(embed=embed, file=file)
         except Exception as e:
             logger.error(f"Error in qr: {e}")
@@ -114,12 +121,12 @@ class ImageCog(commands.Cog):
         img_bytes, filename = await self._get_message_image_bytes(message)
         
         try:
-            output_io, ext = await asyncio.to_thread(img_utils.make_deepfry, img_bytes)
+            output_io, ext, old_size, new_size = await asyncio.to_thread(img_utils.make_deepfry, img_bytes)
             base_name, _ = os.path.splitext(filename)
             file = discord.File(output_io, filename=f"{base_name}_deepfried.{ext}")
             
             embed = success_embed("Deepfry", "ทอดกรอบเสร็จแล้วค่ะ! ร้อน ๆ เลย (๑•̀ㅂ•́)و✧")
-            embed.set_footer(text=f"ขนาดไฟล์: {self._format_size(output_io.getbuffer().nbytes)}")
+            embed.set_footer(text=self._format_footer(output_io.getbuffer().nbytes, old_size, new_size))
             await ctx.respond(embed=embed, file=file)
         except Exception as e:
             logger.error(f"Error in deepfry: {e}")
@@ -131,12 +138,12 @@ class ImageCog(commands.Cog):
         img_bytes, filename = await self._get_message_image_bytes(message)
         
         try:
-            output_io, ext = await asyncio.to_thread(img_utils.make_grayscale, img_bytes)
+            output_io, ext, old_size, new_size = await asyncio.to_thread(img_utils.make_grayscale, img_bytes)
             base_name, _ = os.path.splitext(filename)
             file = discord.File(output_io, filename=f"{base_name}_gray.{ext}")
             
             embed = success_embed("Grayscale", "เปลี่ยนเป็นสีขาวดำเรียบร้อยค่ะ เซนเซย์! ( ⁎ᵕᴗᵕ⁎ )")
-            embed.set_footer(text=f"ขนาดไฟล์: {self._format_size(output_io.getbuffer().nbytes)}")
+            embed.set_footer(text=self._format_footer(output_io.getbuffer().nbytes, old_size, new_size))
             await ctx.respond(embed=embed, file=file)
         except Exception as e:
             logger.error(f"Error in grayscale: {e}")
@@ -148,12 +155,12 @@ class ImageCog(commands.Cog):
         img_bytes, filename = await self._get_message_image_bytes(message)
         
         try:
-            output_io, ext = await asyncio.to_thread(img_utils.make_wide, img_bytes)
+            output_io, ext, old_size, new_size = await asyncio.to_thread(img_utils.make_wide, img_bytes)
             base_name, _ = os.path.splitext(filename)
             file = discord.File(output_io, filename=f"{base_name}_wide.{ext}")
             
             embed = success_embed("Wide", "ยืดภาพให้กว้าง ๆ แล้วนะคะ! (・`ω´・)")
-            embed.set_footer(text=f"ขนาดไฟล์: {self._format_size(output_io.getbuffer().nbytes)}")
+            embed.set_footer(text=self._format_footer(output_io.getbuffer().nbytes, old_size, new_size))
             await ctx.respond(embed=embed, file=file)
         except Exception as e:
             logger.error(f"Error in wide: {e}")

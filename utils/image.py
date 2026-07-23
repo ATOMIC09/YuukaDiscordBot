@@ -7,8 +7,9 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
-def _process_image(img_bytes: bytes, frame_processor: callable, force_jpeg: bool = False) -> tuple[io.BytesIO, str]:
+def _process_image(img_bytes: bytes, frame_processor: callable, force_jpeg: bool = False) -> tuple[io.BytesIO, str, tuple[int, int], tuple[int, int]]:
     img = Image.open(io.BytesIO(img_bytes))
+    original_size = img.size
     
     if getattr(img, "is_animated", False):
         frames = []
@@ -28,7 +29,7 @@ def _process_image(img_bytes: bytes, frame_processor: callable, force_jpeg: bool
             disposal=2
         )
         output.seek(0)
-        return output, "gif"
+        return output, "gif", original_size, frames[0].size
     else:
         processed_frame = frame_processor(img)
         output = io.BytesIO()
@@ -39,9 +40,9 @@ def _process_image(img_bytes: bytes, frame_processor: callable, force_jpeg: bool
             processed_frame.save(output, format="PNG")
             ext = "png"
         output.seek(0)
-        return output, ext
+        return output, ext, original_size, processed_frame.size
 
-def make_deepfry(img_bytes: bytes) -> tuple[io.BytesIO, str]:
+def make_deepfry(img_bytes: bytes) -> tuple[io.BytesIO, str, tuple[int, int], tuple[int, int]]:
     def process_frame(frame):
         frame = frame.convert("RGB")
         frame = frame.point(lambda p: 255 if p > 127 else 0)
@@ -54,7 +55,7 @@ def make_deepfry(img_bytes: bytes) -> tuple[io.BytesIO, str]:
         
     return _process_image(img_bytes, process_frame, force_jpeg=True)
 
-def make_grayscale(img_bytes: bytes) -> tuple[io.BytesIO, str]:
+def make_grayscale(img_bytes: bytes) -> tuple[io.BytesIO, str, tuple[int, int], tuple[int, int]]:
     def process_frame(frame):
         frame = frame.convert("RGBA")
         alpha = frame.getchannel('A')
@@ -64,7 +65,7 @@ def make_grayscale(img_bytes: bytes) -> tuple[io.BytesIO, str]:
         
     return _process_image(img_bytes, process_frame)
 
-def make_wide(img_bytes: bytes) -> tuple[io.BytesIO, str]:
+def make_wide(img_bytes: bytes) -> tuple[io.BytesIO, str, tuple[int, int], tuple[int, int]]:
     def process_frame(frame):
         width, height = frame.size
         new_size = (width * 2, max(1, height // 2))
@@ -72,13 +73,13 @@ def make_wide(img_bytes: bytes) -> tuple[io.BytesIO, str]:
         
     return _process_image(img_bytes, process_frame)
 
-def make_resize(img_bytes: bytes, w: int, h: int) -> tuple[io.BytesIO, str]:
+def make_resize(img_bytes: bytes, w: int, h: int) -> tuple[io.BytesIO, str, tuple[int, int], tuple[int, int]]:
     def process_frame(frame):
         return frame.resize((w, h), Image.Resampling.LANCZOS)
         
     return _process_image(img_bytes, process_frame)
 
-def make_scale(img_bytes: bytes, scale: float) -> tuple[io.BytesIO, str]:
+def make_scale(img_bytes: bytes, scale: float) -> tuple[io.BytesIO, str, tuple[int, int], tuple[int, int]]:
     def process_frame(frame):
         width, height = frame.size
         new_size = (max(1, int(width * scale)), max(1, int(height * scale)))
@@ -86,7 +87,7 @@ def make_scale(img_bytes: bytes, scale: float) -> tuple[io.BytesIO, str]:
         
     return _process_image(img_bytes, process_frame)
 
-def make_qr(text: str, logo_bytes: bytes | None = None) -> io.BytesIO:
+def make_qr(text: str, logo_bytes: bytes | None = None) -> tuple[io.BytesIO, str, tuple[int, int], tuple[int, int]]:
     qr = qrcode.QRCode(
         version=1,
         error_correction=qrcode.constants.ERROR_CORRECT_H,
@@ -118,14 +119,17 @@ def make_qr(text: str, logo_bytes: bytes | None = None) -> io.BytesIO:
     output = io.BytesIO()
     img.save(output, format="PNG")
     output.seek(0)
-    return output
+    return output, "png", img.size, img.size
 
-def make_petpet(img_bytes: bytes) -> io.BytesIO:
+def make_petpet(img_bytes: bytes) -> tuple[io.BytesIO, str, tuple[int, int], tuple[int, int]]:
+    img = Image.open(io.BytesIO(img_bytes))
+    original_size = img.size
+    
     input_io = io.BytesIO(img_bytes)
     output_io = io.BytesIO()
     petpet.make(input_io, output_io)
     output_io.seek(0)
-    return output_io
+    return output_io, "gif", original_size, (112, 112)
 
 def get_image_info(img_bytes: bytes) -> dict:
     img = Image.open(io.BytesIO(img_bytes))

@@ -26,7 +26,8 @@ class YuukaBot(discord.Bot):
         _configure_logger(config.log_level)
 
         intents = discord.Intents.default()
-        intents.members = True 
+        intents.members = True
+        intents.presences = True
         intents.voice_states = True
         intents.message_content = True
 

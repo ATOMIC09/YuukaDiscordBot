@@ -59,24 +59,37 @@ class InfoCog(commands.Cog):
         if getattr(flags, "bot_http_interactions", False):             badges.append("HTTP Interactions Bot")
         if getattr(flags, "early_verified_bot_developer", False):      badges.append("Early Verified Bot Dev")
 
-        # Display badges as a neat dot-separated list, or "ไม่มี"
-        badge_text = "` · `".join([f"`{b}`" for b in badges]) if badges else "`ไม่มี`"
+        # Badges — blockquote list
+        badge_text = "\n> ".join([f"`{b}`" for b in badges]) if badges else "`ไม่มี`"
 
-        # ── Status ────────────────────────────────
-        status_map = {
-            discord.Status.online:    "🟢 ออนไลน์",
-            discord.Status.idle:      "🟡 ไม่อยู่",
-            discord.Status.dnd:       "🔴 ห้ามรบกวน",
-            discord.Status.offline:   "⚫ ออฟไลน์",
-            discord.Status.invisible: "⚫ ออฟไลน์",
-        }
-        status_text = status_map.get(target.status, "⚫ ออฟไลน์")
+        # ── Status (if/elif to reliably detect all states) ────
+        if target.status == discord.Status.online:
+            status_text = "<:Online:1094241869183074404> ออนไลน์"
+        elif target.status == discord.Status.idle:
+            status_text = "<:Away:1094241859418722405> ไม่อยู่"
+        elif target.status == discord.Status.dnd:
+            status_text = "<:DND:1094241861394251787> ห้ามรบกวน"
+        else:
+            status_text = "<:Offline:1094241865773092914> ออฟไลน์"
 
-        client_parts = []
-        if target.mobile_status  != discord.Status.offline: client_parts.append("📱 มือถือ")
-        if target.desktop_status != discord.Status.offline: client_parts.append("🖥️ เดสก์ท็อป")
-        if target.web_status     != discord.Status.offline: client_parts.append("🌐 เว็บ")
-        client_str = " · ".join(client_parts) if client_parts else "ออฟไลน์ทั้งหมด"
+        # Per-device status — show all 3 with custom online/offline emojis
+        def _device_icon(s: discord.Status) -> str:
+            return "<:Online:1094241869183074404>" if s != discord.Status.offline else "<:Offline:1094241865773092914>"
+
+        client_str = (
+            f"{_device_icon(target.mobile_status)} 📱 อุปกรณ์พกพา\n"
+            f"{_device_icon(target.desktop_status)} 🖥️ เดสก์ท็อป\n"
+            f"{_device_icon(target.web_status)} 🌐 เว็บ"
+        )
+
+        # ── Mutual guilds (skipped for bots) ──────
+        if not target.bot:
+            mutual_guild_names = [f"`{g.name}`" for g in target.mutual_guilds]
+            mutual_guilds_count = len(mutual_guild_names)
+            mutual_guilds_text = "\n> ".join(mutual_guild_names) if mutual_guild_names else "`ไม่มี`"
+        else:
+            mutual_guilds_count = "-"
+            mutual_guilds_text = "`ไม่มี`"
 
         # ── Roles ─────────────────────────────────
         roles = [r.mention for r in reversed(target.roles[1:])]
@@ -106,14 +119,14 @@ class InfoCog(commands.Cog):
             inline=True,
         )
         embed.add_field(
-            name="**สถานะ**",
-            value=f"{status_text}\n{client_str}",
-            inline=True,
-        )
-        embed.add_field(
             name="**กิจกรรม**",
             value=activity_text,
             inline=True,
+        )
+        embed.add_field(
+            name=f"**สถานะ: {status_text}**",
+            value=client_str,
+            inline=False,
         )
         embed.add_field(
             name="**สร้างบัญชีเมื่อ**",
@@ -148,8 +161,13 @@ class InfoCog(commands.Cog):
             inline=False,
         )
         embed.add_field(
-            name="**เหรียญตรา**",
-            value=badge_text,
+            name=f"**🌐 เซิร์ฟเวอร์ร่วมกับบอท: {mutual_guilds_count} เซิร์ฟเวอร์**",
+            value=f"> {mutual_guilds_text}",
+            inline=False,
+        )
+        embed.add_field(
+            name="**🏅 เหรียญตรา**",
+            value=f"> {badge_text}",
             inline=False,
         )
 
@@ -604,8 +622,8 @@ class InfoCog(commands.Cog):
         else:  # Full data
             role_info = (
                 f"ทั้งหมด: `{role_count}`\n"
-                f"— ปกติ: `{len(non_managed_roles)}`\n"
-                f"— อัตโนมัติ: `{len(managed_roles)}`"
+                f"- ปกติ: `{len(non_managed_roles)}`\n"
+                f"- อัตโนมัติ: `{len(managed_roles)}`"
             )
         embed.add_field(name="**🎭 บทบาท**", value=role_info, inline=True)
 
@@ -802,28 +820,28 @@ class InfoCog(commands.Cog):
         categorized_features = []
         if feature_categories['community']:
             categorized_features.append(
-                "**🏘️ ชุมชน & การยืนยัน:**\n"
-                + " · ".join(feature_categories['community'][:8])
+                "**🏘️ ชุมชน & การยืนยัน:**\n> "
+                + "\n> ".join(feature_categories['community'][:8])
             )
         if feature_categories['boost']:
             categorized_features.append(
-                "**🚀 คุณสมบัติ Boost:**\n"
-                + " · ".join(feature_categories['boost'][:6])
+                "**🚀 คุณสมบัติ Boost:**\n> "
+                + "\n> ".join(feature_categories['boost'][:6])
             )
         if feature_categories['core']:
             categorized_features.append(
-                "**⚙️ หลัก & ความปลอดภัย:**\n"
-                + " · ".join(feature_categories['core'][:6])
+                "**⚙️ หลัก & ความปลอดภัย:**\n> "
+                + "\n> ".join(feature_categories['core'][:6])
             )
         if feature_categories['special']:
             categorized_features.append(
-                "**✨ พิเศษ & อื่นๆ:**\n"
-                + " · ".join(feature_categories['special'][:6])
+                "**✨ พิเศษ & อื่นๆ:**\n> "
+                + "\n> ".join(feature_categories['special'][:6])
             )
         if feature_categories['experimental']:
             categorized_features.append(
-                "**🧪 ทดลอง & ทดสอบ:**\n"
-                + " · ".join(feature_categories['experimental'][:4])
+                "**🧪 ทดลอง & ทดสอบ:**\n> "
+                + "\n> ".join(feature_categories['experimental'][:4])
             )
 
         features_display = '\n\n'.join(categorized_features) if categorized_features else '`ไม่มีคุณสมบัติพิเศษ`'

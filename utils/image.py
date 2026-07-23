@@ -1,5 +1,5 @@
 import io
-from PIL import Image, ImageEnhance, ImageOps, ExifTags
+from PIL import Image, ImageEnhance, ImageOps, ExifTags, ImageSequence
 from petpetgif import petpet
 import qrcode
 import logging
@@ -7,60 +7,84 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
-def make_deepfry(img_bytes: bytes) -> io.BytesIO:
-    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-    
-    img = img.point(lambda p: 255 if p > 127 else 0)
-    
-    output = io.BytesIO()
-    img.save(output, format="JPEG", quality=0)
-    output.seek(0)
-    return output
-
-def make_grayscale(img_bytes: bytes) -> io.BytesIO:
-    img = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
-    alpha = img.getchannel('A')
-    
-    img = ImageOps.grayscale(img)
-    
-    img = img.convert("RGBA")
-    img.putalpha(alpha)
-    
-    output = io.BytesIO()
-    img.save(output, format="PNG")
-    output.seek(0)
-    return output
-
-def make_wide(img_bytes: bytes) -> io.BytesIO:
+def _process_image(img_bytes: bytes, frame_processor: callable, force_jpeg: bool = False) -> tuple[io.BytesIO, str]:
     img = Image.open(io.BytesIO(img_bytes))
-    width, height = img.size
-    new_size = (width * 2, max(1, height // 2))
-    img = img.resize(new_size, Image.Resampling.LANCZOS)
     
-    output = io.BytesIO()
-    img.save(output, format="PNG")
-    output.seek(0)
-    return output
+    if getattr(img, "is_animated", False):
+        frames = []
+        for frame in ImageSequence.Iterator(img):
+            frame = frame.copy()
+            processed_frame = frame_processor(frame)
+            frames.append(processed_frame)
+            
+        output = io.BytesIO()
+        frames[0].save(
+            output,
+            format="GIF",
+            save_all=True,
+            append_images=frames[1:],
+            loop=img.info.get('loop', 0),
+            duration=img.info.get('duration', 100),
+            disposal=2
+        )
+        output.seek(0)
+        return output, "gif"
+    else:
+        processed_frame = frame_processor(img)
+        output = io.BytesIO()
+        if force_jpeg:
+            processed_frame.save(output, format="JPEG", quality=0)
+            ext = "jpg"
+        else:
+            processed_frame.save(output, format="PNG")
+            ext = "png"
+        output.seek(0)
+        return output, ext
 
-def make_resize(img_bytes: bytes, w: int, h: int) -> io.BytesIO:
-    img = Image.open(io.BytesIO(img_bytes))
-    img = img.resize((w, h), Image.Resampling.LANCZOS)
-    
-    output = io.BytesIO()
-    img.save(output, format="PNG")
-    output.seek(0)
-    return output
+def make_deepfry(img_bytes: bytes) -> tuple[io.BytesIO, str]:
+    def process_frame(frame):
+        frame = frame.convert("RGB")
+        frame = frame.point(lambda p: 255 if p > 127 else 0)
+        
+        # Deepfry needs JPEG artifacts. To keep this effect for GIFs, save each frame to a temp JPEG in memory.
+        temp_io = io.BytesIO()
+        frame.save(temp_io, format="JPEG", quality=0)
+        temp_io.seek(0)
+        return Image.open(temp_io)
+        
+    return _process_image(img_bytes, process_frame, force_jpeg=True)
 
-def make_scale(img_bytes: bytes, scale: float) -> io.BytesIO:
-    img = Image.open(io.BytesIO(img_bytes))
-    width, height = img.size
-    new_size = (max(1, int(width * scale)), max(1, int(height * scale)))
-    img = img.resize(new_size, Image.Resampling.LANCZOS)
-    
-    output = io.BytesIO()
-    img.save(output, format="PNG")
-    output.seek(0)
-    return output
+def make_grayscale(img_bytes: bytes) -> tuple[io.BytesIO, str]:
+    def process_frame(frame):
+        frame = frame.convert("RGBA")
+        alpha = frame.getchannel('A')
+        frame = ImageOps.grayscale(frame).convert("RGBA")
+        frame.putalpha(alpha)
+        return frame
+        
+    return _process_image(img_bytes, process_frame)
+
+def make_wide(img_bytes: bytes) -> tuple[io.BytesIO, str]:
+    def process_frame(frame):
+        width, height = frame.size
+        new_size = (width * 2, max(1, height // 2))
+        return frame.resize(new_size, Image.Resampling.LANCZOS)
+        
+    return _process_image(img_bytes, process_frame)
+
+def make_resize(img_bytes: bytes, w: int, h: int) -> tuple[io.BytesIO, str]:
+    def process_frame(frame):
+        return frame.resize((w, h), Image.Resampling.LANCZOS)
+        
+    return _process_image(img_bytes, process_frame)
+
+def make_scale(img_bytes: bytes, scale: float) -> tuple[io.BytesIO, str]:
+    def process_frame(frame):
+        width, height = frame.size
+        new_size = (max(1, int(width * scale)), max(1, int(height * scale)))
+        return frame.resize(new_size, Image.Resampling.LANCZOS)
+        
+    return _process_image(img_bytes, process_frame)
 
 def make_qr(text: str, logo_bytes: bytes | None = None) -> io.BytesIO:
     qr = qrcode.QRCode(

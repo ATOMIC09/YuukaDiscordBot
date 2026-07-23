@@ -16,6 +16,7 @@ dependencies = [
     "pet-pet-gif>=1.0.2",
     "qrcode>=8.2",
     "setuptools>=83.0.0",
+    "pytz>=2026.2",
 ]
 
 [dependency-groups]

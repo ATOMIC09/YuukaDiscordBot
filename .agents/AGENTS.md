@@ -126,8 +126,15 @@ def setup(bot: discord.Bot):
 
 ### 7. Error Handling (`utils/errors.py`)
 - A global `on_application_command_error` listener handles all unhandled exceptions.
-- Individual cogs should `try/except` their own logic and raise `discord.ApplicationCommandError` subclasses for user-facing errors.
+- Individual cogs should **NOT** handle command validation failures by sending a plain message and returning. Instead, raise `UserError` or `UserWarning` (imported from `utils.errors`). The global error handler will catch this, log it properly (avoiding false "Command Execution" success logs), and send a formatted embed to the user.
 - Never let raw tracebacks reach the user.
+
+### 8. Persona & Tone (Yuuka)
+- All user-facing text must be written in the persona of **Yuuka** (from Blue Archive).
+- She refers to the user as "เซนเซย์" (Sensei) and herself as "หนู" (when polite/cute).
+- Tone is polite but sometimes strict/nagging (like a student council treasurer), ending sentences with "ค่ะ", "นะคะ", "น้า".
+- Use Japanese Kaomoji / emoticons instead of standard Discord emojis (e.g., use `(・\`ω´・)`, `(๑>◡<๑)`, `(╯°□°)╯︵ ┻━┻` instead of 😅, ✅, ❌).
+- ALWAYS use `utils/embeds.py` (`success_embed`, `error_embed`, etc.) for main command responses. Avoid plain text messages unless it's a quick ephemeral UI component response (like a button click).
 
 ---
 

@@ -10,19 +10,10 @@ logger = logging.getLogger(__name__)
 def make_deepfry(img_bytes: bytes) -> io.BytesIO:
     img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     
-    img = ImageOps.posterize(img, bits=2)
-    
-    enhancer = ImageEnhance.Contrast(img)
-    img = enhancer.enhance(3.0)
-    
-    enhancer = ImageEnhance.Color(img)
-    img = enhancer.enhance(3.0)
-    
-    enhancer = ImageEnhance.Sharpness(img)
-    img = enhancer.enhance(3.0)
+    img = img.point(lambda p: 255 if p > 127 else 0)
     
     output = io.BytesIO()
-    img.save(output, format="JPEG", quality=10)
+    img.save(output, format="JPEG", quality=0)
     output.seek(0)
     return output
 

@@ -171,7 +171,13 @@ class InfoCog(commands.Cog):
             inline=False,
         )
 
-        embed.set_footer(text="ประมวลผลข้อมูลเรียบร้อยค่ะ! ( • ̀ω•́ )")
+        footer_text = f"py-cord v{discord.__version__}"
+        footer_text += f" · {'บอท' if target.bot else 'มนุษย์'}"
+        footer_text += f" · ยศ: {len(target.roles) - 1}"
+        if target != ctx.author:
+            footer_text += f" · ขอโดย {ctx.author.display_name}"
+
+        embed.set_footer(text=footer_text)
         embed.timestamp = discord.utils.utcnow()
 
         await ctx.respond(embed=embed)
@@ -863,14 +869,14 @@ class InfoCog(commands.Cog):
         # ── Footer & image ────────────────────────
         footer_text = f"py-cord v{discord.__version__}"
         if hasattr(guild, 'region'):
-            footer_text += f" · Region: {guild.region}"
+            footer_text += f" · ภูมิภาค: {guild.region}"
         else:
-            footer_text += " · Region: Auto"
+            footer_text += " · ภูมิภาค: อัตโนมัติ"
         if guild.shard_id is not None:
-            footer_text += f" · Shard: {guild.shard_id}"
-        footer_text += f" · Features: {len(features)} รายการ"
+            footer_text += f" · เชิร์ด: {guild.shard_id}"
+        footer_text += f" · ฟีเจอร์: {len(features)} รายการ"
         if boost_count > 0:
-            footer_text += f" · Boosters: {len(boosters)} คน"
+            footer_text += f" · ผู้บูสต์: {len(boosters)} คน"
 
         embed.set_footer(text=footer_text)
 

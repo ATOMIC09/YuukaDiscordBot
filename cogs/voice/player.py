@@ -551,6 +551,12 @@ class PlayerCog(commands.Cog):
             raise UserError("ไม่มีเพลงเล่นอยู่นะคะ", "ตอนนี้หนูไม่ได้เปิดเพลงอะไรอยู่เลยค่ะ (´・ω・)")
         
         ctx.voice_client.pause()
+        
+        state = self.get_state(ctx.guild.id)
+        if state.current:
+            embed = self._build_player_embed(state.current, state)
+            await self._update_controller(state, embed)
+            
         await ctx.respond(embed=info_embed("⏸️ หยุดเพลงชั่วคราว", "หนูหยุดเพลงให้ก่อนนะคะ (・`ω´・)"))
 
     @music.command(name="resume", description="เล่นเพลงต่อค่ะ")
@@ -559,6 +565,12 @@ class PlayerCog(commands.Cog):
             raise UserError("เพลงไม่ได้หยุดอยู่นะคะ", "เพลงก็เล่นอยู่ปกตินี่นา หรือไม่ได้เปิดเพลงน้า (´-ω-`)")
             
         ctx.voice_client.resume()
+        
+        state = self.get_state(ctx.guild.id)
+        if state.current:
+            embed = self._build_player_embed(state.current, state)
+            await self._update_controller(state, embed)
+            
         await ctx.respond(embed=info_embed("▶️ เล่นเพลงต่อ", "หนูเล่นเพลงต่อแล้วนะคะ! (๑>◡<๑)"))
 
     @music.command(name="stop", description="หยุดเพลงและล้างคิวทั้งหมดค่ะ")
@@ -667,6 +679,10 @@ class PlayerCog(commands.Cog):
         else:
             msg = "จะวนลูปทั้งคิวเลยนะคะ! (・`ω´・)"
             
+        if state.current:
+            embed = self._build_player_embed(state.current, state)
+            await self._update_controller(state, embed)
+            
         await ctx.respond(embed=success_embed("ตั้งค่าลูป", msg))
 
     @music.command(name="volume", description="ปรับระดับเสียงค่ะ (0-100)")
@@ -677,6 +693,10 @@ class PlayerCog(commands.Cog):
         if ctx.voice_client and ctx.voice_client.source:
             if isinstance(ctx.voice_client.source, discord.PCMVolumeTransformer):
                 ctx.voice_client.source.volume = state.volume
+                
+        if state.current:
+            embed = self._build_player_embed(state.current, state)
+            await self._update_controller(state, embed)
                 
         await ctx.respond(embed=success_embed("🔉 ปรับเสียง", f"ปรับเสียงเป็น {level}% แล้วนะคะ (・`ω´・)"))
 

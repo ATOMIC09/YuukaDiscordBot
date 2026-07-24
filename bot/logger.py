@@ -7,6 +7,7 @@ All modules should import `logger` from here:
 """
 
 import logging
+import os
 import sys
 
 from loguru import logger as _logger
@@ -53,7 +54,7 @@ def _configure_logger(log_level: str = "INFO") -> None:
             "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> — "
             "<level>{message}</level>"
         ),
-        colorize=True,
+        colorize=False if os.environ.get("NO_COLOR") else None,
     )
     _logger.add(
         "logs/yuuka.log",
@@ -70,6 +71,9 @@ def _configure_logger(log_level: str = "INFO") -> None:
     # Silence noisy standard library loggers
     logging.getLogger("discord").setLevel(logging.WARNING)
     logging.getLogger("aiohttp").setLevel(logging.WARNING)
+    logging.getLogger("PIL").setLevel(logging.WARNING)
+    logging.getLogger("matplotlib").setLevel(logging.WARNING)
+    logging.getLogger("graphviz").setLevel(logging.WARNING)
 
 
 # Re-export the configured logger

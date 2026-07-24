@@ -160,6 +160,7 @@ class PlayerControls(discord.ui.View):
             embeds = interaction.message.embeds
             if embeds:
                 embeds[0].color = discord.Color.dark_theme()
+                embeds[0].description = None
                 await interaction.response.edit_message(embed=embeds[0], view=None)
             else:
                 await interaction.response.edit_message(view=None)
@@ -364,6 +365,7 @@ class PlayerCog(commands.Cog):
                 embeds = state.last_controller_message.embeds
                 if embeds:
                     embeds[0].color = discord.Color.dark_theme()
+                    embeds[0].description = None
                     await state.last_controller_message.edit(embed=embeds[0], view=None)
                 else:
                     await state.last_controller_message.edit(view=None)
@@ -440,6 +442,7 @@ class PlayerCog(commands.Cog):
                     embeds = state.last_controller_message.embeds
                     if embeds:
                         embeds[0].color = discord.Color.dark_theme()
+                        embeds[0].description = None
                         await state.last_controller_message.edit(embed=embeds[0], view=None)
                     else:
                         await state.last_controller_message.edit(view=None)

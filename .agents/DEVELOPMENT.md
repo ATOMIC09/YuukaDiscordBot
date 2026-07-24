@@ -53,7 +53,24 @@ When you run the bump command, the tool will:
 5. Create a Git tag: `vA.B.C`.
 
 ### Push to GitHub
-After running the bump command, push the commit and the newly created tag to GitHub:
+After running the bump command, push the commit and the newly created tag to your branch on GitHub:
 ```bash
-git push origin main --tags
+git push origin <your-branch> --tags
 ```
+*(Or simply `git push --tags` if your upstream branch is already set).*
+
+### How to Undo a Bump (Unbump)
+If you accidentally bumped the version and haven't pushed yet, you can completely reverse it by deleting the tag and undoing the commit:
+
+1. Delete the newly created tag (replace `vX.Y.Z` with the actual tag, e.g., `v3.0.3`):
+   ```bash
+   git tag -d vX.Y.Z
+   ```
+2. Undo the bump commit itself:
+   ```bash
+   git reset HEAD~1
+   ```
+3. Restore `pyproject.toml` back to its previous state:
+   ```bash
+   git restore pyproject.toml
+   ```

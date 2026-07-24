@@ -182,7 +182,7 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
         if not ctx.author.voice or not ctx.author.voice.channel:
             raise UserError(
                 "ยังไม่ได้เข้าห้องเสียงค่ะ",
-                "ตัวเองยังไม่ได้เข้าห้องเสียงเลยนะคะ เข้าห้องก่อนแล้วค่อยเรียกหนูน้า (・`ω´・)",
+                "เซนเซย์ยังไม่ได้เข้าห้องเสียงเลยนะคะ เข้าห้องก่อนแล้วค่อยเรียกหนูน้า (・`ω´・)",
             )
 
         guild_id = ctx.guild.id

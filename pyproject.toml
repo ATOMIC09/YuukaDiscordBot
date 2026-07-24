@@ -17,6 +17,7 @@ dependencies = [
     "qrcode>=8.2",
     "setuptools>=83.0.0",
     "pytz>=2026.2",
+    "tinytag>=2.2.1",
 ]
 
 [dependency-groups]

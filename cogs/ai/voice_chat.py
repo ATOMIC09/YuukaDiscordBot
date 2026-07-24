@@ -263,7 +263,11 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         try:
             async with message.channel.typing():
                 async for msg_type, chunk in generate_chat_stream_response(session.history):
-                    if msg_type == "content":
+                    if msg_type == "error":
+                        logger.error(f"[AI Voice] LLM error in guild {guild_id}: {chunk}")
+                        await message.channel.send(embed=error_embed("AI Error", chunk))
+                        return
+                    elif msg_type == "content":
                         full_response += chunk
                     # "status" chunks (web search) are silently ignored in voice mode
         except Exception as exc:
@@ -271,8 +275,8 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             await message.channel.send(embed=error_embed("AI Error", str(exc)))
             return
 
-        if not full_response or full_response.startswith("❌"):
-            logger.warning(f"[AI Voice] Empty or error response in guild {guild_id}: {full_response!r}")
+        if not full_response:
+            logger.warning(f"[AI Voice] Empty response in guild {guild_id}")
             return
 
         logger.debug(f"[AI Voice] LLM response ({len(full_response)} chars): {full_response}")

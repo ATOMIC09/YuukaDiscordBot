@@ -237,11 +237,11 @@ async def generate_chat_stream_response(messages: list[dict], model: str = None)
 
     except aiohttp.ClientConnectorError:
         logger.error(f"[LLM] Failed to connect to OpenRouter at {_OPENROUTER_URL}")
-        yield ("content", "❌ Connection Error: Could not reach OpenRouter. Please check your internet connection.")
+        yield ("error", "Connection Error: Could not reach OpenRouter. Please check your internet connection.")
     except asyncio.TimeoutError:
         logger.error("[LLM] Request to OpenRouter timed out.")
-        yield ("content", "❌ Timeout Error: The AI took too long to respond.")
+        yield ("error", "Timeout Error: The AI took too long to respond.")
     except Exception as exc:
         logger.exception(f"[LLM] Unexpected error: {exc}")
-        yield ("content", f"❌ Unexpected Error: {exc}")
+        yield ("error", f"Unexpected Error: {exc}")
 

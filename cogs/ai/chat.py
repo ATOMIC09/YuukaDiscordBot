@@ -167,6 +167,7 @@ class AIChatCog(commands.Cog, name="AI Chat"):
                 current_chunk_text = ""
                 full_response = ""
                 last_edit = time.time()
+                error_occurred = False
 
                 async for msg_type, chunk in generate_chat_stream_response(history):
                     if msg_type == "status":
@@ -175,14 +176,16 @@ class AIChatCog(commands.Cog, name="AI Chat"):
                             active_msg = await message.reply(embed=embed)
                         else:
                             await active_msg.edit(content=current_chunk_text or None, embed=embed)
-
+                    elif msg_type == "error":
+                        error_occurred = True
+                        if not active_msg:
+                            active_msg = await message.reply(embed=error_embed("AI Error", chunk))
+                        else:
+                            await active_msg.edit(content=current_chunk_text or None, embed=error_embed("AI Error", chunk))
+                        break
                     elif msg_type == "content":
                         current_chunk_text += chunk
                         full_response += chunk
-
-                        if current_chunk_text.startswith("❌") and not active_msg:
-                            active_msg = await message.reply(embed=error_embed("AI Error", current_chunk_text))
-                            continue
 
                         if len(current_chunk_text) > 1950:
                             if active_msg:
@@ -199,7 +202,7 @@ class AIChatCog(commands.Cog, name="AI Chat"):
                                 await active_msg.edit(content=current_chunk_text, embed=None)
                                 last_edit = time.time()
 
-                if active_msg and current_chunk_text and active_msg.content != current_chunk_text:
+                if not error_occurred and active_msg and current_chunk_text and active_msg.content != current_chunk_text:
                     await active_msg.edit(content=current_chunk_text, embed=None)
 
                 if full_response and not full_response.startswith("❌"):
@@ -246,6 +249,7 @@ class AIChatCog(commands.Cog, name="AI Chat"):
             current_chunk_text = ""
             full_response = ""
             last_edit = time.time()
+            error_occurred = False
 
             async for msg_type, chunk in generate_chat_stream_response(short_history):
                 if msg_type == "status":
@@ -254,12 +258,25 @@ class AIChatCog(commands.Cog, name="AI Chat"):
                         active_msg = await message.channel.send(embed=embed)
                     else:
                         await active_msg.edit(content=current_chunk_text or None, embed=embed)
+                elif msg_type == "error":
+                    error_occurred = True
+                    if not active_msg:
+                        active_msg = await message.channel.send(embed=error_embed("AI Error", chunk))
+                    else:
+                        prefix = f"{user.mention} " if active_msg.content.startswith("<@") else ""
+                        await active_msg.edit(content=f"{prefix}{current_chunk_text}" or None, embed=error_embed("AI Error", chunk))
+                    break
                 elif msg_type == "content":
                     current_chunk_text += chunk
                     full_response += chunk
 
-                    if current_chunk_text.startswith("❌") and not active_msg:
-                        active_msg = await message.channel.send(embed=error_embed("AI Error", current_chunk_text))
+                    if len(current_chunk_text) > 1950:
+                        if active_msg:
+                            prefix = f"{user.mention} " if active_msg.content.startswith("<@") else ""
+                            await active_msg.edit(content=f"{prefix}{current_chunk_text}", embed=None)
+                        current_chunk_text = ""
+                        active_msg = await message.channel.send("...")
+                        last_edit = time.time()
                         continue
 
                     if not active_msg:
@@ -270,7 +287,7 @@ class AIChatCog(commands.Cog, name="AI Chat"):
                             await active_msg.edit(content=f"{prefix}{current_chunk_text}", embed=None)
                             last_edit = time.time()
 
-            if active_msg and current_chunk_text:
+            if not error_occurred and active_msg and current_chunk_text:
                 prefix = f"{user.mention} " if active_msg.content.startswith("<@") else ""
                 if active_msg.content != f"{prefix}{current_chunk_text}":
                     await active_msg.edit(content=f"{prefix}{current_chunk_text}", embed=None)

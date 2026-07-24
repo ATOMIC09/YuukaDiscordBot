@@ -18,6 +18,10 @@ jobs:
       # with sigstore/fulcio when running outside of PRs.
       id-token: write
 
+    environment:
+      name: production
+      url: https://ghcr.io/${{ github.repository }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

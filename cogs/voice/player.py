@@ -558,8 +558,7 @@ class PlayerCog(commands.Cog):
             if not file:
                 raise UserError("หาไฟล์ไม่เจอค่ะ", "ไม่เจอไฟล์เพลงใน 50 ข้อความล่าสุดเลยค่ะ รบกวนแนบไฟล์มาให้หนูด้วยนะคะ (´・ω・)")
 
-        if not ctx.voice_client:
-            state.voice_client = await channel.connect()
+
 
         if file:
             await ctx.interaction.edit_original_response(embed=info_embed("<a:MagnifierGIF:1052563354910216252> กำลังโหลดไฟล์...", f"กำลังเตรียมไฟล์ `{file.filename}` นะคะ รอแป๊บนึงน้า (・`ω´・)"))
@@ -617,6 +616,9 @@ class PlayerCog(commands.Cog):
             
             await ctx.interaction.edit_original_response(embed=success_embed("✅ เพิ่มเข้าคิวแล้ว!", f"เพิ่ม `{title}` ลงคิวเรียบร้อยค่ะ! (๑>◡<๑)"))
             
+        if not ctx.guild.voice_client:
+            state.voice_client = await channel.connect()
+            
         if not state.current or not state.voice_client.is_playing():
             self.bot.loop.create_task(self._play_next_async(ctx.guild.id, auto_send=True))
         else:
@@ -643,8 +645,7 @@ class PlayerCog(commands.Cog):
 
         await ctx.interaction.edit_original_response(embed=info_embed("<a:MagnifierGIF:1052563354910216252> กำลังค้นหา...", f"หนูกำลังหาข้อมูล `{query}` ให้นะคะ รอแป๊บนึงน้า (・`ω´・)"))
 
-        if not ctx.voice_client:
-            state.voice_client = await channel.connect()
+
 
         # ytsearch1 if not URL (faster search)
         if not query.startswith(("http://", "https://")):
@@ -723,6 +724,9 @@ class PlayerCog(commands.Cog):
         msg = f"Playlist ({added_count} เพลง)" if is_playlist else f"[{first_track.title}]({first_track.original_url})"
         await ctx.interaction.edit_original_response(embed=success_embed("✅ เพิ่มเข้าคิวแล้ว!", f"เพิ่ม {msg} ลงคิวเรียบร้อยค่ะ! ไปดูที่หน้าเล่นเพลงได้เลยนะคะ (๑>◡<๑)"))
 
+        if not ctx.guild.voice_client:
+            state.voice_client = await channel.connect()
+            
         if not state.current or not state.voice_client.is_playing():
             # if playing is stopped, start it
             self.bot.loop.create_task(self._play_next_async(ctx.guild.id, auto_send=True))

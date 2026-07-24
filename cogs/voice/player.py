@@ -76,10 +76,10 @@ class PlayerControls(discord.ui.View):
     def update_buttons(self):
         if self.state.voice_client and self.state.voice_client.is_paused():
             self.pause_resume.emoji = "▶️"
-            self.pause_resume.style = discord.ButtonStyle.success
+            self.pause_resume.style = discord.ButtonStyle.primary
         else:
             self.pause_resume.emoji = "⏸️"
-            self.pause_resume.style = discord.ButtonStyle.primary
+            self.pause_resume.style = discord.ButtonStyle.success
             
         if self.state.loop_mode == "off":
             self.loop.emoji = "➡️"
@@ -191,7 +191,7 @@ class PlayerCog(commands.Cog):
             for i, qtrack in enumerate(list(state.queue)):
                 if i < 5:
                     mins, secs = divmod(qtrack.duration, 60)
-                    desc += f"`{i+1}.` [{qtrack.title}]({qtrack.original_url}) `[{mins}:{secs:02d}]`\n"
+                    desc += f"{i+1}. [{qtrack.title}]({qtrack.original_url}) `[{mins}:{secs:02d}]` - {qtrack.requester.mention}\n"
             if len(state.queue) > 5:
                 desc += f"\n*...และอีก {len(state.queue) - 5} เพลง*"
                 
@@ -350,9 +350,9 @@ class PlayerCog(commands.Cog):
             logger.error(f"Error playing track in guild {guild_id}: {e}")
             self.bot.loop.create_task(self._play_next_async(guild_id))
 
-    music = discord.SlashCommandGroup("music", "คำสั่งสำหรับเปิดเพลง (YouTube)")
+    music = discord.SlashCommandGroup("music", "🎵 ระบบเครื่องเล่นเพลง")
 
-    @music.command(name="leave", description="ให้หนูออกจากห้องเสียงค่ะ")
+    @music.command(name="leave", description="👋 ออกจากห้องเสียง")
     async def leave(self, ctx: discord.ApplicationContext):
         if not ctx.voice_client:
             raise UserError("หนูไม่ได้อยู่ในห้องนะคะ", "หนูไม่ได้อยู่ในห้องเสียงไหนเลยนะคะ (´-ω-`)")
@@ -367,7 +367,7 @@ class PlayerCog(commands.Cog):
 
         await ctx.respond(embed=success_embed("ไปแล้วค่า~", "หนูออกจากห้องเสียงแล้วนะคะ ไว้เจอกันใหม่น้า! (・`ω´・)"))
 
-    @music.command(name="local", description="เล่นเพลงจากไฟล์แนบ หรือประวัติแชทค่ะ")
+    @music.command(name="local", description="📂 เล่นเพลงจากไฟล์แนบหรือประวัติแชท")
     @discord.option("file", description="อัปโหลดไฟล์เพลงที่นี่เลยค่ะ", required=False, type=discord.SlashCommandOptionType.attachment)
     async def local(self, ctx: discord.ApplicationContext, file: discord.Attachment = None):
         state = self.get_state(ctx.guild.id)
@@ -452,7 +452,7 @@ class PlayerCog(commands.Cog):
             embed = self._build_player_embed(display_track, state)
             await self._update_controller(state, embed)
 
-    @music.command(name="play", description="เปิดเพลงจาก YouTube (รองรับ Playlist) ค่ะ")
+    @music.command(name="play", description="▶️ เปิดเพลงจาก YouTube (รองรับ Playlist)")
     @discord.option("query", description="ชื่อเพลงหรือ URL ของวิดีโอ/เพลย์ลิสต์ค่ะ")
     async def play(self, ctx: discord.ApplicationContext, query: str):
         state = self.get_state(ctx.guild.id)
@@ -545,7 +545,7 @@ class PlayerCog(commands.Cog):
             # if playing is stopped, start it
             self.bot.loop.create_task(self._play_next_async(ctx.guild.id, auto_send=True))
 
-    @music.command(name="pause", description="หยุดเพลงชั่วคราวค่ะ")
+    @music.command(name="pause", description="⏸️ หยุดเพลงชั่วคราว")
     async def pause(self, ctx: discord.ApplicationContext):
         if not ctx.voice_client or not ctx.voice_client.is_playing():
             raise UserError("ไม่มีเพลงเล่นอยู่นะคะ", "ตอนนี้หนูไม่ได้เปิดเพลงอะไรอยู่เลยค่ะ (´・ω・)")
@@ -559,7 +559,7 @@ class PlayerCog(commands.Cog):
             
         await ctx.respond(embed=info_embed("⏸️ หยุดเพลงชั่วคราว", "หนูหยุดเพลงให้ก่อนนะคะ (・`ω´・)"))
 
-    @music.command(name="resume", description="เล่นเพลงต่อค่ะ")
+    @music.command(name="resume", description="⏯️ เล่นเพลงต่อ")
     async def resume(self, ctx: discord.ApplicationContext):
         if not ctx.voice_client or not ctx.voice_client.is_paused():
             raise UserError("เพลงไม่ได้หยุดอยู่นะคะ", "เพลงก็เล่นอยู่ปกตินี่นา หรือไม่ได้เปิดเพลงน้า (´-ω-`)")
@@ -573,7 +573,7 @@ class PlayerCog(commands.Cog):
             
         await ctx.respond(embed=info_embed("▶️ เล่นเพลงต่อ", "หนูเล่นเพลงต่อแล้วนะคะ! (๑>◡<๑)"))
 
-    @music.command(name="stop", description="หยุดเพลงและล้างคิวทั้งหมดค่ะ")
+    @music.command(name="stop", description="⏹️ หยุดเพลงและล้างคิวทั้งหมด")
     async def stop(self, ctx: discord.ApplicationContext):
         state = self.get_state(ctx.guild.id)
         state.queue.clear()
@@ -591,7 +591,7 @@ class PlayerCog(commands.Cog):
             
         await ctx.respond(embed=success_embed("⏹️ หยุดเพลงแล้วค่ะ", "หนูหยุดเพลงและเคลียร์คิวให้หมดแล้วนะคะ (・`ω´・)"))
 
-    @music.command(name="skip", description="ข้ามเพลงนี้ค่ะ")
+    @music.command(name="skip", description="⏭️ ข้ามเพลงปัจจุบัน")
     async def skip(self, ctx: discord.ApplicationContext):
         if not ctx.voice_client or not ctx.voice_client.is_playing():
             raise UserError("ไม่มีเพลงเล่นอยู่นะคะ", "ตอนนี้หนูไม่ได้เปิดเพลงอะไรอยู่เลยค่ะ ข้ามไม่ได้น้า (´・ω・)")
@@ -619,7 +619,7 @@ class PlayerCog(commands.Cog):
             )
         await ctx.respond(embed=embed)
 
-    @music.command(name="queue", description="ดูคิวเพลงทั้งหมดค่ะ")
+    @music.command(name="queue", description="📋 ดูคิวเพลงทั้งหมด")
     async def queue(self, ctx: discord.ApplicationContext):
         state = self.get_state(ctx.guild.id)
         if len(state.queue) == 0 and not state.current:
@@ -638,7 +638,7 @@ class PlayerCog(commands.Cog):
                 total_duration += track.duration
                 if i < 10:
                     mins, secs = divmod(track.duration, 60)
-                    desc += f"`{i+1}.` [{track.title}]({track.original_url}) `[{mins}:{secs:02d}]`\n"
+                    desc += f"`{i+1}.` [{track.title}]({track.original_url}) `[{mins}:{secs:02d}]` - {track.requester.mention}\n"
                 
             if len(state.queue) > 10:
                 desc += f"\n*...และอีก {len(state.queue) - 10} เพลง*"
@@ -657,7 +657,7 @@ class PlayerCog(commands.Cog):
         embed.set_footer(text=f"วนลูป: {state.loop_mode.title()} | ระดับเสียง: {int(state.volume * 100)}% | เวลารวม: {total_dur_str}")
         await ctx.respond(embed=embed)
 
-    @music.command(name="nowplaying", description="ดูเพลงที่กำลังเล่นอยู่ค่ะ")
+    @music.command(name="nowplaying", description="🎵 ดูเพลงที่กำลังเล่นอยู่")
     async def nowplaying(self, ctx: discord.ApplicationContext):
         state = self.get_state(ctx.guild.id)
         state.text_channel = ctx.channel
@@ -667,7 +667,7 @@ class PlayerCog(commands.Cog):
         embed = self._build_player_embed(state.current, state)
         await self._send_controls(state, ctx, embed, edit_original=False)
 
-    @music.command(name="loop", description="ตั้งค่าการวนลูปเพลงค่ะ")
+    @music.command(name="loop", description="🔁 ตั้งค่าการวนลูปเพลง")
     async def loop(self, ctx: discord.ApplicationContext, mode: discord.Option(str, choices=["off", "track", "queue"])):
         state = self.get_state(ctx.guild.id)
         state.loop_mode = mode
@@ -685,7 +685,7 @@ class PlayerCog(commands.Cog):
             
         await ctx.respond(embed=success_embed("ตั้งค่าลูป", msg))
 
-    @music.command(name="volume", description="ปรับระดับเสียงค่ะ (0-100)")
+    @music.command(name="volume", description="🔊 ปรับระดับเสียง (0-100)")
     async def volume(self, ctx: discord.ApplicationContext, level: discord.Option(int, min_value=0, max_value=100)):
         state = self.get_state(ctx.guild.id)
         state.volume = level / 100.0

@@ -134,7 +134,9 @@ class PlayerControls(discord.ui.View):
             self.state.loop_mode = "off"
             
         self.update_buttons()
-        await interaction.response.edit_message(view=self)
+        
+        embed = self.cog._build_player_embed(self.state.current, self.state)
+        await interaction.response.edit_message(embed=embed, view=self)
 
     @discord.ui.button(style=discord.ButtonStyle.danger, emoji="⏹️")
     async def stop(self, button: discord.ui.Button, interaction: discord.Interaction):
@@ -146,7 +148,12 @@ class PlayerControls(discord.ui.View):
             self.state.voice_client.stop()
             
         try:
-            await interaction.response.edit_message(view=None)
+            embeds = interaction.message.embeds
+            if embeds:
+                embeds[0].color = discord.Color.dark_theme()
+                await interaction.response.edit_message(embed=embeds[0], view=None)
+            else:
+                await interaction.response.edit_message(view=None)
         except Exception:
             pass
 
@@ -197,6 +204,9 @@ class PlayerCog(commands.Cog):
                 
         if desc:
             embed.description = desc
+            
+        loop_th = {"off": "ปิด", "track": "เพลงเดียว", "queue": "ทั้งคิว"}.get(state.loop_mode, state.loop_mode)
+        embed.set_footer(text=f"🔁 วนลูป: {loop_th}  |  🔊 ระดับเสียง: {int(state.volume * 100)}%")
             
         return embed
 

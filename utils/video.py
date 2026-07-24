@@ -21,6 +21,8 @@ async def merge_image_audio(image_path: str, audio_path: str, out_path: str) -> 
     cmd.extend([
         "-i", image_path,
         "-i", audio_path,
+        "-map", "0:v:0",
+        "-map", "1:a:0",
         # Ensure dimensions are even numbers (required by libx264)
         "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
         "-c:v", "libx264",

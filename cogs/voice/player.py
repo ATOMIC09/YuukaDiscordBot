@@ -166,6 +166,63 @@ class PlayerControls(discord.ui.View):
         except Exception:
             pass
 
+import math
+
+class QueuePaginator(discord.ui.View):
+    def __init__(self, state: "AudioState", items_per_page: int = 30):
+        super().__init__(timeout=300)
+        self.state = state
+        self.items_per_page = items_per_page
+        self.current_page = 1
+        self.total_pages = max(1, math.ceil(len(self.state.queue) / self.items_per_page))
+        self.update_buttons()
+        
+    def get_embed(self) -> discord.Embed:
+        embed = discord.Embed(title="🎶 คิวเพลงทั้งหมด", color=discord.Color.blurple())
+        
+        desc = ""
+        if self.state.current:
+            mins, secs = divmod(self.state.current.duration, 60)
+            dur_str = f"{mins}:{secs:02d}" if self.state.current.duration > 0 else "Live/Unknown"
+            desc += f"**▶️ กำลังเล่น:** [{self.state.current.title}]({self.state.current.original_url}) `[{dur_str}]`\n\n"
+            
+        if len(self.state.queue) == 0:
+            desc += "*คิวว่างเปล่าค่ะ*"
+            embed.description = desc
+            return embed
+            
+        start_idx = (self.current_page - 1) * self.items_per_page
+        end_idx = start_idx + self.items_per_page
+        queue_slice = list(self.state.queue)[start_idx:end_idx]
+        
+        for i, track in enumerate(queue_slice, start=start_idx + 1):
+            mins, secs = divmod(track.duration, 60)
+            dur_str = f"{mins}:{secs:02d}" if track.duration > 0 else "Live/Unknown"
+            title = track.title
+            if len(title) > 50:
+                title = title[:47] + "..."
+            desc += f"{i}. [{title}]({track.original_url}) `[{dur_str}]` - {track.requester.mention}\n"
+            
+        embed.description = desc
+        embed.set_footer(text=f"หน้า {self.current_page}/{self.total_pages} | ทั้งหมด {len(self.state.queue)} เพลง")
+        return embed
+        
+    def update_buttons(self):
+        self.prev_button.disabled = self.current_page <= 1
+        self.next_button.disabled = self.current_page >= self.total_pages
+        
+    @discord.ui.button(label="◀️", style=discord.ButtonStyle.primary)
+    async def prev_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        self.current_page -= 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+        
+    @discord.ui.button(label="▶️", style=discord.ButtonStyle.primary)
+    async def next_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        self.current_page += 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
 class PlayerCog(commands.Cog):
     def __init__(self, bot: discord.Bot):
         self.bot = bot
@@ -731,43 +788,7 @@ class PlayerCog(commands.Cog):
             )
         await ctx.respond(embed=embed)
 
-    @music.command(name="queue", description="📋 ดูคิวเพลงทั้งหมด")
-    async def queue(self, ctx: discord.ApplicationContext):
-        state = self.get_state(ctx.guild.id)
-        if len(state.queue) == 0 and not state.current:
-            await ctx.respond(embed=info_embed("คิวว่างเปล่า", "ตอนนี้ไม่มีเพลงในคิวเลยค่ะ มาเพิ่มเพลงกันเถอะ! (๑>◡<๑)"))
-            return
 
-        desc = ""
-        total_duration = 0
-        if state.current:
-            desc += f"**🎵 กำลังเล่น:** [{state.current.title}]({state.current.original_url})\n\n"
-            total_duration += state.current.duration
-            
-        if len(state.queue) > 0:
-            desc += "**🎶 คิวถัดไป:**\n"
-            for i, track in enumerate(list(state.queue)):
-                total_duration += track.duration
-                if i < 10:
-                    mins, secs = divmod(track.duration, 60)
-                    desc += f"`{i+1}.` [{track.title}]({track.original_url}) `[{mins}:{secs:02d}]` - {track.requester.mention}\n"
-                
-            if len(state.queue) > 10:
-                desc += f"\n*...และอีก {len(state.queue) - 10} เพลง*"
-
-        tmins, tsecs = divmod(total_duration, 60)
-        thours, tmins = divmod(tmins, 60)
-        total_dur_str = f"{thours:02d}:{tmins:02d}:{tsecs:02d}" if thours > 0 else f"{tmins:02d}:{tsecs:02d}"
-
-        embed = discord.Embed(
-            title="คิวเพลงทั้งหมด",
-            description=desc,
-            color=discord.Color(0x5865F2)
-        )
-        if state.current and state.current.thumbnail:
-            embed.set_thumbnail(url=state.current.thumbnail)
-        embed.set_footer(text=f"วนลูป: {state.loop_mode.title()} | ระดับเสียง: {int(state.volume * 100)}% | เวลารวม: {total_dur_str}")
-        await ctx.respond(embed=embed)
 
     @music.command(name="nowplaying", description="🎵 ดูเพลงที่กำลังเล่นอยู่")
     async def nowplaying(self, ctx: discord.ApplicationContext):
@@ -796,6 +817,15 @@ class PlayerCog(commands.Cog):
             await self._update_controller(state, embed)
             
         await ctx.respond(embed=success_embed("ตั้งค่าลูป", msg))
+
+    @music.command(name="queue", description="📜 ดูคิวเพลงทั้งหมด")
+    async def queue(self, ctx: discord.ApplicationContext):
+        state = self.get_state(ctx.guild.id)
+        if not state.current and len(state.queue) == 0:
+            return await ctx.respond(embed=info_embed("คิวว่าง", "ไม่มีเพลงในคิวเลยค่ะ (´・ω・)"), ephemeral=True)
+            
+        paginator = QueuePaginator(state, items_per_page=30)
+        await ctx.respond(embed=paginator.get_embed(), view=paginator)
 
     @music.command(name="volume", description="🔊 ปรับระดับเสียง (0-100)")
     async def volume(self, ctx: discord.ApplicationContext, level: discord.Option(int, min_value=0, max_value=100)):

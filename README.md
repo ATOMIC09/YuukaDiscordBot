@@ -2,7 +2,7 @@
 <p align="center">"เสียงสะท้อนแห่งความคิด"</p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/github/v/release/ATOMIC09/YuukaDiscordBot" />
+  <img alt="Version" src="https://img.shields.io/github/v/tag/ATOMIC09/YuukaDiscordBot?label=version&color=blue" />
   <a>
     <img alt="License" src="https://img.shields.io/github/license/ATOMIC09/YuukaDiscordBot">
   </a>

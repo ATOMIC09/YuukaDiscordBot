@@ -352,23 +352,6 @@ class PlayerCog(commands.Cog):
 
     music = discord.SlashCommandGroup("music", "คำสั่งสำหรับเปิดเพลง (YouTube)")
 
-    @music.command(name="join", description="ให้หนูเข้าไปในห้องเสียงนะคะ")
-    async def join(self, ctx: discord.ApplicationContext):
-        if not ctx.author.voice or not ctx.author.voice.channel:
-            raise UserError("หนูเข้าห้องไม่ได้ค่ะ", "เซนเซย์ต้องเข้าไปในห้องเสียงก่อนนะคะถึงจะให้หนูตามเข้าไปได้ (´・ω・)")
-
-        channel = ctx.author.voice.channel
-        state = self.get_state(ctx.guild.id)
-
-        if ctx.voice_client:
-            if ctx.voice_client.channel.id == channel.id:
-                raise UserError("หนูอยู่แล้วค่ะ", "หนูก็อยู่ในห้องนี้อยู่แล้วไงคะ (・`ω´・)")
-            await ctx.voice_client.move_to(channel)
-        else:
-            state.voice_client = await channel.connect()
-
-        await ctx.respond(embed=success_embed("มาแล้วค่า~", f"หนูเข้ามาที่ห้อง {channel.mention} แล้วนะคะ! (๑>◡<๑)"))
-
     @music.command(name="leave", description="ให้หนูออกจากห้องเสียงค่ะ")
     async def leave(self, ctx: discord.ApplicationContext):
         if not ctx.voice_client:

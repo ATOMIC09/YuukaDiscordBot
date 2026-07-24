@@ -77,7 +77,7 @@ class AudioState:
 
 class PlayerControls(discord.ui.View):
     def __init__(self, cog: "PlayerCog", state: "AudioState"):
-        super().__init__(timeout=86400)  # 1 day timeout
+        super().__init__(timeout=None)
         self.cog = cog
         self.state = state
         self.update_buttons()

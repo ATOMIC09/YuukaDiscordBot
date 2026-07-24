@@ -48,15 +48,20 @@ def setup_error_handler(bot: discord.Bot) -> None:
         error = getattr(error, "original", error)
 
         if isinstance(error, UserError):
+            logger.warning(f"UserError in command '{ctx.command}': {error.title} - {error.description}")
             embed = error_embed(error.title, error.description)
         elif isinstance(error, UserWarning):
+            logger.warning(f"UserWarning in command '{ctx.command}': {error.title} - {error.description}")
             embed = warning_embed(error.title, error.description)
         elif isinstance(error, commands.CheckFailure):
+            logger.warning(f"CheckFailure in command '{ctx.command}': {error}")
             embed = error_embed("ไม่มีสิทธิ์ค่ะ", str(error) or "แง... ตัวเองไม่มีสิทธิ์ใช้คำสั่งนี้นะคะ (╥﹏╥)")
         elif isinstance(error, commands.NoPrivateMessage):
+            logger.warning(f"NoPrivateMessage in command '{ctx.command}': {error}")
             embed = error_embed("ใช้ในนี้ไม่ได้ค่ะ", "คำสั่งนี้ใช้ในแชทส่วนตัวไม่ได้นะคะ ต้องไปใช้ในเซิร์ฟเวอร์น้า (´・ω・)")
         elif isinstance(error, commands.MissingPermissions):
             missing = ", ".join(f"`{p}`" for p in error.missing_permissions)
+            logger.warning(f"MissingPermissions in command '{ctx.command}': {missing}")
             embed = error_embed("สิทธิ์ไม่พอนะคะ", f"หนูหรือตัวเองอาจจะขาดสิทธิ์บางอย่างนะคะ: {missing} (｡>﹏<)")
         elif isinstance(error, discord.HTTPException):
             logger.warning(f"HTTPException in command '{ctx.command}': {error}")

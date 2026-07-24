@@ -244,7 +244,12 @@ class PlayerCog(commands.Cog):
     async def _send_controls(self, state: AudioState, ctx, embed: discord.Embed, edit_original: bool = False):
         if state.last_controller_message:
             try:
-                await state.last_controller_message.edit(view=None)
+                embeds = state.last_controller_message.embeds
+                if embeds:
+                    embeds[0].color = discord.Color.dark_theme()
+                    await state.last_controller_message.edit(embed=embeds[0], view=None)
+                else:
+                    await state.last_controller_message.edit(view=None)
             except Exception:
                 pass
         
@@ -302,6 +307,17 @@ class PlayerCog(commands.Cog):
 
         if len(state.queue) == 0:
             state.current = None
+            if state.last_controller_message:
+                try:
+                    embeds = state.last_controller_message.embeds
+                    if embeds:
+                        embeds[0].color = discord.Color.dark_theme()
+                        await state.last_controller_message.edit(embed=embeds[0], view=None)
+                    else:
+                        await state.last_controller_message.edit(view=None)
+                except Exception:
+                    pass
+                state.last_controller_message = None
             return
 
         track = state.queue.popleft()
@@ -581,7 +597,12 @@ class PlayerCog(commands.Cog):
         
         if state.last_controller_message:
             try:
-                await state.last_controller_message.edit(view=None)
+                embeds = state.last_controller_message.embeds
+                if embeds:
+                    embeds[0].color = discord.Color.dark_theme()
+                    await state.last_controller_message.edit(embed=embeds[0], view=None)
+                else:
+                    await state.last_controller_message.edit(view=None)
             except Exception:
                 pass
             state.last_controller_message = None

@@ -51,6 +51,14 @@ class Track:
     uploader: str | None = None
     view_count: int | None = None
     cover_bytes: bytes | None = None
+    like_count: int | None = None
+    comment_count: int | None = None
+    upload_date: str | None = None
+    album: str | None = None
+    year: str | None = None
+    channel_follower_count: int | None = None
+    filesize: int | None = None
+    bitrate: float | None = None
 
 class AudioState:
     def __init__(self, bot: discord.Bot, guild_id: int):
@@ -65,6 +73,7 @@ class AudioState:
         self.skip_request: bool = False
         self.last_controller_message: discord.WebhookMessage | discord.Message | None = None
         self.text_channel: discord.TextChannel | discord.Thread | None = None
+        self.idle_task: asyncio.Task | None = None
 
 class PlayerControls(discord.ui.View):
     def __init__(self, cog: "PlayerCog", state: "AudioState"):
@@ -179,17 +188,40 @@ class PlayerCog(commands.Cog):
         elif track.cover_bytes:
             embed.set_image(url="attachment://cover.jpg")
             
+        if track.uploader:
+            embed.add_field(name="🎤 ศิลปิน", value=f"`{track.uploader}`", inline=False)
+        if track.album:
+            embed.add_field(name="💿 อัลบั้ม", value=f"`{track.album}`", inline=False)
+
         mins, secs = divmod(track.duration, 60)
         dur_str = f"{mins}:{secs:02d}" if track.duration > 0 else "Live/Unknown"
-        embed.add_field(name="ความยาว", value=dur_str, inline=True)
-        
-        if track.uploader:
-            embed.add_field(name="ศิลปิน", value=track.uploader, inline=True)
+        embed.add_field(name="⏳ ความยาว", value=f"`{dur_str}`", inline=True)
+        embed.add_field(name="👤 ขอโดย", value=track.requester.mention, inline=True)
             
-        if track.view_count:
-            embed.add_field(name="ยอดวิว", value=f"{track.view_count:,}", inline=True)
+        if track.view_count or track.like_count or track.comment_count:
+            if track.view_count:
+                embed.add_field(name="👀 ยอดวิว", value=f"`{track.view_count:,}`", inline=True)
+            if track.like_count:
+                embed.add_field(name="👍 ยอดไลก์", value=f"`{track.like_count:,}`", inline=True)
+            if track.comment_count:
+                embed.add_field(name="💬 คอมเมนต์", value=f"`{track.comment_count:,}`", inline=True)
+                
+        if track.upload_date or track.channel_follower_count:
+            if track.upload_date and len(track.upload_date) == 8:
+                date_str = f"{track.upload_date[6:8]}/{track.upload_date[4:6]}/{track.upload_date[0:4]}"
+                embed.add_field(name="📅 วันที่ลง", value=f"`{date_str}`", inline=True)
+            if track.channel_follower_count:
+                embed.add_field(name="👥 ผู้ติดตาม", value=f"`{track.channel_follower_count:,}`", inline=True)
+                
+        if track.year or track.filesize or track.bitrate:
             
-        embed.add_field(name="ขอโดย", value=track.requester.mention, inline=True)
+            if track.year:
+                embed.add_field(name="🗓️ ปี", value=f"`{track.year}`", inline=True)
+            if track.filesize:
+                mb = track.filesize / (1024 * 1024)
+                embed.add_field(name="💾 ขนาดไฟล์", value=f"`{mb:.2f} MB`", inline=True)
+            if track.bitrate:
+                embed.add_field(name="🎵 บิตเรต", value=f"`{int(track.bitrate)} kbps`", inline=True)
         
         # Append queue
         desc = ""
@@ -299,6 +331,17 @@ class PlayerCog(commands.Cog):
             lambda: ytdl.extract_info(query, download=download)
         )
         return data
+        
+    async def _idle_disconnect(self, guild_id: int):
+        await asyncio.sleep(180)
+        state = self.states.get(guild_id)
+        if state and state.voice_client and state.voice_client.is_connected():
+            await state.voice_client.disconnect()
+            state.voice_client = None
+            state.queue.clear()
+            state.current = None
+            if state.text_channel:
+                await state.text_channel.send(embed=info_embed("ไปแล้วค่า~", "หนูขอตัวออกก่อนนะคะ เพราะไม่มีเพลงเล่นมา 3 นาทีแล้ว (´・ω・)"))
 
     async def _play_next_async(self, guild_id: int, auto_send: bool = True):
         state = self.get_state(guild_id)
@@ -328,7 +371,16 @@ class PlayerCog(commands.Cog):
                 except Exception:
                     pass
                 state.last_controller_message = None
+            
+            # Start idle timer
+            if not state.idle_task:
+                state.idle_task = self.bot.loop.create_task(self._idle_disconnect(guild_id))
             return
+
+        # Cancel idle timer if exists
+        if state.idle_task:
+            state.idle_task.cancel()
+            state.idle_task = None
 
         track = state.queue.popleft()
         state.current = track
@@ -343,8 +395,15 @@ class PlayerCog(commands.Cog):
                 track.title = data.get('title', track.title)
                 track.thumbnail = data.get('thumbnail', track.thumbnail)
                 track.duration = data.get('duration', track.duration)
-                track.uploader = data.get('uploader', track.uploader)
+                uploader = data.get('uploader', track.uploader)
+                if 'channel' in data and data['channel'] != uploader:
+                    uploader = f"{uploader} ({data['channel']})" if uploader else data['channel']
+                track.uploader = uploader
                 track.view_count = data.get('view_count', track.view_count)
+                track.like_count = data.get('like_count', track.like_count)
+                track.comment_count = data.get('comment_count', track.comment_count)
+                track.upload_date = data.get('upload_date', track.upload_date)
+                track.channel_follower_count = data.get('channel_follower_count', track.channel_follower_count)
             except Exception as e:
                 logger.error(f"Error extracting stream url for {track.original_url}: {e}")
                 # Skip to next if failed
@@ -442,12 +501,20 @@ class PlayerCog(commands.Cog):
                 uploader = tag.artist or "Local File"
                 duration = int(tag.duration) if tag.duration else 0
                 cover_bytes = tag.get_image()
+                album = tag.album
+                year = tag.year
+                filesize = tag.filesize
+                bitrate = tag.bitrate
             except Exception as e:
                 logger.error(f"TinyTag error: {e}")
                 title = file.filename
                 uploader = "Local File"
                 duration = 0
                 cover_bytes = None
+                album = None
+                year = None
+                filesize = None
+                bitrate = None
             finally:
                 if os.path.exists(temp_path):
                     try:
@@ -464,7 +531,11 @@ class PlayerCog(commands.Cog):
                 stream_url=file.url,
                 uploader=uploader,
                 view_count=None,
-                cover_bytes=cover_bytes
+                cover_bytes=cover_bytes,
+                album=album,
+                year=year,
+                filesize=filesize,
+                bitrate=bitrate
             )
             state.queue.append(track)
             
@@ -537,17 +608,27 @@ class PlayerCog(commands.Cog):
             duration = entry.get('duration', 0)
             thumbnail = entry.get('thumbnail', '')
             uploader = entry.get('uploader')
+            if 'channel' in entry and entry['channel'] != uploader:
+                uploader = f"{uploader} ({entry['channel']})" if uploader else entry['channel']
             view_count = entry.get('view_count')
+            like_count = entry.get('like_count')
+            comment_count = entry.get('comment_count')
+            upload_date = entry.get('upload_date')
+            channel_follower_count = entry.get('channel_follower_count')
             
             track = Track(
                 title=title,
                 duration=duration,
                 thumbnail=thumbnail,
                 requester=ctx.author,
-                original_url=webpage_url or url,
-                stream_url=url if not is_playlist and url else None,
+                original_url=webpage_url,
+                stream_url=url if not is_playlist else None,
                 uploader=uploader,
-                view_count=view_count
+                view_count=view_count,
+                like_count=like_count,
+                comment_count=comment_count,
+                upload_date=upload_date,
+                channel_follower_count=channel_follower_count
             )
             state.queue.append(track)
             if not first_track:

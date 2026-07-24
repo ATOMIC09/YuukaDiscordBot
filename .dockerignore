@@ -1,0 +1,9 @@
+.env
+.venv
+__pycache__/
+*.pyc
+logs/
+assets/audio/recordings/
+.git/
+.vscode/
+.agents/

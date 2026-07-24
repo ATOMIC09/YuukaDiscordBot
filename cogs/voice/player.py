@@ -165,6 +165,15 @@ class PlayerControls(discord.ui.View):
                 await interaction.response.edit_message(view=None)
         except Exception:
             pass
+            
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+        if self.state.last_controller_message:
+            try:
+                await self.state.last_controller_message.edit(view=self)
+            except Exception:
+                pass
 
 import math
 
@@ -222,6 +231,15 @@ class QueuePaginator(discord.ui.View):
         self.current_page += 1
         self.update_buttons()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+        if hasattr(self, "message") and self.message:
+            try:
+                await self.message.edit(view=self)
+            except Exception:
+                pass
 
 class PlayerCog(commands.Cog):
     def __init__(self, bot: discord.Bot):
@@ -825,7 +843,10 @@ class PlayerCog(commands.Cog):
             return await ctx.respond(embed=info_embed("คิวว่าง", "ไม่มีเพลงในคิวเลยค่ะ (´・ω・)"), ephemeral=True)
             
         paginator = QueuePaginator(state, items_per_page=30)
-        await ctx.respond(embed=paginator.get_embed(), view=paginator)
+        msg = await ctx.respond(embed=paginator.get_embed(), view=paginator)
+        if isinstance(msg, discord.Interaction):
+            msg = await msg.original_response()
+        paginator.message = msg
 
     @music.command(name="volume", description="🔊 ปรับระดับเสียง (0-100)")
     async def volume(self, ctx: discord.ApplicationContext, level: discord.Option(int, min_value=0, max_value=100)):

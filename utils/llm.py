@@ -21,6 +21,13 @@ from bot.logger import logger
 
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
+class OpenRouterAPIError(Exception):
+    def __init__(self, status: int, error_msg: str):
+        self.status = status
+        self.error_msg = error_msg
+        super().__init__(f"OpenRouter returned status {status}")
+
+
 def _squash_messages(messages: list[dict]) -> list[dict]:
     """Merge consecutive messages with the same role (required by some instruct models)."""
     squashed: list[dict] = []
@@ -54,7 +61,12 @@ async def _stream_openrouter(
             if response.status != 200:
                 error_text = await response.text()
                 logger.error(f"[LLM] OpenRouter API error {response.status}: {error_text}")
-                raise RuntimeError(f"OpenRouter returned status {response.status}")
+                try:
+                    error_json = json.loads(error_text)
+                    error_msg = error_json.get("error", {}).get("message", error_text)
+                except Exception:
+                    error_msg = error_text
+                raise OpenRouterAPIError(response.status, error_msg)
                 
             async for line in response.content:
                 line_str = line.decode('utf-8').strip()
@@ -109,7 +121,7 @@ async def _filter_search_tags(stream: AsyncGenerator[str, None]) -> AsyncGenerat
         yield buffer
 
 
-async def generate_chat_stream_response(messages: list[dict], model: str = None) -> AsyncGenerator[tuple[str, str], None]:
+async def generate_chat_stream_response(messages: list[dict], model: str = None) -> AsyncGenerator[tuple[str, Any], None]:
     """
     Send a message history to OpenRouter and yield the AI's response in chunks.
 
@@ -235,6 +247,12 @@ async def generate_chat_stream_response(messages: list[dict], model: str = None)
                 
         logger.info(f"[LLM] ✅ Stream completed successfully")
 
+    except OpenRouterAPIError as exc:
+        logger.error(f"[LLM] OpenRouter error: {exc.error_msg}")
+        yield ("error", {
+            "user": f"Unexpected Error: OpenRouter returned status {exc.status}",
+            "dev": f"OpenRouter API Error {exc.status}\n{exc.error_msg}"
+        })
     except aiohttp.ClientConnectorError:
         logger.error(f"[LLM] Failed to connect to OpenRouter at {_OPENROUTER_URL}")
         yield ("error", "Connection Error: Could not reach OpenRouter. Please check your internet connection.")

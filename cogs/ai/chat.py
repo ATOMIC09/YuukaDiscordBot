@@ -42,6 +42,70 @@ class AIChatCog(commands.Cog, name="AI Chat"):
     # /ai chat
     # ──────────────────────────────────────────────────────────────────────
 
+    def _build_ai_log_embed(self, user: discord.Member | discord.User, channel: discord.abc.Messageable, dev_msg: str, event_name: str) -> discord.Embed:
+        embed = discord.Embed(
+            title="⚠️ API Error",
+            description=f"**Event : {event_name}**",
+            color=discord.Color.red()
+        )
+        embed.set_author(name=str(user), icon_url=user.display_avatar.url if user.display_avatar else None)
+        
+        guild = getattr(channel, "guild", None)
+        if guild:
+            embed.add_field(
+                name="เซิร์ฟเวอร์",
+                value=f"`{guild.name}`\n({guild.id})",
+                inline=True
+            )
+        else:
+            embed.add_field(
+                name="เซิร์ฟเวอร์",
+                value="`Direct Message`",
+                inline=True
+            )
+
+        category = getattr(channel, "category", None)
+        if category:
+            embed.add_field(
+                name="หมวดหมู่",
+                value=f"`{category.name}`\n({category.id})",
+                inline=True
+            )
+        else:
+            embed.add_field(
+                name="หมวดหมู่",
+                value="`None`",
+                inline=True
+            )
+
+        embed.add_field(
+            name="ช่อง",
+            value=f"{channel.mention if hasattr(channel, 'mention') else 'Unknown'}\n({getattr(channel, 'id', 'Unknown')})",
+            inline=True
+        )
+
+        embed.add_field(
+            name="ผู้เขียน",
+            value=f"{user.mention} ({user.id})",
+            inline=True
+        )
+
+        embed.add_field(
+            name="เหตุการณ์",
+            value=f"```\n{event_name}\n```",
+            inline=True
+        )
+
+        embed.add_field(
+            name="Error",
+            value=f"```\n{dev_msg}\n```",
+            inline=False
+        )
+        embed.timestamp = discord.utils.utcnow()
+        return embed
+
+
+
     @ai.command(name="chat", description="💬 เริ่มการสนทนากับ AI ในช่องแชทนี้")
     async def ai_chat(self, ctx: discord.ApplicationContext) -> None:
         await ctx.defer()
@@ -178,10 +242,24 @@ class AIChatCog(commands.Cog, name="AI Chat"):
                             await active_msg.edit(content=current_chunk_text or None, embed=embed)
                     elif msg_type == "error":
                         error_occurred = True
-                        if not active_msg:
-                            active_msg = await message.reply(embed=error_embed("AI Error", chunk))
+                        if isinstance(chunk, dict):
+                            user_msg = chunk.get("user", "AI Error")
+                            dev_msg = chunk.get("dev", user_msg)
                         else:
-                            await active_msg.edit(content=current_chunk_text or None, embed=error_embed("AI Error", chunk))
+                            user_msg = dev_msg = str(chunk)
+                            
+                        logger.error(f"[AI Chat] Stream error in on_message: {dev_msg}")
+                        
+                        if config.log_channel_id:
+                            log_channel = self.bot.get_channel(config.log_channel_id)
+                            if log_channel:
+                                log_embed = self._build_ai_log_embed(message.author, message.channel, dev_msg, "on_message")
+                                await log_channel.send(embed=log_embed)
+
+                        if not active_msg:
+                            active_msg = await message.reply(embed=error_embed("AI Error", user_msg))
+                        else:
+                            await active_msg.edit(content=current_chunk_text or None, embed=error_embed("AI Error", user_msg))
                         break
                     elif msg_type == "content":
                         current_chunk_text += chunk
@@ -260,11 +338,25 @@ class AIChatCog(commands.Cog, name="AI Chat"):
                         await active_msg.edit(content=current_chunk_text or None, embed=embed)
                 elif msg_type == "error":
                     error_occurred = True
+                    if isinstance(chunk, dict):
+                        user_msg = chunk.get("user", "AI Error")
+                        dev_msg = chunk.get("dev", user_msg)
+                    else:
+                        user_msg = dev_msg = str(chunk)
+                        
+                    logger.error(f"[AI Chat] Stream error in on_reaction_add: {dev_msg}")
+                    
+                    if config.log_channel_id:
+                        log_channel = self.bot.get_channel(config.log_channel_id)
+                        if log_channel:
+                            log_embed = self._build_ai_log_embed(user, message.channel, dev_msg, "on_reaction_add")
+                            await log_channel.send(embed=log_embed)
+
                     if not active_msg:
-                        active_msg = await message.channel.send(embed=error_embed("AI Error", chunk))
+                        active_msg = await message.channel.send(embed=error_embed("AI Error", user_msg))
                     else:
                         prefix = f"{user.mention} " if active_msg.content.startswith("<@") else ""
-                        await active_msg.edit(content=f"{prefix}{current_chunk_text}" or None, embed=error_embed("AI Error", chunk))
+                        await active_msg.edit(content=f"{prefix}{current_chunk_text}" or None, embed=error_embed("AI Error", user_msg))
                     break
                 elif msg_type == "content":
                     current_chunk_text += chunk

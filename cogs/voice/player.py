@@ -585,20 +585,26 @@ class PlayerCog(commands.Cog):
             raise UserError("ไม่มีเพลงเล่นอยู่นะคะ", "ตอนนี้หนูไม่ได้เปิดเพลงอะไรอยู่เลยค่ะ ข้ามไม่ได้น้า (´・ω・)")
             
         state = self.get_state(ctx.guild.id)
-        skipped_track = state.current
-        
         state.skip_request = True
         ctx.voice_client.stop()
         
-        embed = discord.Embed(
-            title=skipped_track.title if skipped_track else "ข้ามเพลง",
-            url=skipped_track.original_url if skipped_track else None,
-            description="⏭️ **ข้ามเพลงให้แล้วนะคะ!**",
-            color=discord.Color(0x5865F2)
-        )
-        if skipped_track and skipped_track.thumbnail:
-            embed.set_thumbnail(url=skipped_track.thumbnail)
-            
+        next_track = state.queue[0] if len(state.queue) > 0 else None
+        
+        if next_track:
+            embed = discord.Embed(
+                title=f"เพลงถัดไป: {next_track.title}",
+                url=next_track.original_url,
+                description="⏭️ **ข้ามเพลงให้แล้วนะคะ!** นี่คือเพลงต่อไปค่ะ",
+                color=discord.Color(0x5865F2)
+            )
+            if next_track.thumbnail:
+                embed.set_thumbnail(url=next_track.thumbnail)
+        else:
+            embed = discord.Embed(
+                title="ข้ามเพลง",
+                description="⏭️ **ข้ามเพลงให้แล้วนะคะ!** (ไม่มีเพลงในคิวแล้วค่ะ)",
+                color=discord.Color(0x5865F2)
+            )
         await ctx.respond(embed=embed)
 
     @music.command(name="queue", description="ดูคิวเพลงทั้งหมดค่ะ")

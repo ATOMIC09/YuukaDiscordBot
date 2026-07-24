@@ -218,6 +218,10 @@ class QueuePaginator(discord.ui.View):
         return embed
         
     def update_buttons(self):
+        self.total_pages = max(1, math.ceil(len(self.state.queue) / self.items_per_page))
+        if self.current_page > self.total_pages:
+            self.current_page = self.total_pages
+            
         self.prev_button.disabled = self.current_page <= 1
         self.next_button.disabled = self.current_page >= self.total_pages
         
@@ -230,6 +234,11 @@ class QueuePaginator(discord.ui.View):
     @discord.ui.button(label="▶️", style=discord.ButtonStyle.primary)
     async def next_button(self, button: discord.ui.Button, interaction: discord.Interaction):
         self.current_page += 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    @discord.ui.button(label="🔄", style=discord.ButtonStyle.secondary)
+    async def reload_button(self, button: discord.ui.Button, interaction: discord.Interaction):
         self.update_buttons()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 

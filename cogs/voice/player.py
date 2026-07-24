@@ -785,12 +785,22 @@ class PlayerCog(commands.Cog):
             
         await ctx.respond(embed=success_embed("⏹️ หยุดเพลงแล้วค่ะ", "หนูหยุดเพลงและเคลียร์คิวให้หมดแล้วนะคะ (・`ω´・)"))
 
-    @music.command(name="skip", description="⏭️ ข้ามเพลงปัจจุบัน")
-    async def skip(self, ctx: discord.ApplicationContext):
+    @music.command(name="skip", description="⏭️ ข้ามเพลงปัจจุบัน หรือข้ามไปเพลงที่ระบุ")
+    async def skip(self, ctx: discord.ApplicationContext, position: discord.Option(int, description="ลำดับเพลงในคิวที่ต้องการข้ามไป", min_value=1, required=False) = None):
         if not ctx.voice_client or not ctx.voice_client.is_playing():
             raise UserError("ไม่มีเพลงเล่นอยู่นะคะ", "ตอนนี้หนูไม่ได้เปิดเพลงอะไรอยู่เลยค่ะ ข้ามไม่ได้น้า (´・ω・)")
             
         state = self.get_state(ctx.guild.id)
+        
+        if position:
+            if position > len(state.queue):
+                raise UserError("ไม่มีเพลงในคิวนั้นค่ะ", f"คิวมีแค่ {len(state.queue)} เพลงนะคะ (´-ω-`)")
+                
+            for _ in range(position - 1):
+                track = state.queue.popleft()
+                if state.loop_mode == "queue":
+                    state.queue.append(track)
+                    
         state.skip_request = True
         ctx.voice_client.stop()
         

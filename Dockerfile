@@ -5,7 +5,8 @@ FROM python:3.12-slim-bookworm
 # - git: needed because pyproject.toml installs py-cord from a git PR branch
 # - libsndfile1: needed by soundfile (used by Typhoon ASR)
 # - intel-media-va-driver-non-free & libva-drm2: needed for Intel QuickSync (QSV) hardware encoding
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i 's/Components: main/Components: main contrib non-free non-free-firmware/g' /etc/apt/sources.list.d/debian.sources && \
+    apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     git \
     libsndfile1 \

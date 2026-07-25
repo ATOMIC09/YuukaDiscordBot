@@ -1,5 +1,38 @@
 import asyncio
+import io
+import os
+import tempfile
 from bot.logger import logger
+
+async def _run_ffmpeg_with_fallback(cmd_prefix: list[str], encoders: list[list[str]], out_path: str) -> None:
+    """
+    Runs ffmpeg by trying a list of encoder arguments in order.
+    Useful for falling back from hardware encoding to software encoding.
+    """
+    last_err = ""
+    for enc_args in encoders:
+        cmd = cmd_prefix + enc_args + [out_path]
+        logger.debug(f"Trying FFmpeg encoder {enc_args[1]}: {' '.join(cmd)}")
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        _, stderr = await process.communicate()
+        
+        if process.returncode == 0:
+            return
+            
+        last_err = stderr.decode('utf-8', errors='ignore')
+        logger.debug(f"FFmpeg encoder {enc_args[1]} failed, falling back...")
+        if os.path.exists(out_path):
+            try:
+                os.remove(out_path)
+            except OSError:
+                pass
+                
+    logger.error(f"All FFmpeg encoders failed. Last error:\n{last_err}")
+    raise RuntimeError("FFmpeg conversion failed with all encoders.")
 
 async def merge_image_audio(image_path: str, audio_path: str, out_path: str) -> None:
     """
@@ -8,43 +41,71 @@ async def merge_image_audio(image_path: str, audio_path: str, out_path: str) -> 
     """
     is_gif = image_path.lower().endswith('.gif')
     
-    cmd = [
-        "ffmpeg",
-        "-y", # Overwrite output if exists
+    cmd_prefix = [
+        "ffmpeg", "-y"
     ]
     
     if is_gif:
-        cmd.extend(["-ignore_loop", "0"])
+        cmd_prefix.extend(["-ignore_loop", "0"])
     else:
-        cmd.extend(["-loop", "1"])
+        cmd_prefix.extend(["-loop", "1"])
         
-    cmd.extend([
+    cmd_prefix.extend([
         "-i", image_path,
         "-i", audio_path,
         "-map", "0:v:0",
         "-map", "1:a:0",
-        # Ensure dimensions are even numbers (required by libx264)
         "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-        "-c:v", "libx264",
-        "-tune", "stillimage",
         "-c:a", "aac",
         "-b:a", "192k",
         "-pix_fmt", "yuv420p",
-        "-shortest",
-        out_path
+        "-shortest"
     ])
     
-    logger.debug(f"Running FFmpeg: {' '.join(cmd)}")
+    encoders = [
+        ["-c:v", "h264_nvenc", "-preset", "p2"],
+        ["-c:v", "h264_qsv", "-preset", "veryfast"],
+        ["-c:v", "libx264", "-tune", "stillimage"]
+    ]
     
-    process = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
-    )
+    await _run_ffmpeg_with_fallback(cmd_prefix, encoders, out_path)
+
+async def make_deepfry_video(video_bytes: bytes) -> tuple[io.BytesIO, str, tuple[int, int], tuple[int, int]]:
+    """
+    Applies deepfry effects to a video (both video and audio streams).
+    Returns (io.BytesIO of the mp4, extension, dummy_old_size, dummy_new_size) to match image API.
+    """
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as in_f:
+        in_f.write(video_bytes)
+        in_path = in_f.name
+        
+    out_path = in_path.replace(".mp4", "_out.mp4")
     
-    stdout, stderr = await process.communicate()
+    cmd_prefix = [
+        "ffmpeg", "-y",
+        "-i", in_path,
+        "-vf", "lutrgb=r='if(gt(val,127),255,0)':g='if(gt(val,127),255,0)':b='if(gt(val,127),255,0)'",
+        "-af", "volume=10, bass=g=15, treble=g=15",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "64k"
+    ]
     
-    if process.returncode != 0:
-        err = stderr.decode('utf-8', errors='ignore')
-        logger.error(f"FFmpeg failed with code {process.returncode}:\n{err}")
-        raise RuntimeError("FFmpeg conversion failed.")
+    encoders = [
+        ["-c:v", "h264_nvenc", "-preset", "p2", "-cq", "40", "-maxrate", "2M", "-bufsize", "4M"],
+        ["-c:v", "h264_qsv", "-preset", "veryfast", "-q", "40", "-maxrate", "2M", "-bufsize", "4M"],
+        ["-c:v", "libx264", "-preset", "veryfast", "-crf", "40", "-maxrate", "2M", "-bufsize", "4M"]
+    ]
+    
+    try:
+        await _run_ffmpeg_with_fallback(cmd_prefix, encoders, out_path)
+        with open(out_path, "rb") as out_f:
+            out_bytes = out_f.read()
+    finally:
+        if os.path.exists(in_path):
+            os.remove(in_path)
+        if os.path.exists(out_path):
+            os.remove(out_path)
+            
+    output_io = io.BytesIO(out_bytes)
+    return output_io, "mp4", (0, 0), (0, 0)

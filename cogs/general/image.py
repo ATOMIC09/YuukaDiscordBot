@@ -30,6 +30,16 @@ class ImageCog(commands.Cog):
                 return await attachment.read(), attachment.filename
         raise UserError("ไม่พบรูปภาพ", "ข้อความที่เซนเซย์เลือกไม่มีรูปภาพเลยนี่คะ! หลอกหนูเหรอ (,,#ﾟДﾟ)")
 
+    # Helper method to get media (image or video) bytes from message commands
+    async def _get_message_media_bytes(self, message: discord.Message) -> tuple[bytes, str, bool]:
+        for attachment in message.attachments:
+            if attachment.content_type:
+                if attachment.content_type.startswith("image/"):
+                    return await attachment.read(), attachment.filename, False
+                elif attachment.content_type.startswith("video/"):
+                    return await attachment.read(), attachment.filename, True
+        raise UserError("ไม่พบรูปภาพหรือวิดีโอ", "ข้อความที่เซนเซย์เลือกไม่มีรูปภาพหรือวิดีโอเลยนี่คะ! หลอกหนูเหรอ (,,#ﾟДﾟ)")
+
     def _format_size(self, size_bytes: int) -> str:
         size_mb = size_bytes / (1024 * 1024)
         return f"{size_mb:.2f} MB" if size_mb >= 1 else f"{size_bytes/1024:.2f} KB"
@@ -118,19 +128,30 @@ class ImageCog(commands.Cog):
     @discord.message_command(name="Deepfry")
     async def ctx_deepfry(self, ctx: discord.ApplicationContext, message: discord.Message):
         await ctx.defer()
-        img_bytes, filename = await self._get_message_image_bytes(message)
+        media_bytes, filename, is_video = await self._get_message_media_bytes(message)
         
         try:
-            output_io, ext, old_size, new_size = await asyncio.to_thread(img_utils.make_deepfry, img_bytes)
+            if is_video:
+                import utils.video as video_utils
+                output_io, ext, old_size, new_size = await video_utils.make_deepfry_video(media_bytes)
+            else:
+                output_io, ext, old_size, new_size = await asyncio.to_thread(img_utils.make_deepfry, media_bytes)
+            
+            # Check if file exceeds Discord's limit (Cap at 24MB to allow for API payload overhead)
+            if output_io.getbuffer().nbytes > 24 * 1024 * 1024:
+                raise UserError("ไฟล์ใหญ่เกินไป", "ขอโทษค่ะเซนเซย์ แต่พอทอดเสร็จแล้วไฟล์ใหญ่เกิน 24MB หนูส่งให้ไม่ได้ค่ะ (╥﹏╥)")
+            
             base_name, _ = os.path.splitext(filename)
             file = discord.File(output_io, filename=f"{base_name}_deepfried.{ext}")
             
             embed = success_embed("Deepfry", "ทอดกรอบเสร็จแล้วค่ะ! ร้อน ๆ เลย (๑•̀ㅂ•́)و✧")
             embed.set_footer(text=self._format_footer(output_io.getbuffer().nbytes, old_size, new_size))
             await ctx.respond(embed=embed, file=file)
+        except UserError:
+            raise
         except Exception as e:
             logger.error(f"Error in deepfry: {e}")
-            raise UserError("เกิดข้อผิดพลาด", "ทอดไม่สำเร็จค่ะ รูปอาจจะไหม้ไปแล้ว (＠_＠)")
+            raise UserError("เกิดข้อผิดพลาด", "ทอดไม่สำเร็จค่ะ ไฟล์อาจจะไหม้ไปแล้ว (＠_＠)")
 
     @discord.message_command(name="Grayscale")
     async def ctx_grayscale(self, ctx: discord.ApplicationContext, message: discord.Message):

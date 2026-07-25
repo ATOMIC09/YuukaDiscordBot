@@ -4,10 +4,11 @@ import os
 import tempfile
 from bot.logger import logger
 
-async def _run_ffmpeg_with_fallback(cmd_prefix: list[str], encoders: list[list[str]], out_path: str) -> None:
+async def _run_ffmpeg_with_fallback(cmd_prefix: list[str], encoders: list[list[str]], out_path: str) -> str:
     """
     Runs ffmpeg by trying a list of encoder arguments in order.
     Useful for falling back from hardware encoding to software encoding.
+    Returns the name of the successful encoder.
     """
     last_err = ""
     for enc_args in encoders:
@@ -21,7 +22,7 @@ async def _run_ffmpeg_with_fallback(cmd_prefix: list[str], encoders: list[list[s
         _, stderr = await process.communicate()
         
         if process.returncode == 0:
-            return
+            return enc_args[1]
             
         last_err = stderr.decode('utf-8', errors='ignore')
         logger.debug(f"FFmpeg encoder {enc_args[1]} failed, falling back...")
@@ -34,10 +35,11 @@ async def _run_ffmpeg_with_fallback(cmd_prefix: list[str], encoders: list[list[s
     logger.error(f"All FFmpeg encoders failed. Last error:\n{last_err}")
     raise RuntimeError("FFmpeg conversion failed with all encoders.")
 
-async def merge_image_audio(image_path: str, audio_path: str, out_path: str) -> None:
+async def merge_image_audio(image_path: str, audio_path: str, out_path: str) -> str:
     """
     Merges a static image or GIF with an audio file into an MP4 video using FFmpeg.
     Raises RuntimeError if FFmpeg fails.
+    Returns the encoder used.
     """
     is_gif = image_path.lower().endswith('.gif')
     
@@ -68,12 +70,12 @@ async def merge_image_audio(image_path: str, audio_path: str, out_path: str) -> 
         ["-c:v", "libx264", "-tune", "stillimage"]
     ]
     
-    await _run_ffmpeg_with_fallback(cmd_prefix, encoders, out_path)
+    return await _run_ffmpeg_with_fallback(cmd_prefix, encoders, out_path)
 
-async def make_deepfry_video(video_bytes: bytes) -> tuple[io.BytesIO, str, tuple[int, int], tuple[int, int]]:
+async def make_deepfry_video(video_bytes: bytes) -> tuple[io.BytesIO, str, tuple[int, int], tuple[int, int], str]:
     """
     Applies deepfry effects to a video (both video and audio streams).
-    Returns (io.BytesIO of the mp4, extension, dummy_old_size, dummy_new_size) to match image API.
+    Returns (io.BytesIO of the mp4, extension, dummy_old_size, dummy_new_size, encoder) to match image API.
     """
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as in_f:
         in_f.write(video_bytes)
@@ -98,7 +100,7 @@ async def make_deepfry_video(video_bytes: bytes) -> tuple[io.BytesIO, str, tuple
     ]
     
     try:
-        await _run_ffmpeg_with_fallback(cmd_prefix, encoders, out_path)
+        used_encoder = await _run_ffmpeg_with_fallback(cmd_prefix, encoders, out_path)
         with open(out_path, "rb") as out_f:
             out_bytes = out_f.read()
     finally:
@@ -108,4 +110,4 @@ async def make_deepfry_video(video_bytes: bytes) -> tuple[io.BytesIO, str, tuple
             os.remove(out_path)
             
     output_io = io.BytesIO(out_bytes)
-    return output_io, "mp4", (0, 0), (0, 0)
+    return output_io, "mp4", (0, 0), (0, 0), used_encoder

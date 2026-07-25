@@ -133,9 +133,14 @@ class ImageCog(commands.Cog):
         try:
             if is_video:
                 import utils.video as video_utils
-                output_io, ext, old_size, new_size = await video_utils.make_deepfry_video(media_bytes)
+                output_io, ext, old_size, new_size, used_encoder = await video_utils.make_deepfry_video(media_bytes)
             else:
                 output_io, ext, old_size, new_size = await asyncio.to_thread(img_utils.make_deepfry, media_bytes)
+                used_encoder = "PIL (CPU)"
+                
+            if not hasattr(ctx.bot, "command_extras"):
+                ctx.bot.command_extras = {}
+            ctx.bot.command_extras[ctx.interaction.id] = {"Encoder": used_encoder}
             
             # Check if file exceeds Discord's limit (Cap at 24MB to allow for API payload overhead)
             if output_io.getbuffer().nbytes > 24 * 1024 * 1024:

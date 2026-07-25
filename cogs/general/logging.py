@@ -100,6 +100,11 @@ class CommandLogCog(commands.Cog):
                 inline=False
             )
             
+        extras = getattr(ctx.bot, "command_extras", {}).get(ctx.interaction.id)
+        if extras:
+            for k, v in extras.items():
+                embed.add_field(name=k, value=f"`{v}`", inline=True)
+                
         embed.timestamp = discord.utils.utcnow()
         return embed
 
@@ -125,6 +130,9 @@ class CommandLogCog(commands.Cog):
             await msg.edit(**kwargs)
         except Exception as e:
             logger.error(f"Failed to edit command log to success: {e}")
+        finally:
+            if hasattr(ctx.bot, "command_extras"):
+                ctx.bot.command_extras.pop(ctx.interaction.id, None)
 
     async def _mark_error(self, ctx: discord.ApplicationContext, msg: discord.Message, error: discord.DiscordException):
         original_error = getattr(error, "original", error)
@@ -146,6 +154,9 @@ class CommandLogCog(commands.Cog):
             await msg.edit(**kwargs)
         except Exception as e:
             logger.error(f"Failed to edit command log to error: {e}")
+        finally:
+            if hasattr(ctx.bot, "command_extras"):
+                ctx.bot.command_extras.pop(ctx.interaction.id, None)
 
     @commands.Cog.listener()
     async def on_application_command(self, ctx: discord.ApplicationContext):

@@ -75,7 +75,11 @@ class ImgAudioCog(commands.Cog):
                 await audio_attachment.save(aud_path)
                             
                 # Merge
-                await merge_image_audio(img_path, aud_path, out_path)
+                used_encoder = await merge_image_audio(img_path, aud_path, out_path)
+                
+                if not hasattr(ctx.bot, "command_extras"):
+                    ctx.bot.command_extras = {}
+                ctx.bot.command_extras[ctx.interaction.id] = {"Encoder": used_encoder}
                 
                 # Check size limit (Discord limit is typically 25MB)
                 file_size = os.path.getsize(out_path)

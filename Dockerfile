@@ -4,10 +4,13 @@ FROM python:3.12-slim-bookworm
 # - ffmpeg: needed for audio/voice features
 # - git: needed because pyproject.toml installs py-cord from a git PR branch
 # - libsndfile1: needed by soundfile (used by Typhoon ASR)
+# - intel-media-va-driver-non-free & libva-drm2: needed for Intel QuickSync (QSV) hardware encoding
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     git \
     libsndfile1 \
+    intel-media-va-driver-non-free \
+    libva-drm2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv from the official astral image

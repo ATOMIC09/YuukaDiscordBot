@@ -61,7 +61,8 @@ async def merge_image_audio(image_path: str, audio_path: str, out_path: str) -> 
         "-c:a", "aac",
         "-b:a", "192k",
         "-pix_fmt", "yuv420p",
-        "-shortest"
+        "-shortest",
+        "-movflags", "+faststart"
     ])
     
     encoders = [
@@ -87,10 +88,11 @@ async def make_deepfry_video(video_bytes: bytes) -> tuple[io.BytesIO, str, tuple
         "ffmpeg", "-y",
         "-i", in_path,
         "-vf", "lutrgb=r='if(gt(val,127),255,0)':g='if(gt(val,127),255,0)':b='if(gt(val,127),255,0)'",
-        "-af", "volume=10, bass=g=15, treble=g=15",
+        "-af", "bass=g=15,treble=g=15,volume=8,alimiter=limit=0.9",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac",
-        "-b:a", "64k"
+        "-b:a", "32k",
+        "-movflags", "+faststart"
     ]
     
     encoders = [

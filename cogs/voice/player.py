@@ -151,6 +151,11 @@ class AudioState:
         self.guild_id = guild_id
         self.queue: collections.deque[Track] = collections.deque()
         self.current: Track | None = None
+        self.current_played: bool = False
+        self.history: collections.deque[Track] = collections.deque(maxlen=10)
+        self.forward_history: collections.deque[Track] = collections.deque(maxlen=10)
+        self.is_rewinding: bool = False
+        self.rewind_lock: asyncio.Lock = asyncio.Lock()
         self.voice_client: discord.VoiceClient | None = None
         self.loop_mode: str = "off"  # "off", "track", "queue"
         self.volume: float = 1.0
@@ -168,6 +173,8 @@ class PlayerControls(discord.ui.View):
         self.update_buttons()
 
     def update_buttons(self):
+        self.rewind.disabled = len(self.state.history) == 0
+
         if self.state.voice_client and self.state.voice_client.is_paused():
             self.pause_resume.emoji = "▶️"
             self.pause_resume.style = discord.ButtonStyle.primary
@@ -193,6 +200,13 @@ class PlayerControls(discord.ui.View):
             await interaction.response.send_message("เซนเซย์อยู่คนละห้องกับหนูนะคะ (・`ω´・)", ephemeral=True)
             return False
         return True
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="⏮️")
+    async def rewind(self, button: discord.ui.Button, interaction: discord.Interaction):
+        ok = await self.cog._rewind_async(self.state.guild_id)
+        if not ok:
+            return await interaction.response.send_message("ไม่มีเพลงก่อนหน้าให้ย้อนกลับนะคะ (´・ω・)", ephemeral=True)
+        await interaction.response.defer()
 
     @discord.ui.button(style=discord.ButtonStyle.primary, emoji="⏸️")
     async def pause_resume(self, button: discord.ui.Button, interaction: discord.Interaction):
@@ -235,6 +249,8 @@ class PlayerControls(discord.ui.View):
     @discord.ui.button(style=discord.ButtonStyle.danger, emoji="⏹️")
     async def stop(self, button: discord.ui.Button, interaction: discord.Interaction):
         self.state.queue.clear()
+        self.state.history.clear()
+        self.state.forward_history.clear()
         self.state.loop_mode = "off"
         self.state.last_controller_message = None
             
@@ -540,15 +556,48 @@ class PlayerCog(commands.Cog):
             state.voice_client = None
             state.queue.clear()
             state.current = None
+            state.history.clear()
+            state.forward_history.clear()
             if state.text_channel:
                 await state.text_channel.send(embed=info_embed("ไปแล้วค่า~", "หนูขอตัวออกก่อนนะคะ เพราะไม่มีเพลงเล่นมา 3 นาทีแล้ว (´・ω・)"))
+
+    async def _rewind_async(self, guild_id: int) -> bool:
+        """Pop the most recent history entry and play it, pushing the current
+        track into forward history so a subsequent skip/next can redo back to it."""
+        state = self.get_state(guild_id)
+        if not state.voice_client or not state.voice_client.is_connected():
+            return False
+
+        async with state.rewind_lock:
+            if not state.history:
+                return False
+
+            previous_track = state.history.pop()
+            if state.current:
+                state.forward_history.append(state.current)
+
+            state.queue.appendleft(previous_track)
+            state.is_rewinding = True
+            state.skip_request = True
+
+            if state.voice_client.is_playing() or state.voice_client.is_paused():
+                state.voice_client.stop()
+            else:
+                self.bot.loop.create_task(self._play_next_async(guild_id))
+
+        return True
 
     async def _play_next_async(self, guild_id: int, auto_send: bool = True):
         state = self.get_state(guild_id)
         if not state.voice_client or not state.voice_client.is_connected():
             state.current = None
             state.queue.clear()
+            state.history.clear()
+            state.forward_history.clear()
             return
+
+        was_rewinding = state.is_rewinding
+        state.is_rewinding = False
 
         if state.skip_request:
             state.skip_request = False
@@ -557,6 +606,15 @@ class PlayerCog(commands.Cog):
                 state.queue.appendleft(state.current)
             elif state.loop_mode == "queue" and state.current:
                 state.queue.append(state.current)
+
+        # Only a track that actually started playing belongs in history, and never
+        # the track we just manually moved into forward_history via a rewind.
+        if state.current and state.current_played and not was_rewinding:
+            state.history.append(state.current)
+
+        # Redo priority: forward history (from a previous rewind) before the normal queue.
+        if state.forward_history and not was_rewinding:
+            state.queue.appendleft(state.forward_history.pop())
 
         if len(state.queue) == 0:
             state.current = None
@@ -585,6 +643,7 @@ class PlayerCog(commands.Cog):
 
         track = state.queue.popleft()
         state.current = track
+        state.current_played = False
 
         # JIT extraction for flat playlist tracks
         if not track.stream_url:
@@ -631,6 +690,7 @@ class PlayerCog(commands.Cog):
                 self.bot.loop.create_task(self._play_next_async(guild_id))
 
             state.voice_client.play(volume_source, after=after_playing)
+            state.current_played = True
             logger.info(f"Playing track in guild {guild_id}: {track.title}")
             
             # Auto-update controller if this was an automatic track progression
@@ -651,8 +711,10 @@ class PlayerCog(commands.Cog):
         state = self.get_state(ctx.guild.id)
         state.queue.clear()
         state.current = None
+        state.history.clear()
+        state.forward_history.clear()
         state.loop_mode = "off"
-        
+
         await ctx.voice_client.disconnect()
         state.voice_client = None
 
@@ -904,6 +966,8 @@ class PlayerCog(commands.Cog):
     async def stop(self, ctx: discord.ApplicationContext):
         state = self.get_state(ctx.guild.id)
         state.queue.clear()
+        state.history.clear()
+        state.forward_history.clear()
         state.loop_mode = "off"
         
         if state.last_controller_message:
@@ -933,17 +997,23 @@ class PlayerCog(commands.Cog):
         if position:
             if position > len(state.queue):
                 raise UserError("ไม่มีเพลงในคิวนั้นค่ะ", f"คิวมีแค่ {len(state.queue)} เพลงนะคะ (´-ω-`)")
-                
+
+            # Jumping to an explicit position diverges from any rewound path.
+            state.forward_history.clear()
+
             for _ in range(position - 1):
                 track = state.queue.popleft()
                 if state.loop_mode == "queue":
                     state.queue.append(track)
-                    
+
         state.skip_request = True
         ctx.voice_client.stop()
-        
-        next_track = state.queue[0] if len(state.queue) > 0 else None
-        
+
+        if not position and state.forward_history:
+            next_track = state.forward_history[-1]
+        else:
+            next_track = state.queue[0] if len(state.queue) > 0 else None
+
         if next_track:
             embed = discord.Embed(
                 title=f"เพลงถัดไป: {next_track.title}",
@@ -961,7 +1031,13 @@ class PlayerCog(commands.Cog):
             )
         await ctx.respond(embed=embed)
 
+    @music.command(name="previous", description="⏮️ ย้อนกลับไปเพลงก่อนหน้า")
+    async def previous(self, ctx: discord.ApplicationContext):
+        ok = await self._rewind_async(ctx.guild.id)
+        if not ok:
+            raise UserError("ย้อนกลับไม่ได้ค่ะ", "ไม่มีเพลงก่อนหน้าให้ย้อนกลับ หรือหนูไม่ได้อยู่ในห้องเสียงเลยค่ะ (´・ω・)")
 
+        await ctx.respond(embed=success_embed("⏮️ ย้อนกลับเพลง", "หนูย้อนกลับไปเพลงก่อนหน้าให้แล้วนะคะ! (๑>◡<๑)"))
 
     @music.command(name="nowplaying", description="🎵 ดูเพลงที่กำลังเล่นอยู่")
     async def nowplaying(self, ctx: discord.ApplicationContext):

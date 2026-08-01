@@ -43,7 +43,7 @@ YuukaDiscordBot/
 │   │   └── chat.py           # /ai chat, /ai stop — stateful LLM chat sessions
 │   ├── voice/                # Voice feature group
 │   │   ├── __init__.py
-│   │   ├── listener.py       # /listen start, /listen stop — pycord Sink API, saves WAV files
+│   │   ├── listener.py       # /record start, /record stop — pycord Sink API, saves Opus files
 │   │   └── transcribe.py     # /transcribe start, /transcribe stop — real-time STT via Typhoon ASR
 │   ├── general/              # (empty — stub cogs removed; re-add when implementing)
 │   │   └── __init__.py
@@ -152,12 +152,12 @@ def setup(bot: discord.Bot):
 
 ## Voice Architecture
 
-### Listening (Save) — `cogs/voice/listener.py`
-- **Slash commands**: `/listen start`, `/listen stop`
+### Recording (Save) — `cogs/voice/listener.py`
+- **Slash commands**: `/record start`, `/record stop`
 - Uses pycord's **Sink API** (`discord.sinks.WaveSink`).
 - State: `ListenerCog._active_sinks` is a dict mapping `guild_id → WaveSink`.
-- PCM audio (48kHz stereo 16-bit) from the Opus decoder is wrapped into a proper WAV container via the local `_pcm_to_wav()` helper function (NOT from `utils.stt` — listener.py has its own inline copy).
-- Recordings are saved locally to `assets/audio/recordings/` and also attached to the Discord channel as `discord.File` uploads.
+- PCM audio (48kHz stereo 16-bit) from the Opus decoder is encoded to mono Ogg Opus entirely in memory via the local `_pcm_to_opus()` helper (pipes raw PCM through `ffmpeg`/`libopus`, `voip`-tuned, 32kbps, falling back to 16kbps if the result exceeds the guild's `filesize_limit`).
+- Recordings are attached to the Discord channel as `discord.File` uploads straight from memory; they're only written to `assets/audio/recordings/` as a fallback if the Discord upload itself fails.
 - **Pycord 2.8 callback workaround**: `start_recording()` silently drops the callback if no `*args` are passed (the `AudioReader.run()` checks `if self.after and self.args:`). We pass a dummy `True` as the third argument to prevent this.
 - **TODO: AI PIPELINE HOOK** — forward audio to AI pipeline (STT, hotword detection) after the recording callback fires.
 

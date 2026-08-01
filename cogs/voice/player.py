@@ -306,7 +306,7 @@ class JumpToPageModal(discord.ui.Modal):
         await interaction.response.edit_message(embed=self.paginator.get_embed(), view=self.paginator)
 
 class QueuePaginator(discord.ui.View):
-    def __init__(self, state: "AudioState", items_per_page: int = 30):
+    def __init__(self, state: "AudioState", items_per_page: int = 10):
         super().__init__(timeout=None)
         self.state = state
         self.items_per_page = items_per_page
@@ -445,7 +445,7 @@ class PlayerCog(commands.Cog):
             for i, qtrack in enumerate(list(state.queue)):
                 if i < 5:
                     dur_str = format_duration(qtrack.duration)
-                    desc += f"{i+1}. [{qtrack.title}]({qtrack.original_url}) `[{dur_str}]` - {qtrack.requester.mention}\n"
+                    desc += f"{i+1}. [{qtrack.title}]({qtrack.original_url})\n`[{dur_str}]` - {qtrack.requester.mention}\n"
             if len(state.queue) > 5:
                 desc += f"\n*...และอีก {len(state.queue) - 5} เพลง*"
                 
@@ -1080,7 +1080,7 @@ class PlayerCog(commands.Cog):
                 pass
             state.last_queue_message = None
 
-        paginator = QueuePaginator(state, items_per_page=30)
+        paginator = QueuePaginator(state, items_per_page=10)
         msg = await ctx.respond(embed=paginator.get_embed(), view=paginator)
         if isinstance(msg, discord.Interaction):
             msg = await msg.original_response()

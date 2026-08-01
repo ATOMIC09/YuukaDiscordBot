@@ -150,9 +150,9 @@ class STTCog(commands.Cog, name="Realtime STT"):
         )
         await channel.send(embed=embed)
 
-    transcribe = discord.SlashCommandGroup("transcribe", "Realtime transcription commands")
+    transcribe = discord.SlashCommandGroup("transcribe", "🎙️ คำสั่งถอดเสียงแบบเรียลไทม์")
 
-    @transcribe.command(name="start", description="Join your voice channel and start realtime transcription")
+    @transcribe.command(name="start", description="🎙️ เข้าห้องเสียงและเริ่มถอดเสียงแบบเรียลไทม์")
     async def transcribe_start(self, ctx: discord.ApplicationContext) -> None:
         """Start recording audio from the invoker's voice channel and transcribe it."""
         await ctx.defer()
@@ -210,7 +210,7 @@ class STTCog(commands.Cog, name="Realtime STT"):
             "Run `/transcribe stop` when done. Transcripts will show up in the terminal.",
         ))
 
-    @transcribe.command(name="stop", description="Stop realtime transcription")
+    @transcribe.command(name="stop", description="⏹️ หยุดการถอดเสียงแบบเรียลไทม์")
     async def transcribe_stop(self, ctx: discord.ApplicationContext) -> None:
         """Stop transcription and clean up."""
         await ctx.defer()

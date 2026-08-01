@@ -81,14 +81,15 @@ class ImgAudioCog(commands.Cog):
                     ctx.bot.command_extras = {}
                 ctx.bot.command_extras[ctx.interaction.id] = {"Encoder": used_encoder}
                 
-                # Check size limit (Discord limit is typically 25MB)
+                upload_limit = ctx.guild.filesize_limit if ctx.guild else 10 * 1024 * 1024
                 file_size = os.path.getsize(out_path)
                 size_mb = file_size / (1024 * 1024)
-                
-                if size_mb > 25:
+
+                if file_size > upload_limit:
+                    limit_mb = upload_limit / (1024 * 1024)
                     raise UserError(
                         "ไฟล์ใหญ่เกินไปค่ะ",
-                        f"ไฟล์วิดีโอที่ได้มีขนาด {size_mb:.2f} MB ซึ่งใหญ่เกินกว่า Discord จะรับไหวนะคะ (；￣Д￣)"
+                        f"ไฟล์วิดีโอที่ได้มีขนาด {size_mb:.2f} MB ซึ่งใหญ่เกินกว่า {limit_mb:.0f}MB ที่ห้องนี้รับได้นะคะ (；￣Д￣)"
                     )
                 
                 # Send

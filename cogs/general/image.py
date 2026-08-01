@@ -129,22 +129,28 @@ class ImageCog(commands.Cog):
     async def ctx_deepfry(self, ctx: discord.ApplicationContext, message: discord.Message):
         await ctx.defer()
         media_bytes, filename, is_video = await self._get_message_media_bytes(message)
-        
+
+        upload_limit = ctx.guild.filesize_limit if ctx.guild else 10 * 1024 * 1024
+        safe_upload_limit = int(upload_limit * 0.97)
+
         try:
             if is_video:
                 import utils.video as video_utils
-                output_io, ext, old_size, new_size, used_encoder = await video_utils.make_deepfry_video(media_bytes)
+                output_io, ext, old_size, new_size, used_encoder = await video_utils.make_deepfry_video(media_bytes, safe_upload_limit)
             else:
                 output_io, ext, old_size, new_size = await asyncio.to_thread(img_utils.make_deepfry, media_bytes)
                 used_encoder = "PIL (CPU)"
-                
+
             if not hasattr(ctx.bot, "command_extras"):
                 ctx.bot.command_extras = {}
             ctx.bot.command_extras[ctx.interaction.id] = {"Encoder": used_encoder}
-            
-            # Check if file exceeds Discord's limit (Cap at 24MB to allow for API payload overhead)
-            if output_io.getbuffer().nbytes > 24 * 1024 * 1024:
-                raise UserError("ไฟล์ใหญ่เกินไป", "ขอโทษค่ะเซนเซย์ แต่พอทอดเสร็จแล้วไฟล์ใหญ่เกิน 24MB หนูส่งให้ไม่ได้ค่ะ (╥﹏╥)")
+
+            # Safety net: make_deepfry_video already bitrate-targets to fit under the limit,
+            # but guard here too in case ffmpeg still overshoots on pathological input
+            # (or for the PIL image path, which doesn't target a size at all).
+            if output_io.getbuffer().nbytes > upload_limit:
+                limit_mb = upload_limit / (1024 * 1024)
+                raise UserError("ไฟล์ใหญ่เกินไป", f"ขอโทษค่ะเซนเซย์ แต่พอทอดเสร็จแล้วไฟล์ใหญ่เกิน {limit_mb:.0f}MB หนูส่งให้ไม่ได้ค่ะ (╥﹏╥)")
             
             base_name, _ = os.path.splitext(filename)
             file = discord.File(output_io, filename=f"{base_name}_deepfried.{ext}")

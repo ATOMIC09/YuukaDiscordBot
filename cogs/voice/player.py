@@ -35,7 +35,7 @@ ytdl_format_options = {
 
 ffmpeg_options = {
     'options': '-vn',
-    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -analyzeduration 0 -probesize 32",
 }
 
 ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
@@ -553,7 +553,12 @@ class PlayerCog(commands.Cog):
         try:
             audio_source = discord.FFmpegPCMAudio(track.stream_url, **ffmpeg_options)
             volume_source = discord.PCMVolumeTransformer(audio_source, volume=state.volume)
-            
+
+            # Let ffmpeg's pipe fill a bit before Discord starts pulling frames on its
+            # strict 20ms clock, otherwise the first second or so stutters while the
+            # stream connection/decode is still ramping up.
+            await asyncio.sleep(0.5)
+
             def after_playing(e):
                 if e:
                     logger.error(f"Player error in guild {guild_id}: {e}")

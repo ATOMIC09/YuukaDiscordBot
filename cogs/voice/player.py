@@ -333,10 +333,10 @@ class QueuePaginator(discord.ui.View):
         
         for i, track in enumerate(queue_slice, start=start_idx + 1):
             dur_str = format_duration(track.duration)
-            desc += f"{i}. [{track.title}]({track.original_url})\n`[{dur_str}]` - {track.requester.mention}\n"
-            
-        if len(desc) > 4096:
-            desc = desc[:4093] + "..."
+            entry = f"{i}. [{track.title}]({track.original_url})\n`[{dur_str}]` - {track.requester.mention}\n"
+            if len(desc) + len(entry) > 4096:
+                break
+            desc += entry
         embed.description = desc
         total_duration = sum(t.duration or 0 for t in self.state.queue)
         total_str = format_duration(total_duration)

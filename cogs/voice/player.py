@@ -60,6 +60,10 @@ class Track:
     filesize: int | None = None
     bitrate: float | None = None
 
+    def __post_init__(self):
+        if self.duration is None:
+            self.duration = 0
+
 class AudioState:
     def __init__(self, bot: discord.Bot, guild_id: int):
         self.bot = bot
@@ -481,7 +485,7 @@ class PlayerCog(commands.Cog):
                 track.stream_url = data.get('url')
                 track.title = data.get('title', track.title)
                 track.thumbnail = data.get('thumbnail', track.thumbnail)
-                track.duration = data.get('duration', track.duration)
+                track.duration = data.get('duration') or track.duration or 0
                 uploader = data.get('uploader', track.uploader)
                 if 'channel' in data and data['channel'] != uploader:
                     uploader = f"{uploader} ({data['channel']})" if uploader else data['channel']
@@ -627,8 +631,13 @@ class PlayerCog(commands.Cog):
             
             
             await ctx.interaction.edit_original_response(embed=success_embed("✅ เพิ่มเข้าคิวแล้ว!", f"เพิ่ม `{title}` ลงคิวเรียบร้อยค่ะ! (๑>◡<๑)"))
-            
-        if not ctx.guild.voice_client:
+
+        if not ctx.guild.voice_client or not ctx.guild.voice_client.is_connected():
+            if ctx.guild.voice_client:
+                try:
+                    await ctx.guild.voice_client.disconnect(force=True)
+                except Exception:
+                    pass
             state.voice_client = await channel.connect()
             
         if not state.current or not state.voice_client.is_playing():
@@ -736,9 +745,14 @@ class PlayerCog(commands.Cog):
         msg = f"Playlist ({added_count} เพลง)" if is_playlist else f"[{first_track.title}]({first_track.original_url})"
         await ctx.interaction.edit_original_response(embed=success_embed("✅ เพิ่มเข้าคิวแล้ว!", f"เพิ่ม {msg} ลงคิวเรียบร้อยค่ะ! ไปดูที่หน้าเล่นเพลงได้เลยนะคะ (๑>◡<๑)"))
 
-        if not ctx.guild.voice_client:
+        if not ctx.guild.voice_client or not ctx.guild.voice_client.is_connected():
+            if ctx.guild.voice_client:
+                try:
+                    await ctx.guild.voice_client.disconnect(force=True)
+                except Exception:
+                    pass
             state.voice_client = await channel.connect()
-            
+
         if not state.current or not state.voice_client.is_playing():
             # if playing is stopped, start it
             self.bot.loop.create_task(self._play_next_async(ctx.guild.id, auto_send=True))

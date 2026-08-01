@@ -231,7 +231,9 @@ class QueuePaginator(discord.ui.View):
             desc += f"{i}. [{title}]({track.original_url}) `[{dur_str}]` - {track.requester.mention}\n"
             
         embed.description = desc
-        embed.set_footer(text=f"หน้า {self.current_page}/{self.total_pages} | ทั้งหมด {len(self.state.queue)} เพลง")
+        total_duration = sum(t.duration or 0 for t in self.state.queue)
+        total_str = format_duration(total_duration)
+        embed.set_footer(text=f"หน้า {self.current_page}/{self.total_pages} | ทั้งหมด {len(self.state.queue)} เพลง | รวม {total_str}")
         return embed
         
     def update_buttons(self):

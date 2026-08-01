@@ -40,6 +40,21 @@ ffmpeg_options = {
 
 ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
 
+def format_duration(seconds: int | None) -> str:
+    if not seconds or seconds <= 0:
+        return "Live/Unknown"
+    years, rem = divmod(int(seconds), 31536000)
+    days, rem = divmod(rem, 86400)
+    hours, rem = divmod(rem, 3600)
+    mins, secs = divmod(rem, 60)
+    if years > 0:
+        return f"{years}y {days}d {hours:02d}:{mins:02d}:{secs:02d}"
+    if days > 0:
+        return f"{days}d {hours:02d}:{mins:02d}:{secs:02d}"
+    if hours > 0:
+        return f"{hours}:{mins:02d}:{secs:02d}"
+    return f"{mins}:{secs:02d}"
+
 @dataclasses.dataclass
 class Track:
     title: str
@@ -196,8 +211,7 @@ class QueuePaginator(discord.ui.View):
         
         desc = ""
         if self.state.current:
-            mins, secs = divmod(self.state.current.duration, 60)
-            dur_str = f"{mins}:{secs:02d}" if self.state.current.duration > 0 else "Live/Unknown"
+            dur_str = format_duration(self.state.current.duration)
             desc += f"**▶️ กำลังเล่น:** [{self.state.current.title}]({self.state.current.original_url}) `[{dur_str}]`\n\n"
             
         if len(self.state.queue) == 0:
@@ -210,8 +224,7 @@ class QueuePaginator(discord.ui.View):
         queue_slice = list(self.state.queue)[start_idx:end_idx]
         
         for i, track in enumerate(queue_slice, start=start_idx + 1):
-            mins, secs = divmod(track.duration, 60)
-            dur_str = f"{mins}:{secs:02d}" if track.duration > 0 else "Live/Unknown"
+            dur_str = format_duration(track.duration)
             title = track.title
             if len(title) > 50:
                 title = title[:47] + "..."
@@ -282,8 +295,7 @@ class PlayerCog(commands.Cog):
         if track.album:
             embed.add_field(name="💿 อัลบั้ม", value=f"`{track.album}`", inline=False)
 
-        mins, secs = divmod(track.duration, 60)
-        dur_str = f"{mins}:{secs:02d}" if track.duration > 0 else "Live/Unknown"
+        dur_str = format_duration(track.duration)
         embed.add_field(name="⏳ ความยาว", value=f"`{dur_str}`", inline=True)
         embed.add_field(name="👤 ขอโดย", value=track.requester.mention, inline=True)
             
@@ -318,8 +330,8 @@ class PlayerCog(commands.Cog):
             desc += "**🎶 คิวถัดไป:**\n"
             for i, qtrack in enumerate(list(state.queue)):
                 if i < 5:
-                    mins, secs = divmod(qtrack.duration, 60)
-                    desc += f"{i+1}. [{qtrack.title}]({qtrack.original_url}) `[{mins}:{secs:02d}]` - {qtrack.requester.mention}\n"
+                    dur_str = format_duration(qtrack.duration)
+                    desc += f"{i+1}. [{qtrack.title}]({qtrack.original_url}) `[{dur_str}]` - {qtrack.requester.mention}\n"
             if len(state.queue) > 5:
                 desc += f"\n*...และอีก {len(state.queue) - 5} เพลง*"
                 

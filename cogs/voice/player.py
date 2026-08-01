@@ -162,6 +162,7 @@ class AudioState:
         self.is_playing_loop: bool = False
         self.skip_request: bool = False
         self.last_controller_message: discord.WebhookMessage | discord.Message | None = None
+        self.last_queue_message: discord.WebhookMessage | discord.Message | None = None
         self.text_channel: discord.TextChannel | discord.Thread | None = None
         self.idle_task: asyncio.Task | None = None
 
@@ -306,7 +307,7 @@ class JumpToPageModal(discord.ui.Modal):
 
 class QueuePaginator(discord.ui.View):
     def __init__(self, state: "AudioState", items_per_page: int = 30):
-        super().__init__(timeout=300)
+        super().__init__(timeout=None)
         self.state = state
         self.items_per_page = items_per_page
         self.current_page = 1
@@ -332,11 +333,10 @@ class QueuePaginator(discord.ui.View):
         
         for i, track in enumerate(queue_slice, start=start_idx + 1):
             dur_str = format_duration(track.duration)
-            title = track.title
-            if len(title) > 50:
-                title = title[:47] + "..."
-            desc += f"{i}. [{title}]({track.original_url}) `[{dur_str}]` - {track.requester.mention}\n"
+            desc += f"{i}. [{track.title}]({track.original_url})\n`[{dur_str}]` - {track.requester.mention}\n"
             
+        if len(desc) > 4096:
+            desc = desc[:4093] + "..."
         embed.description = desc
         total_duration = sum(t.duration or 0 for t in self.state.queue)
         total_str = format_duration(total_duration)
@@ -1072,12 +1072,20 @@ class PlayerCog(commands.Cog):
         state = self.get_state(ctx.guild.id)
         if not state.current and len(state.queue) == 0:
             return await ctx.respond(embed=info_embed("คิวว่าง", "ไม่มีเพลงในคิวเลยค่ะ (´・ω・)"), ephemeral=True)
-            
+
+        if state.last_queue_message:
+            try:
+                await state.last_queue_message.edit(view=None)
+            except Exception:
+                pass
+            state.last_queue_message = None
+
         paginator = QueuePaginator(state, items_per_page=30)
         msg = await ctx.respond(embed=paginator.get_embed(), view=paginator)
         if isinstance(msg, discord.Interaction):
             msg = await msg.original_response()
         paginator.message = msg
+        state.last_queue_message = msg
 
     @music.command(name="volume", description="🔊 ปรับระดับเสียง (0-100)")
     async def volume(self, ctx: discord.ApplicationContext, level: discord.Option(int, min_value=0, max_value=100)):

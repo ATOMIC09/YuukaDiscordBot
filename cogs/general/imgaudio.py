@@ -73,15 +73,19 @@ class ImgAudioCog(commands.Cog):
                 # Download files using Pycord's internal session which uses the ThreadedResolver
                 await image_attachment.save(img_path)
                 await audio_attachment.save(aud_path)
-                            
+
+                # Discord's per-file limit depends on the destination guild's boost tier
+                # (as low as 10MB on non-boosted servers), not a flat 25MB.
+                upload_limit = ctx.guild.filesize_limit if ctx.guild else 10 * 1024 * 1024
+                safe_upload_limit = int(upload_limit * 0.97)
+
                 # Merge
-                used_encoder = await merge_image_audio(img_path, aud_path, out_path)
-                
+                used_encoder = await merge_image_audio(img_path, aud_path, out_path, safe_upload_limit)
+
                 if not hasattr(ctx.bot, "command_extras"):
                     ctx.bot.command_extras = {}
                 ctx.bot.command_extras[ctx.interaction.id] = {"Encoder": used_encoder}
-                
-                upload_limit = ctx.guild.filesize_limit if ctx.guild else 10 * 1024 * 1024
+
                 file_size = os.path.getsize(out_path)
                 size_mb = file_size / (1024 * 1024)
 

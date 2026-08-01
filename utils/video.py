@@ -109,6 +109,29 @@ def _calc_bitrates_kbps(duration_sec: float, target_bytes: int) -> tuple[int, in
 
     return int(video_kbps), int(audio_kbps)
 
+def _calc_audio_kbps_for_image_track(duration_sec: float, target_bytes: int, video_kbps: float = 0) -> int:
+    """
+    Budgets audio bitrate to fit target_bytes over duration_sec, after reserving
+    `video_kbps` (0 for a plain static image, since it costs almost nothing beyond
+    the first keyframe).
+    """
+    target_total_kbps = (target_bytes * 8 / 1000) * 0.92 / duration_sec
+    return int(max(24, target_total_kbps - video_kbps))
+
+def _calc_bitrates_for_gif_kbps(duration_sec: float, target_bytes: int) -> tuple[int, int]:
+    """
+    A GIF track has real per-frame motion (unlike a plain static image), so it needs its
+    own bitrate reservation to avoid runaway size on long/busy GIFs. Audio is capped at a
+    sane ceiling first (AAC doesn't need much more than this to sound good) and video gets
+    whatever's left, since video is the actual visual content here and was measured to be
+    bit-starved when audio was allowed to take the majority of the budget (SSIM 0.93 -> 0.98
+    just from reallocating, at the same total output size).
+    """
+    target_total_kbps = (target_bytes * 8 / 1000) * 0.92 / duration_sec
+    audio_kbps = max(64, min(128, target_total_kbps * 0.25))
+    video_kbps = max(150, target_total_kbps - audio_kbps)
+    return int(video_kbps), int(audio_kbps)
+
 async def _run_ffmpeg_with_fallback(cmd_prefix: list[str], encoders: list[list[str]], out_path: str) -> str:
     """
     Runs ffmpeg by trying a list of encoder arguments in order.
@@ -140,43 +163,84 @@ async def _run_ffmpeg_with_fallback(cmd_prefix: list[str], encoders: list[list[s
     logger.error(f"All FFmpeg encoders failed. Last error:\n{last_err}")
     raise RuntimeError("FFmpeg conversion failed with all encoders.")
 
-async def merge_image_audio(image_path: str, audio_path: str, out_path: str) -> str:
+async def merge_image_audio(image_path: str, audio_path: str, out_path: str, upload_limit: int = DISCORD_UPLOAD_LIMIT) -> str:
     """
     Merges a static image or GIF with an audio file into an MP4 video using FFmpeg.
+    Output length follows the audio, so a long (even if small) audio file can still
+    produce an oversized output if bitrate isn't bounded - bitrate is targeted from the
+    audio's duration to land under `upload_limit` regardless of length.
     Raises RuntimeError if FFmpeg fails.
     Returns the encoder used.
     """
     is_gif = image_path.lower().endswith('.gif')
-    
-    cmd_prefix = [
-        "ffmpeg", "-y"
-    ]
-    
-    if is_gif:
-        cmd_prefix.extend(["-ignore_loop", "0"])
-    else:
-        cmd_prefix.extend(["-loop", "1"])
-        
-    cmd_prefix.extend([
-        "-i", image_path,
-        "-i", audio_path,
-        "-map", "0:v:0",
-        "-map", "1:a:0",
-        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        "-pix_fmt", "yuv420p",
-        "-shortest",
-        "-movflags", "+faststart"
-    ])
-    
-    encoders = [
-        ["-c:v", "h264_nvenc", "-preset", "p2"],
-        ["-c:v", "h264_qsv", "-preset", "veryfast"],
-        ["-c:v", "libx264", "-tune", "stillimage"]
-    ]
-    
-    return await _run_ffmpeg_with_fallback(cmd_prefix, encoders, out_path)
+
+    duration = await _get_video_duration(audio_path)
+    if duration <= 0:
+        duration = _FALLBACK_DURATION_SEC
+
+    target_bytes = upload_limit
+    used_encoder = ""
+
+    # Up to 4 attempts: shrink the target and re-encode if it still overshoots the limit.
+    for attempt in range(4):
+        cmd_prefix = ["ffmpeg", "-y"]
+
+        if is_gif:
+            # A GIF actually changes frame-to-frame, so it gets its own bitrate reservation.
+            # libx264-only (not nvenc/qsv): measured nvenc overshooting its own -maxrate by
+            # ~36% at the same requested bitrate, which fed back into the retry loop as a
+            # worse-than-real overshoot and crushed quality further on the next attempt.
+            # libx264 landed almost exactly on the requested bitrate and scored higher SSIM
+            # for the same bits, so it's the more predictable and better-quality choice here -
+            # GPU speed isn't a meaningful factor for a short looping clip either way.
+            # Uses CRF (quality-adaptive) with -maxrate/-bufsize only as a ceiling, rather
+            # than forcing -b:v as a flat target: measured CRF+ceiling scoring a higher SSIM
+            # than an equivalent forced bitrate (0.946 vs 0.923), since it only spends up to
+            # the cap on content that's actually complex enough to need it instead of forcing
+            # every GIF - simple or busy - to consume the exact same bits.
+            video_kbps, audio_kbps = _calc_bitrates_for_gif_kbps(duration, target_bytes)
+            cmd_prefix.extend(["-ignore_loop", "0"])
+            encoders = [
+                ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-maxrate", f"{video_kbps}k", "-bufsize", f"{int(video_kbps * 2)}k"]
+            ]
+        else:
+            # A plain static image only costs real bits on its first keyframe - everything
+            # after should be near-free since the frame never changes. But nvenc/qsv still
+            # insert a full-quality keyframe every ~10s by default (their GOP default), and
+            # measured (not assumed) that this alone made a 3-minute clip balloon to ~27MB
+            # even at the lowest audio bitrate. h264_nvenc also doesn't respect a large -g /
+            # -no-scenecut the way libx264 does (it got *worse*, not better) - only libx264
+            # reliably collapses to near-zero video bitrate for unchanging content, so that's
+            # the only encoder used here; GPU speed isn't a meaningful factor for one frame.
+            audio_kbps = _calc_audio_kbps_for_image_track(duration, target_bytes)
+            cmd_prefix.extend(["-loop", "1"])
+            encoders = [
+                ["-c:v", "libx264", "-tune", "stillimage", "-g", "999999", "-x264-params", "scenecut=0"]
+            ]
+
+        cmd_prefix.extend([
+            "-i", image_path,
+            "-i", audio_path,
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+            "-c:a", "aac",
+            "-b:a", f"{audio_kbps}k",
+            "-pix_fmt", "yuv420p",
+            "-shortest",
+            "-movflags", "+faststart"
+        ])
+
+        used_encoder = await _run_ffmpeg_with_fallback(cmd_prefix, encoders, out_path)
+        out_size = os.path.getsize(out_path)
+
+        if out_size <= upload_limit:
+            break
+
+        logger.debug(f"merge_image_audio output ({out_size} bytes) exceeded limit ({upload_limit} bytes) on attempt {attempt + 1}, retrying with a lower target.")
+        target_bytes = int(target_bytes * (upload_limit / out_size) * 0.90)
+
+    return used_encoder
 
 async def make_deepfry_video(video_bytes: bytes, upload_limit: int = DISCORD_UPLOAD_LIMIT) -> tuple[io.BytesIO, str, tuple[int, int], tuple[int, int], str]:
     """

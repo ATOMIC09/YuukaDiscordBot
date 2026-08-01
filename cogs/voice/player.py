@@ -197,6 +197,31 @@ class PlayerControls(discord.ui.View):
 
 import math
 
+class JumpToPageModal(discord.ui.Modal):
+    def __init__(self, paginator: "QueuePaginator"):
+        super().__init__(title="ไปหน้าไหนดีคะ?")
+        self.paginator = paginator
+
+        self.page_input = discord.ui.InputText(
+            label=f"หมายเลขหน้า (1-{paginator.total_pages})",
+            placeholder="พิมพ์หมายเลขหน้าที่ต้องการค่ะ",
+            style=discord.InputTextStyle.short,
+            required=True,
+        )
+        self.add_item(self.page_input)
+
+    async def callback(self, interaction: discord.Interaction):
+        raw = self.page_input.value.strip()
+        if not raw.isdigit() or not (1 <= int(raw) <= self.paginator.total_pages):
+            return await interaction.response.send_message(
+                embed=error_embed("เลขหน้าไม่ถูกต้องค่ะ", f"กรุณาใส่เลขหน้าระหว่าง 1-{self.paginator.total_pages} นะคะ (´・ω・)"),
+                ephemeral=True
+            )
+
+        self.paginator.current_page = int(raw)
+        self.paginator.update_buttons()
+        await interaction.response.edit_message(embed=self.paginator.get_embed(), view=self.paginator)
+
 class QueuePaginator(discord.ui.View):
     def __init__(self, state: "AudioState", items_per_page: int = 30):
         super().__init__(timeout=300)
@@ -243,18 +268,23 @@ class QueuePaginator(discord.ui.View):
             
         self.prev_button.disabled = self.current_page <= 1
         self.next_button.disabled = self.current_page >= self.total_pages
-        
+        self.jump_button.disabled = self.total_pages <= 1
+
     @discord.ui.button(label="◀️", style=discord.ButtonStyle.primary)
     async def prev_button(self, button: discord.ui.Button, interaction: discord.Interaction):
         self.current_page -= 1
         self.update_buttons()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
-        
+
     @discord.ui.button(label="▶️", style=discord.ButtonStyle.primary)
     async def next_button(self, button: discord.ui.Button, interaction: discord.Interaction):
         self.current_page += 1
         self.update_buttons()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    @discord.ui.button(label="🔢", style=discord.ButtonStyle.secondary)
+    async def jump_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await interaction.response.send_modal(JumpToPageModal(self))
 
     @discord.ui.button(label="🔄", style=discord.ButtonStyle.secondary)
     async def reload_button(self, button: discord.ui.Button, interaction: discord.Interaction):

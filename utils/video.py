@@ -10,10 +10,8 @@ from bot.logger import logger
 DISCORD_UPLOAD_LIMIT = 10 * 1024 * 1024
 _MIN_VIDEO_BITRATE_KBPS = 100
 _MIN_AUDIO_BITRATE_KBPS = 32
-# Used only if every duration-detection strategy fails. Deliberately pessimistic (long):
-# underestimating duration makes the bitrate target too high and overshoots the size limit,
-# while overestimating it just compresses harder than strictly necessary. Overshooting is
-# the failure mode that actually breaks the command, so we bias toward the safe side.
+# Used only if duration detection fails entirely. Biased long: underestimating duration
+# causes bitrate overshoot (the actual failure mode); overestimating just over-compresses.
 _FALLBACK_DURATION_SEC = 600.0
 
 async def _probe_duration(path: str, entries: str, select_stream: str | None = None) -> float:
@@ -60,12 +58,9 @@ async def _get_video_resolution(path: str) -> tuple[int, int]:
 
 async def _get_video_duration(path: str) -> float:
     """
-    Returns the duration of a video file in seconds, trying several strategies.
-    Some containers (fragmented/streamed mp4, certain mobile recordings re-muxed by
-    Discord) don't populate the top-level format duration tag, which previously caused
-    duration to silently read as 0 and fall back to an optimistic guess - underestimating
-    a video's real length makes the bitrate target too high and the output overshoots the
-    upload limit. Returns 0.0 only if every strategy below fails.
+    Returns the duration of a video file in seconds, trying several strategies, since some
+    containers (fragmented/streamed mp4, certain mobile recordings) don't populate the
+    top-level format duration tag. Returns 0.0 only if every strategy below fails.
     """
     # 1) Container-level duration - works for most well-formed files.
     duration = await _probe_duration(path, "format=duration")
@@ -122,10 +117,8 @@ def _calc_bitrates_for_gif_kbps(duration_sec: float, target_bytes: int) -> tuple
     """
     A GIF track has real per-frame motion (unlike a plain static image), so it needs its
     own bitrate reservation to avoid runaway size on long/busy GIFs. Audio is capped at a
-    sane ceiling first (AAC doesn't need much more than this to sound good) and video gets
-    whatever's left, since video is the actual visual content here and was measured to be
-    bit-starved when audio was allowed to take the majority of the budget (SSIM 0.93 -> 0.98
-    just from reallocating, at the same total output size).
+    sane ceiling first (AAC doesn't need much more than this) and video gets whatever's
+    left, since video is the actual visual content here.
     """
     target_total_kbps = (target_bytes * 8 / 1000) * 0.92 / duration_sec
     audio_kbps = max(64, min(128, target_total_kbps * 0.25))
@@ -134,8 +127,7 @@ def _calc_bitrates_for_gif_kbps(duration_sec: float, target_bytes: int) -> tuple
 
 async def _run_ffmpeg_with_fallback(cmd_prefix: list[str], encoders: list[list[str]], out_path: str) -> str:
     """
-    Runs ffmpeg by trying a list of encoder arguments in order.
-    Useful for falling back from hardware encoding to software encoding.
+    Runs ffmpeg by trying a list of encoder arguments in order until one succeeds.
     Returns the name of the successful encoder.
     """
     last_err = ""
@@ -187,31 +179,21 @@ async def merge_image_audio(image_path: str, audio_path: str, out_path: str, upl
 
         if is_gif:
             # A GIF actually changes frame-to-frame, so it gets its own bitrate reservation.
-            # libx264-only (not nvenc/qsv): measured nvenc overshooting its own -maxrate by
-            # ~36% at the same requested bitrate, which fed back into the retry loop as a
-            # worse-than-real overshoot and crushed quality further on the next attempt.
-            # libx264 landed almost exactly on the requested bitrate and scored higher SSIM
-            # for the same bits, so it's the more predictable and better-quality choice here -
-            # GPU speed isn't a meaningful factor for a short looping clip either way.
-            # Uses CRF (quality-adaptive) with -maxrate/-bufsize only as a ceiling, rather
-            # than forcing -b:v as a flat target: measured CRF+ceiling scoring a higher SSIM
-            # than an equivalent forced bitrate (0.946 vs 0.923), since it only spends up to
-            # the cap on content that's actually complex enough to need it instead of forcing
-            # every GIF - simple or busy - to consume the exact same bits.
+            # libx264 only (not nvenc/qsv): nvenc overshoots its own -maxrate on this kind of
+            # content, feeding a worse-than-real overshoot back into the retry loop below.
+            # CRF with -maxrate/-bufsize as a ceiling (rather than forcing -b:v as a flat
+            # target) lets simple GIFs use fewer bits while still capping busy ones.
             video_kbps, audio_kbps = _calc_bitrates_for_gif_kbps(duration, target_bytes)
             cmd_prefix.extend(["-ignore_loop", "0"])
             encoders = [
                 ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-maxrate", f"{video_kbps}k", "-bufsize", f"{int(video_kbps * 2)}k"]
             ]
         else:
-            # A plain static image only costs real bits on its first keyframe - everything
-            # after should be near-free since the frame never changes. But nvenc/qsv still
-            # insert a full-quality keyframe every ~10s by default (their GOP default), and
-            # measured (not assumed) that this alone made a 3-minute clip balloon to ~27MB
-            # even at the lowest audio bitrate. h264_nvenc also doesn't respect a large -g /
-            # -no-scenecut the way libx264 does (it got *worse*, not better) - only libx264
-            # reliably collapses to near-zero video bitrate for unchanging content, so that's
-            # the only encoder used here; GPU speed isn't a meaningful factor for one frame.
+            # A static image only costs real bits on its first keyframe - everything after
+            # should be near-free since the frame never changes. nvenc/qsv still insert a
+            # full-quality keyframe every ~10s by default regardless, so libx264 (with a
+            # huge GOP below) is the only encoder used here - it actually collapses to
+            # near-zero video bitrate for unchanging content.
             audio_kbps = _calc_audio_kbps_for_image_track(duration, target_bytes)
             cmd_prefix.extend(["-loop", "1"])
             encoders = [
@@ -290,9 +272,11 @@ async def make_deepfry_video(video_bytes: bytes, upload_limit: int = DISCORD_UPL
                 "-movflags", "+faststart"
             ]
 
+            # libx264 only - not nvenc/qsv: the hard black/white thresholding above produces
+            # such high-entropy, noise-like frames that nvenc hits a hard quantizer ceiling
+            # and plateaus around ~900kbps-1Mbps regardless of the requested -b:v. libx264
+            # tracks the requested bitrate properly on the same content.
             encoders = [
-                ["-c:v", "h264_nvenc", "-preset", "p2", "-b:v", f"{video_kbps}k", "-maxrate", f"{maxrate_kbps}k", "-bufsize", f"{bufsize_kbps}k"],
-                ["-c:v", "h264_qsv", "-preset", "veryfast", "-b:v", f"{video_kbps}k", "-maxrate", f"{maxrate_kbps}k", "-bufsize", f"{bufsize_kbps}k"],
                 ["-c:v", "libx264", "-preset", "veryfast", "-b:v", f"{video_kbps}k", "-maxrate", f"{maxrate_kbps}k", "-bufsize", f"{bufsize_kbps}k"]
             ]
 

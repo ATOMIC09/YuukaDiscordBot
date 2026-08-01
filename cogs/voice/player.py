@@ -1,6 +1,8 @@
 import asyncio
 import collections
 import dataclasses
+import queue
+import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import discord
@@ -39,6 +41,70 @@ ffmpeg_options = {
 }
 
 ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
+
+FRAME_MS = 20
+BUFFER_SECONDS = 5.0
+PREFILL_SECONDS = 1.0
+
+class BufferedAudioSource(discord.AudioSource):
+    """
+    Wraps a PCM AudioSource with a background thread that reads ahead into an
+    in-memory queue, so a momentary network/decode stall doesn't turn into an
+    audible gap - Discord's playback thread drains the queue instead of racing
+    ffmpeg's pipe directly.
+    """
+    def __init__(self, source: discord.AudioSource, buffer_seconds: float = BUFFER_SECONDS, prefill_seconds: float = PREFILL_SECONDS):
+        self._source = source
+        self._buffer_chunks = max(1, int(buffer_seconds * 1000 / FRAME_MS))
+        self._prefill_chunks = max(1, int(prefill_seconds * 1000 / FRAME_MS))
+        self._queue: queue.Queue[bytes] = queue.Queue(maxsize=self._buffer_chunks)
+        self._ready = threading.Event()
+        self._finished = threading.Event()
+        self._stopped = threading.Event()
+        self._thread = threading.Thread(target=self._buffer_loop, daemon=True)
+        self._thread.start()
+
+    def _buffer_loop(self):
+        try:
+            filled = 0
+            while not self._stopped.is_set():
+                data = self._source.read()
+                if not data:
+                    break
+                while not self._stopped.is_set():
+                    try:
+                        self._queue.put(data, timeout=0.2)
+                        break
+                    except queue.Full:
+                        continue
+                if not self._ready.is_set():
+                    filled += 1
+                    if filled >= self._prefill_chunks:
+                        self._ready.set()
+        finally:
+            self._finished.set()
+            self._ready.set()
+
+    def wait_ready(self, timeout: float = 3.0):
+        self._ready.wait(timeout=timeout)
+
+    def read(self) -> bytes:
+        while True:
+            try:
+                return self._queue.get(timeout=0.5)
+            except queue.Empty:
+                if self._finished.is_set() and self._queue.empty():
+                    return b''
+
+    def is_opus(self) -> bool:
+        return False
+
+    def cleanup(self):
+        self._stopped.set()
+        try:
+            self._source.cleanup()
+        except Exception:
+            pass
 
 def format_duration(seconds: int | None) -> str:
     if not seconds or seconds <= 0:
@@ -552,12 +618,12 @@ class PlayerCog(commands.Cog):
 
         try:
             audio_source = discord.FFmpegPCMAudio(track.stream_url, **ffmpeg_options)
-            volume_source = discord.PCMVolumeTransformer(audio_source, volume=state.volume)
+            buffered_source = BufferedAudioSource(audio_source)
+            volume_source = discord.PCMVolumeTransformer(buffered_source, volume=state.volume)
 
-            # Let ffmpeg's pipe fill a bit before Discord starts pulling frames on its
-            # strict 20ms clock, otherwise the first second or so stutters while the
-            # stream connection/decode is still ramping up.
-            await asyncio.sleep(0.5)
+            # Wait for the buffer to actually pre-fill (rather than a blind fixed sleep)
+            # before Discord starts pulling frames on its strict 20ms clock.
+            await asyncio.get_event_loop().run_in_executor(self._executor, buffered_source.wait_ready)
 
             def after_playing(e):
                 if e:

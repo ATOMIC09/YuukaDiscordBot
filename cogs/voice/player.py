@@ -816,7 +816,9 @@ class PlayerCog(commands.Cog):
                 except Exception:
                     pass
             state.voice_client = await channel.connect()
-            
+        else:
+            state.voice_client = ctx.guild.voice_client
+
         if not state.current or not state.voice_client.is_playing():
             self.bot.loop.create_task(self._play_next_async(ctx.guild.id, auto_send=True))
         else:
@@ -929,6 +931,8 @@ class PlayerCog(commands.Cog):
                 except Exception:
                     pass
             state.voice_client = await channel.connect()
+        else:
+            state.voice_client = ctx.guild.voice_client
 
         if not state.current or not state.voice_client.is_playing():
             # if playing is stopped, start it

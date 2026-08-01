@@ -8,7 +8,7 @@ How it works
 2. `voice_client.start_recording(sink, callback)` begins capturing audio.
 3. When `voice_client.stop_recording()` is called, the callback fires.
 4. sink.audio_data contains raw PCM BytesIO per user (keyed by user_id int).
-   We wrap each one in a proper WAV container ourselves.
+   We encode each one to Ogg Opus via FFmpeg ourselves.
 5. The audio files are attached to a message and sent back to the channel.
 
 PCM format from Opus decoder (pycord hardcoded):
@@ -23,8 +23,8 @@ installed. Voice receive works correctly out of the box.
 
 Slash Commands
 --------------
-  /listen start  — Join voice channel and start recording
-  /listen stop   — Stop recording and send audio files to channel
+  /record start  — Join voice channel and start recording
+  /record stop   — Stop recording and send audio files to channel
 """
 
 from __future__ import annotations
@@ -33,7 +33,6 @@ import asyncio
 import io
 import pathlib
 import time
-import wave
 
 import discord
 from discord.ext import commands
@@ -44,26 +43,43 @@ from utils.errors import UserError, UserWarning
 
 # Opus decoder output constants (pycord hardcoded values)
 _OPUS_CHANNELS = 2
-_OPUS_SAMPLE_WIDTH = 2      # bytes per sample per channel (16-bit)
 _OPUS_SAMPLE_RATE = 48_000  # Hz
 
 
-def _pcm_to_wav(pcm_bytes: bytes) -> io.BytesIO:
+async def _pcm_to_opus(raw_pcm: bytes, bitrate: str = "32k") -> bytes:
     """
-    Wrap raw PCM bytes in a proper WAV container.
+    Encode raw 48kHz stereo 16-bit PCM straight to Ogg Opus bytes via FFmpeg,
+    entirely in memory (no intermediate file).
 
     WaveSink.format_audio() is broken in pycord 2.8 (references vc.recording
-    and vc.decoder which don't exist in the new VoiceClient). We do it manually
-    using the known Opus decoder output format.
+    and vc.decoder which don't exist in the new VoiceClient), so we feed the
+    raw PCM to FFmpeg ourselves using the known Opus decoder output format.
+    Per-user PCM has no real stereo separation (both channels carry the same
+    speaker), so we downmix to mono on output — free size savings, no quality
+    loss. Combined with a voice-tuned bitrate and VBR collapsing silence,
+    this keeps recordings well clear of Discord's upload limit.
     """
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wf:
-        wf.setnchannels(_OPUS_CHANNELS)
-        wf.setsampwidth(_OPUS_SAMPLE_WIDTH)
-        wf.setframerate(_OPUS_SAMPLE_RATE)
-        wf.writeframes(pcm_bytes)
-    buf.seek(0)
-    return buf
+    process = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-y",
+        "-f", "s16le",
+        "-ar", str(_OPUS_SAMPLE_RATE),
+        "-ac", str(_OPUS_CHANNELS),
+        "-i", "pipe:0",
+        "-c:a", "libopus",
+        "-application", "voip",
+        "-ac", "1",
+        "-b:a", bitrate,
+        "-vbr", "on",
+        "-f", "ogg",
+        "pipe:1",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate(input=raw_pcm)
+    if process.returncode != 0:
+        raise RuntimeError(stderr.decode("utf-8", errors="ignore"))
+    return stdout
 
 
 class ListenerCog(commands.Cog, name="Voice Listener"):
@@ -113,7 +129,9 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
             return
 
         files_to_send: list[discord.File] = []
+        pending_saves: list[tuple[str, bytes]] = []  # fallback disk writes if the send below fails
         summary_lines: list[str] = []
+        upload_limit = channel.guild.filesize_limit if channel.guild else 10 * 1024 * 1024
 
         for user_id, audio_data in active_sink.audio_data.items():
             user = self.bot.get_user(user_id)
@@ -131,37 +149,39 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
                 summary_lines.append(f"🎙️ **{display}**: *(audio too short)*")
                 continue
 
-            # Wrap raw PCM in a proper WAV container
-            wav_buf = _pcm_to_wav(raw_pcm)
-            
-            # Save the WAV file locally in case it's too large to send
-            save_dir = pathlib.Path("assets/audio/recordings")
-            save_dir.mkdir(parents=True, exist_ok=True)
-            timestamp = int(time.time())
-            filepath = save_dir / f"recorded_{user_id}_{timestamp}.wav"
-            
-            with open(filepath, "wb") as f:
-                f.write(wav_buf.getvalue())
-            
-            logger.info(f"Saved audio locally to {filepath}")
-            
-            # Create a discord.File object to send
-            filename = f"recorded_{user_id}.wav"
-            files_to_send.append(discord.File(wav_buf, filename=filename))
-            
-            summary_lines.append(f"🎙️ **{display}**: Audio saved locally as `{filepath.name}`.")
+            try:
+                opus_bytes = await _pcm_to_opus(raw_pcm)
+                if len(opus_bytes) > upload_limit:
+                    logger.debug(f"{display}'s recording exceeded the upload limit at 32k, re-encoding at 16k.")
+                    opus_bytes = await _pcm_to_opus(raw_pcm, bitrate="16k")
+            except RuntimeError as exc:
+                logger.error(f"Opus encoding failed for {display}: {exc}")
+                summary_lines.append(f"🎙️ **{display}**: *(encoding failed)*")
+                continue
+
+            logger.info(f"Encoded audio for {display}: {len(opus_bytes) / 1024:.1f} KB")
+
+            filename = f"recorded_{user_id}_{int(time.time())}.ogg"
+            files_to_send.append(discord.File(io.BytesIO(opus_bytes), filename=filename))
+            pending_saves.append((filename, opus_bytes))
+
+            summary_lines.append(f"🎙️ **{display}**: `{filename}`")
 
         # Post summary embed to Discord with the audio files attached
         embed = success_embed(
             "บันทึกเสียงเรียบร้อยค่ะ",
             f"เย้! หนูรวบรวมเสียงของ **{len(active_sink.audio_data)}** คนมาให้แล้วน้า 🎵\n\n" + "\n".join(summary_lines),
         )
-        
+
         try:
             await channel.send(embed=embed, files=files_to_send)
             logger.info(f"Audio sent for guild {guild_id}")
         except discord.HTTPException as exc:
             logger.error(f"Failed to send audio (likely due to file size): {exc}")
+            save_dir = pathlib.Path("assets/audio/recordings")
+            save_dir.mkdir(parents=True, exist_ok=True)
+            for filename, opus_bytes in pending_saves:
+                (save_dir / filename).write_bytes(opus_bytes)
             error_msg_embed = warning_embed(
                 "ไฟล์ใหญ่เกินไปค่ะ",
                 "ไฟล์เสียงใหญ่เกินไป หนูส่งเข้า Discord ไม่ไหวค่ะ (｡•́︿•̀｡)\n\nแต่ไม่ต้องห่วงนะคะ หนูเซฟเก็บไว้ที่ `assets/audio/recordings/` ให้แล้วน้า"
@@ -172,10 +192,10 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
     # Slash commands
     # ------------------------------------------------------------------
 
-    listen = discord.SlashCommandGroup("listen", "Voice listening commands")
+    record = discord.SlashCommandGroup("record", "🎧 คำสั่งบันทึกเสียงในห้องเสียง")
 
-    @listen.command(name="start", description="Join your voice channel and start recording audio")
-    async def listen_start(self, ctx: discord.ApplicationContext) -> None:
+    @record.command(name="start", description="🔴 เข้าห้องเสียงและเริ่มบันทึกเสียง")
+    async def record_start(self, ctx: discord.ApplicationContext) -> None:
         """Start recording audio from the invoker's voice channel."""
         await ctx.defer()
 
@@ -190,7 +210,7 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
         if guild_id in self._active_sinks:
             raise UserWarning(
                 "หนูทำงานอยู่นะคะ",
-                "หนูกำลังอัดเสียงอยู่ที่ห้องอื่นนะคะ ต้องให้หนูหยุดอัดก่อนน้า ลองใช้คำสั่ง `/listen stop` ดูนะคะ (｡>﹏<)",
+                "หนูกำลังอัดเสียงอยู่ที่ห้องอื่นนะคะ ต้องให้หนูหยุดอัดก่อนน้า ลองใช้คำสั่ง `/record stop` ดูนะคะ (｡>﹏<)",
             )
 
         voice_channel = ctx.author.voice.channel
@@ -237,11 +257,11 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
         await ctx.respond(embed=info_embed(
             "🔴 เริ่มอัดเสียงแล้วค่ะ",
             f"หนูเข้ามาแล้วค่ะ! ตอนนี้กำลังตั้งใจฟังทุกคนอยู่ในห้อง **{voice_channel.name}** น้า 🎧\n\n"
-            "ถ้าคุยกันเสร็จแล้ว อย่าลืมใช้คำสั่ง `/listen stop` นะคะ!",
+            "ถ้าคุยกันเสร็จแล้ว อย่าลืมใช้คำสั่ง `/record stop` นะคะ!",
         ))
 
-    @listen.command(name="stop", description="Stop recording and transcribe captured audio")
-    async def listen_stop(self, ctx: discord.ApplicationContext) -> None:
+    @record.command(name="stop", description="⏹️ หยุดบันทึกเสียงและส่งไฟล์เสียงที่บันทึกไว้")
+    async def record_stop(self, ctx: discord.ApplicationContext) -> None:
         """Stop recording and trigger the transcription pipeline."""
         await ctx.defer()
 
@@ -251,7 +271,7 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
         if guild_id not in self._active_sinks or voice_client is None:
             raise UserWarning(
                 "ยังไม่ได้อัดเสียงค่ะ",
-                "เอ๊ะ... หนูยังไม่ได้อัดเสียงเลยนะคะ ถ้าอยากให้หนูอัด ใช้คำสั่ง `/listen start` ก่อนน้า (・_・;)",
+                "เอ๊ะ... หนูยังไม่ได้อัดเสียงเลยนะคะ ถ้าอยากให้หนูอัด ใช้คำสั่ง `/record start` ก่อนน้า (・_・;)",
             )
 
         # stop_recording() raises ClientException if the recording already

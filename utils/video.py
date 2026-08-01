@@ -35,6 +35,29 @@ async def _probe_duration(path: str, entries: str, select_stream: str | None = N
         pass
     return 0.0
 
+async def _get_video_resolution(path: str) -> tuple[int, int]:
+    """
+    Returns (width, height) of a video's first video stream, or (0, 0) if it can't be read.
+    """
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "csv=s=x:p=0",
+        path
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    stdout, _ = await process.communicate()
+    try:
+        width_str, height_str = stdout.decode().strip().split("x")
+        return int(width_str), int(height_str)
+    except (ValueError, IndexError):
+        return (0, 0)
+
 async def _get_video_duration(path: str) -> float:
     """
     Returns the duration of a video file in seconds, trying several strategies.
@@ -165,6 +188,9 @@ async def make_deepfry_video(video_bytes: bytes, upload_limit: int = DISCORD_UPL
     `upload_limit` should be the caller's actual destination limit (e.g. the target
     guild's boost-tier filesize_limit, which can be as low as 10MB) rather than a flat
     constant, since sending a file bigger than that limit is rejected by Discord outright.
+    Returns (io.BytesIO of the mp4, extension, old_resolution, new_resolution, encoder) to
+    match the image API's signature; old/new resolution are identical since this filter
+    doesn't rescale the frame.
     """
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as in_f:
         in_f.write(video_bytes)
@@ -215,6 +241,10 @@ async def make_deepfry_video(video_bytes: bytes, upload_limit: int = DISCORD_UPL
             logger.debug(f"Deepfry output ({out_size} bytes) exceeded limit ({upload_limit} bytes) on attempt {attempt + 1}, retrying with a lower target.")
             target_bytes = int(target_bytes * (upload_limit / out_size) * 0.90)
 
+        # The deepfry filter only thresholds RGB values, it never rescales - so resolution
+        # is unchanged from source to output.
+        resolution = await _get_video_resolution(out_path)
+
         with open(out_path, "rb") as out_f:
             out_bytes = out_f.read()
     finally:
@@ -224,4 +254,4 @@ async def make_deepfry_video(video_bytes: bytes, upload_limit: int = DISCORD_UPL
             os.remove(out_path)
 
     output_io = io.BytesIO(out_bytes)
-    return output_io, "mp4", (0, 0), (0, 0), used_encoder
+    return output_io, "mp4", resolution, resolution, used_encoder

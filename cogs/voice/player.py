@@ -110,13 +110,13 @@ class PlayerControls(discord.ui.View):
             self.pause_resume.style = discord.ButtonStyle.success
             
         if self.state.loop_mode == "off":
-            self.loop.emoji = "➡️"
+            self.loop.emoji = "🔁"
             self.loop.style = discord.ButtonStyle.secondary
-        elif self.state.loop_mode == "track":
-            self.loop.emoji = "🔂"
-            self.loop.style = discord.ButtonStyle.primary
         elif self.state.loop_mode == "queue":
             self.loop.emoji = "🔁"
+            self.loop.style = discord.ButtonStyle.primary
+        elif self.state.loop_mode == "track":
+            self.loop.emoji = "🔂"
             self.loop.style = discord.ButtonStyle.success
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -152,7 +152,7 @@ class PlayerControls(discord.ui.View):
         self.state.voice_client.stop()
         await interaction.response.defer()
         
-    @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="➡️")
+    @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="🔁")
     async def loop(self, button: discord.ui.Button, interaction: discord.Interaction):
         if self.state.loop_mode == "off":
             self.state.loop_mode = "queue"

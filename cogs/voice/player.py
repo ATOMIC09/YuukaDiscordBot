@@ -1,8 +1,8 @@
 import asyncio
+import array
 import collections
 import dataclasses
 import queue
-import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
@@ -48,6 +48,7 @@ PCM_FRAME_BYTES = 3840  # 20 ms of 48 kHz, 16-bit, stereo PCM
 BUFFER_SECONDS = 5.0
 PREFILL_SECONDS = 1.0
 CROSSFADE_SECONDS = 7.0
+CROSSFADE_BUFFER_SECONDS = 2.0
 
 class BufferedAudioSource(discord.AudioSource):
     """
@@ -110,54 +111,111 @@ class BufferedAudioSource(discord.AudioSource):
             pass
 
 
-class CrossfadeAudioSource(discord.FFmpegAudio):
-    """An FFmpeg source that overlaps the end of one track with the next."""
+class SeamlessCrossfadeSource(discord.AudioSource):
+    """A persistent Discord source that can mix in a preloaded PCM stream."""
 
-    def __init__(
+    def __init__(self, current: BufferedAudioSource):
+        self._current = current
+        self._next: BufferedAudioSource | None = None
+        self._fade_frames = 0
+        self._fade_frame = 0
+        self._frames_until_fade = 0
+        self._on_fade_started = None
+        self._lock = threading.Lock()
+
+    def schedule_crossfade(
         self,
-        first_url: str,
-        next_url: str,
+        next_source: BufferedAudioSource,
         duration: float,
-        first_seek_seconds: float = 0.0,
+        frames_until_fade: int,
+        on_fade_started,
     ):
-        reconnect_options = [
-            "-reconnect", "1",
-            "-reconnect_streamed", "1",
-            "-reconnect_delay_max", "5",
-            # Crossfade needs both audio streams to be detected reliably.
-            "-analyzeduration", "1M",
-            "-probesize", "1M",
-        ]
-        filter_complex = (
-            "[0:a]aformat=sample_rates=48000:channel_layouts=stereo[first];"
-            "[1:a]aformat=sample_rates=48000:channel_layouts=stereo[next];"
-            f"[first][next]acrossfade=d={duration:.3f}:c1=tri:c2=tri[out]"
-        )
-        first_input = [*reconnect_options]
-        if first_seek_seconds > 0:
-            first_input.extend(["-ss", f"{first_seek_seconds:.3f}"])
-        first_input.extend(["-i", first_url])
+        with self._lock:
+            self._next = next_source
+            self._fade_frames = max(1, round(duration * 1000 / FRAME_MS))
+            self._fade_frame = 0
+            self._frames_until_fade = max(0, frames_until_fade)
+            self._on_fade_started = on_fade_started
 
-        args = [
-            *first_input,
-            *reconnect_options, "-i", next_url,
-            "-filter_complex", filter_complex,
-            "-map", "[out]",
-            "-f", "s16le",
-            "-ar", "48000",
-            "-ac", "2",
-            "-loglevel", "warning",
-            "-blocksize", str(self.BLOCKSIZE),
-            "pipe:1",
-        ]
-        super().__init__(None, executable="ffmpeg", args=args, stdin=subprocess.DEVNULL)
+    def cancel_scheduled_crossfade(self):
+        with self._lock:
+            if self._fade_frame:
+                return None
+            next_source = self._next
+            self._next = None
+            self._on_fade_started = None
+            return next_source
+
+    def has_pending_crossfade(self) -> bool:
+        with self._lock:
+            return self._next is not None
+
+    @staticmethod
+    def _mix_pcm(current: bytes, next_frame: bytes, progress: float) -> bytes:
+        current_samples = array.array("h")
+        current_samples.frombytes(current)
+        next_samples = array.array("h")
+        next_samples.frombytes(next_frame)
+        current_gain = 1.0 - progress
+        for index, next_sample in enumerate(next_samples):
+            sample = round(current_samples[index] * current_gain + next_sample * progress)
+            current_samples[index] = max(-32768, min(32767, sample))
+        return current_samples.tobytes()
 
     def read(self) -> bytes:
-        data = self._stdout.read(PCM_FRAME_BYTES)
-        return data if len(data) == PCM_FRAME_BYTES else b""
+        current = self._current.read()
+        callback = None
+        with self._lock:
+            next_source = self._next
+            fade_frame = self._fade_frame
+            fade_frames = self._fade_frames
+
+        if not next_source:
+            return current
+
+        with self._lock:
+            if self._frames_until_fade > 0:
+                self._frames_until_fade -= 1
+                return current
+            if self._fade_frame == 0 and self._on_fade_started:
+                callback = self._on_fade_started
+                self._on_fade_started = None
+
+        if callback:
+            callback()
+
+        next_frame = next_source.read()
+        if not current:
+            with self._lock:
+                self._current = next_source
+                self._next = None
+            return next_frame
+        if not next_frame:
+            return current
+
+        progress = min(1.0, fade_frame / fade_frames)
+        mixed = self._mix_pcm(current, next_frame, progress)
+        with self._lock:
+            self._fade_frame += 1
+            if self._fade_frame >= self._fade_frames:
+                old_current = self._current
+                self._current = next_source
+                self._next = None
+                self._on_fade_started = None
+                old_current.cleanup()
+        return mixed
 
     def is_opus(self) -> bool:
         return False
+
+    def cleanup(self):
+        with self._lock:
+            sources = (self._current, self._next)
+            self._next = None
+            self._on_fade_started = None
+        for source in sources:
+            if source:
+                source.cleanup()
 
 def format_duration(seconds: int | None) -> str:
     if not seconds or seconds <= 0:
@@ -213,9 +271,9 @@ class AudioState:
         self.loop_mode: str = "off"  # "off", "track", "queue"
         self.crossfade_enabled: bool = False
         self.crossfade_next: Track | None = None
+        self.crossfade_audio_source: BufferedAudioSource | None = None
+        self.active_audio_source: SeamlessCrossfadeSource | None = None
         self.crossfade_task: asyncio.Task | None = None
-        self.restart_current_for_crossfade: bool = False
-        self.crossfade_restart_position: float = 0.0
         self.playback_started_at: float | None = None
         self.playback_paused_at: float | None = None
         self.playback_offset_seconds: float = 0.0
@@ -323,11 +381,11 @@ class PlayerControls(discord.ui.View):
     async def crossfade(self, button: discord.ui.Button, interaction: discord.Interaction):
         self.state.crossfade_enabled = not self.state.crossfade_enabled
         if not self.state.crossfade_enabled:
-            self.state.restart_current_for_crossfade = False
+            self.cog._cancel_prepared_crossfade(self.state)
         if self.state.crossfade_enabled:
             logger.info(
                 f"[Crossfade] guild {self.state.guild_id}: enabled via player button; "
-                "repreparing the active track when a next track is queued"
+                "preparing the queued next track for seamless mixing"
             )
         else:
             logger.info(
@@ -498,8 +556,22 @@ class PlayerCog(commands.Cog):
             state.crossfade_task.cancel()
         state.crossfade_task = None
         state.crossfade_next = None
-        state.restart_current_for_crossfade = False
-        state.crossfade_restart_position = 0.0
+        scheduled_source = (
+            state.active_audio_source.cancel_scheduled_crossfade()
+            if state.active_audio_source
+            else None
+        )
+        if state.crossfade_audio_source:
+            state.crossfade_audio_source.cleanup()
+        elif scheduled_source:
+            scheduled_source.cleanup()
+        state.crossfade_audio_source = None
+
+    def _cancel_prepared_crossfade(self, state: AudioState):
+        pending = state.crossfade_next
+        self._clear_crossfade(state)
+        if pending:
+            state.queue.appendleft(pending)
         
     def _build_player_embed(self, track: Track, state: AudioState) -> discord.Embed:
         embed = discord.Embed(
@@ -703,14 +775,15 @@ class PlayerCog(commands.Cog):
             state.playback_paused_at = None
 
     async def _prepare_current_crossfade(self, state: AudioState):
-        """Rebuild an already-playing source so its queued successor can overlap."""
+        """Preload the queued successor without replacing the active source."""
         if (
             not state.crossfade_enabled
             or not state.current
             or not state.voice_client
             or not state.voice_client.is_playing()
             or state.crossfade_next
-            or state.restart_current_for_crossfade
+            or not state.active_audio_source
+            or state.active_audio_source.has_pending_crossfade()
             or not state.queue
             or state.current.duration <= 0
         ):
@@ -736,7 +809,8 @@ class PlayerCog(commands.Cog):
                 or not state.voice_client
                 or not state.voice_client.is_playing()
                 or state.crossfade_next
-                or state.restart_current_for_crossfade
+                or not state.active_audio_source
+                or state.active_audio_source.has_pending_crossfade()
                 or not state.queue
                 or state.queue[0] is not candidate
             ):
@@ -756,13 +830,47 @@ class PlayerCog(commands.Cog):
                 )
                 return
 
-            state.restart_current_for_crossfade = True
-            state.crossfade_restart_position = position
-            logger.info(
-                f"[Crossfade] guild {state.guild_id}: preload complete; restarting "
-                f"'{current_track.title}' at {position:.1f}s for a {duration:.1f}s crossfade"
+            next_audio = BufferedAudioSource(
+                discord.FFmpegPCMAudio(candidate.stream_url, **ffmpeg_options),
+                buffer_seconds=CROSSFADE_BUFFER_SECONDS,
             )
-            state.voice_client.stop()
+            await asyncio.get_event_loop().run_in_executor(
+                self._executor, next_audio.wait_ready
+            )
+            if (
+                not state.crossfade_enabled
+                or state.current is not current_track
+                or not state.queue
+                or state.queue[0] is not candidate
+                or not state.active_audio_source
+            ):
+                next_audio.cleanup()
+                return
+
+            position = min(self._current_playback_position(state), current_track.duration)
+            remaining = current_track.duration - position
+            duration = min(CROSSFADE_SECONDS, remaining / 2, candidate.duration / 2)
+            if duration < 0.5 or remaining <= 0.5:
+                next_audio.cleanup()
+                return
+
+            state.crossfade_next = state.queue.popleft()
+            state.crossfade_audio_source = next_audio
+            logger.info(
+                f"[Crossfade] guild {state.guild_id}: preload complete for "
+                f"'{candidate.title}' (fade={duration:.1f}s)"
+            )
+            frames_until_fade = round(max(0.0, remaining - duration) * 1000 / FRAME_MS)
+            state.active_audio_source.schedule_crossfade(
+                next_audio,
+                duration,
+                frames_until_fade,
+                lambda: self.bot.loop.call_soon_threadsafe(
+                    lambda: self.bot.loop.create_task(
+                        self._activate_crossfade(state, current_track, candidate, duration)
+                    )
+                ),
+            )
         except Exception as e:
             logger.warning(
                 f"[Crossfade] guild {state.guild_id}: preload failed for "
@@ -809,31 +917,22 @@ class PlayerCog(commands.Cog):
 
         return True
 
-    async def _activate_crossfade(self, state: AudioState, previous: Track, next_track: Track, delay: float):
-        """Move player state to the second track when the overlap begins."""
-        remaining = max(0.0, delay)
-        while remaining > 0:
-            await asyncio.sleep(min(remaining, 0.25))
-            if state.voice_client and state.voice_client.is_paused():
-                continue
-            remaining -= 0.25
-
-            if (
-                state.current is not previous
-                or state.crossfade_next is not next_track
-                or state.skip_request
-                or state.is_rewinding
-            ):
-                return
-
-        if state.current is not previous or state.crossfade_next is not next_track:
+    async def _activate_crossfade(
+        self, state: AudioState, previous: Track, next_track: Track, duration: float
+    ):
+        """Move player state when the persistent source starts mixing frames."""
+        if (
+            state.current is not previous
+            or state.crossfade_next is not next_track
+        ):
             return
 
         logger.info(
             f"[Crossfade] guild {state.guild_id}: crossfade occurred "
-            f"'{previous.title}' -> '{next_track.title}' ({delay:.1f}s start offset)"
+            f"'{previous.title}' -> '{next_track.title}' ({duration:.1f}s overlap)"
         )
         state.crossfade_next = None
+        state.crossfade_audio_source = None
         state.crossfade_task = None
         if previous and state.current_played:
             state.history.append(previous)
@@ -856,50 +955,35 @@ class PlayerCog(commands.Cog):
             state.crossfade_next = None
             return
 
-        restart_current = (
-            state.restart_current_for_crossfade
-            and state.current is not None
-            and bool(state.queue)
-            and not state.skip_request
-            and not state.is_rewinding
-        )
-        state.restart_current_for_crossfade = False
-
-        if restart_current:
-            was_rewinding = False
-            had_pending_crossfade = False
-            was_skipped = False
-        else:
-            was_rewinding = state.is_rewinding
-            state.is_rewinding = False
-            had_pending_crossfade = state.crossfade_next is not None
-            if state.crossfade_next:
-                # The combined source was interrupted before the overlap began.
-                if was_rewinding:
-                    # `_rewind_async` already put the previous track first. Keep
-                    # the pending next track immediately behind it.
-                    state.queue.insert(1, state.crossfade_next)
-                else:
-                    state.queue.appendleft(state.crossfade_next)
-                state.crossfade_next = None
-
-            was_skipped = state.skip_request
-            if state.skip_request:
-                state.skip_request = False
+        was_rewinding = state.is_rewinding
+        state.is_rewinding = False
+        had_pending_crossfade = state.crossfade_next is not None
+        if had_pending_crossfade:
+            # A preloaded successor was never mixed (skip/rewind/source end).
+            pending = state.crossfade_next
+            self._clear_crossfade(state)
+            if was_rewinding:
+                state.queue.insert(1, pending)
             else:
-                if state.loop_mode == "track" and state.current:
-                    state.queue.appendleft(state.current)
-                elif state.loop_mode == "queue" and state.current:
-                    state.queue.append(state.current)
+                state.queue.appendleft(pending)
 
-            # Only a track that actually started playing belongs in history, and never
-            # the track we just manually moved into forward_history via a rewind.
-            if state.current and state.current_played and not was_rewinding:
-                state.history.append(state.current)
+        was_skipped = state.skip_request
+        if state.skip_request:
+            state.skip_request = False
+        else:
+            if state.loop_mode == "track" and state.current:
+                state.queue.appendleft(state.current)
+            elif state.loop_mode == "queue" and state.current:
+                state.queue.append(state.current)
 
-            # Redo priority: forward history (from a previous rewind) before the normal queue.
-            if state.forward_history and not was_rewinding:
-                state.queue.appendleft(state.forward_history.pop())
+        # Only a track that actually started playing belongs in history, and never
+        # the track we just manually moved into forward_history via a rewind.
+        if state.current and state.current_played and not was_rewinding:
+            state.history.append(state.current)
+
+        # Redo priority: forward history (from a previous rewind) before the normal queue.
+        if state.forward_history and not was_rewinding:
+            state.queue.appendleft(state.forward_history.pop())
 
         if len(state.queue) == 0:
             state.current = None
@@ -926,13 +1010,8 @@ class PlayerCog(commands.Cog):
             state.idle_task.cancel()
             state.idle_task = None
 
-        restart_position = state.crossfade_restart_position if restart_current else 0.0
-        state.crossfade_restart_position = 0.0
-        if restart_current:
-            track = state.current
-        else:
-            track = state.queue.popleft()
-            state.current = track
+        track = state.queue.popleft()
+        state.current = track
         state.current_played = False
 
         # JIT extraction for flat playlist tracks
@@ -950,54 +1029,12 @@ class PlayerCog(commands.Cog):
             self.bot.loop.create_task(self._play_next_async(guild_id))
             return
 
-        crossfade_next = None
-        crossfade_duration = 0.0
-        allow_crossfade = (
-            state.crossfade_enabled
-            and not was_skipped
-            and not was_rewinding
-            and not had_pending_crossfade
-            and bool(state.queue)
-            and track.duration > 0
-        )
-        if allow_crossfade:
-            candidate = state.queue[0]
-            logger.info(
-                f"[Crossfade] guild {guild_id}: preloading next stream "
-                f"'{candidate.title}'"
-            )
-            try:
-                if await self._hydrate_track(candidate) and candidate.duration > 0:
-                    crossfade_duration = min(
-                        CROSSFADE_SECONDS,
-                        track.duration / 2,
-                        candidate.duration / 2,
-                    )
-                    if crossfade_duration >= 0.5:
-                        crossfade_next = state.queue.popleft()
-                        state.crossfade_next = crossfade_next
-                        logger.info(
-                            f"[Crossfade] guild {guild_id}: preload complete for "
-                            f"'{candidate.title}' (duration={candidate.duration}s, "
-                            f"fade={crossfade_duration:.1f}s)"
-                        )
-            except Exception as e:
-                logger.warning(
-                    f"[Crossfade] guild {guild_id}: preload failed for "
-                    f"'{candidate.title}': {e}"
-                )
         try:
-            if crossfade_next:
-                audio_source = CrossfadeAudioSource(
-                    track.stream_url,
-                    crossfade_next.stream_url,
-                    crossfade_duration,
-                    first_seek_seconds=restart_position,
-                )
-            else:
-                audio_source = discord.FFmpegPCMAudio(track.stream_url, **ffmpeg_options)
-            buffered_source = BufferedAudioSource(audio_source)
-            volume_source = discord.PCMVolumeTransformer(buffered_source, volume=state.volume)
+            buffered_source = BufferedAudioSource(
+                discord.FFmpegPCMAudio(track.stream_url, **ffmpeg_options)
+            )
+            persistent_source = SeamlessCrossfadeSource(buffered_source)
+            volume_source = discord.PCMVolumeTransformer(persistent_source, volume=state.volume)
 
             # Wait for the buffer to actually pre-fill (rather than a blind fixed sleep)
             # before Discord starts pulling frames on its strict 20ms clock.
@@ -1009,19 +1046,13 @@ class PlayerCog(commands.Cog):
                 self.bot.loop.create_task(self._play_next_async(guild_id))
 
             state.voice_client.play(volume_source, after=after_playing)
+            state.active_audio_source = persistent_source
             state.current_played = True
             state.playback_started_at = self.bot.loop.time()
             state.playback_paused_at = None
-            state.playback_offset_seconds = restart_position
-            if crossfade_next:
-                state.crossfade_task = self.bot.loop.create_task(
-                    self._activate_crossfade(
-                        state,
-                        track,
-                        crossfade_next,
-                        max(0.0, track.duration - restart_position - crossfade_duration),
-                    )
-                )
+            state.playback_offset_seconds = 0.0
+            if state.crossfade_enabled and not was_skipped and not was_rewinding:
+                self.bot.loop.create_task(self._prepare_current_crossfade(state))
             logger.info(f"Playing track in guild {guild_id}: {track.title}")
             
             # Auto-update controller if this was an automatic track progression
@@ -1030,10 +1061,6 @@ class PlayerCog(commands.Cog):
                 await self._update_controller(state, embed)
         except Exception as e:
             logger.error(f"Error playing track in guild {guild_id}: {e}")
-            if state.crossfade_next is crossfade_next:
-                state.crossfade_next = None
-                if crossfade_next:
-                    state.queue.appendleft(crossfade_next)
             self.bot.loop.create_task(self._play_next_async(guild_id))
 
     music = discord.SlashCommandGroup("music", "🎵 ระบบเครื่องเล่นเพลง")

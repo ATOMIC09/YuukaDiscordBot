@@ -120,6 +120,7 @@ class SeamlessCrossfadeSource(discord.AudioSource):
         self._fade_frames = 0
         self._fade_frame = 0
         self._frames_until_fade = 0
+        self._mix_started = False
         self._on_fade_started = None
         self._lock = threading.Lock()
 
@@ -135,11 +136,12 @@ class SeamlessCrossfadeSource(discord.AudioSource):
             self._fade_frames = max(1, round(duration * 1000 / FRAME_MS))
             self._fade_frame = 0
             self._frames_until_fade = max(0, frames_until_fade)
+            self._mix_started = False
             self._on_fade_started = on_fade_started
 
     def cancel_scheduled_crossfade(self):
         with self._lock:
-            if self._fade_frame:
+            if self._mix_started:
                 return None
             next_source = self._next
             self._next = None
@@ -149,6 +151,10 @@ class SeamlessCrossfadeSource(discord.AudioSource):
     def has_pending_crossfade(self) -> bool:
         with self._lock:
             return self._next is not None
+
+    def is_crossfade_active(self) -> bool:
+        with self._lock:
+            return self._next is not None and self._mix_started
 
     @staticmethod
     def _mix_pcm(current: bytes, next_frame: bytes, progress: float) -> bytes:
@@ -178,6 +184,7 @@ class SeamlessCrossfadeSource(discord.AudioSource):
                 self._frames_until_fade -= 1
                 return current
             if self._fade_frame == 0 and self._on_fade_started:
+                self._mix_started = True
                 callback = self._on_fade_started
                 self._on_fade_started = None
 
@@ -569,6 +576,10 @@ class PlayerCog(commands.Cog):
 
     def _cancel_prepared_crossfade(self, state: AudioState):
         pending = state.crossfade_next
+        # Once the mixer has consumed its first fade frame, the incoming stream
+        # belongs to active playback. Let that transition finish uninterrupted.
+        if state.active_audio_source and state.active_audio_source.is_crossfade_active():
+            return
         self._clear_crossfade(state)
         if pending:
             state.queue.appendleft(pending)
@@ -941,6 +952,7 @@ class PlayerCog(commands.Cog):
         state.playback_started_at = self.bot.loop.time()
         state.playback_paused_at = None
         state.playback_offset_seconds = 0.0
+        logger.info(f"Playing track in guild {state.guild_id}: {next_track.title}")
 
         if state.text_channel:
             await self._update_controller(state, self._build_player_embed(next_track, state))

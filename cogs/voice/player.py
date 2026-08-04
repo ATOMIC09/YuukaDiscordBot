@@ -383,12 +383,12 @@ class PlayerControls(discord.ui.View):
         if not self.state.crossfade_enabled:
             self.cog._cancel_prepared_crossfade(self.state)
         if self.state.crossfade_enabled:
-            logger.info(
+            logger.debug(
                 f"[Crossfade] guild {self.state.guild_id}: enabled via player button; "
                 "preparing the queued next track for seamless mixing"
             )
         else:
-            logger.info(
+            logger.debug(
                 f"[Crossfade] guild {self.state.guild_id}: disabled via player button; "
                 "future transitions will not be crossfaded"
             )
@@ -791,7 +791,7 @@ class PlayerCog(commands.Cog):
 
         current_track = state.current
         candidate = state.queue[0]
-        logger.info(
+        logger.debug(
             f"[Crossfade] guild {state.guild_id}: preloading next stream "
             f"'{candidate.title}' for active '{current_track.title}'"
         )
@@ -856,7 +856,7 @@ class PlayerCog(commands.Cog):
 
             state.crossfade_next = state.queue.popleft()
             state.crossfade_audio_source = next_audio
-            logger.info(
+            logger.debug(
                 f"[Crossfade] guild {state.guild_id}: preload complete for "
                 f"'{candidate.title}' (fade={duration:.1f}s)"
             )
@@ -927,7 +927,7 @@ class PlayerCog(commands.Cog):
         ):
             return
 
-        logger.info(
+        logger.debug(
             f"[Crossfade] guild {state.guild_id}: crossfade occurred "
             f"'{previous.title}' -> '{next_track.title}' ({duration:.1f}s overlap)"
         )

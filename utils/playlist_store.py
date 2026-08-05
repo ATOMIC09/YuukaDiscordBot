@@ -6,6 +6,7 @@ import json
 import re
 import secrets
 import threading
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Callable, Mapping
@@ -14,6 +15,17 @@ from typing import Callable, Mapping
 CODE_PATTERN = re.compile(r"^[a-z0-9]{4}-[a-z0-9]{4}$")
 CODE_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
 DEFAULT_EXPIRY = timedelta(days=30)
+
+
+@dataclass(frozen=True)
+class SavedPlaylist:
+    """Validated metadata and tracks for one saved playlist."""
+
+    code: str
+    owner_id: int
+    created_at: datetime
+    expires_at: datetime
+    tracks: list[dict[str, str]]
 
 
 class PlaylistStoreError(Exception):
@@ -76,17 +88,36 @@ class PlaylistStore:
         normalized_code = self._normalize_code(code)
         with self._lock:
             data = self._read()
-            return self._validated_tracks(data, normalized_code)
+            return self._playlist_info(data, normalized_code).tracks
 
     def consume(self, code: str) -> list[dict[str, str]]:
         """Return a valid playlist and permanently remove it in the same write."""
         normalized_code = self._normalize_code(code)
         with self._lock:
             data = self._read()
-            tracks = self._validated_tracks(data, normalized_code)
+            tracks = self._playlist_info(data, normalized_code).tracks
             del data["playlists"][normalized_code]
             self._write(data)
         return tracks
+
+    def details(self, code: str) -> SavedPlaylist:
+        """Return display metadata without consuming a valid playlist."""
+        normalized_code = self._normalize_code(code)
+        with self._lock:
+            return self._playlist_info(self._read(), normalized_code)
+
+    def list_playlists(self) -> list[SavedPlaylist]:
+        """Return all valid, unexpired playlists ordered by most recent first."""
+        with self._lock:
+            data = self._read()
+            playlists: list[SavedPlaylist] = []
+            for code in list(data["playlists"]):
+                try:
+                    playlists.append(self._playlist_info(data, code))
+                except (PlaylistDataError, PlaylistExpiredError):
+                    # One bad or expired record should not hide the usable list.
+                    continue
+        return sorted(playlists, key=lambda playlist: playlist.created_at, reverse=True)
 
     @staticmethod
     def _normalize_code(code: str) -> str:
@@ -95,9 +126,9 @@ class PlaylistStore:
             raise PlaylistNotFoundError("Invalid playlist code format")
         return normalized_code
 
-    def _validated_tracks(
+    def _playlist_info(
         self, data: dict[str, dict[str, object]], code: str
-    ) -> list[dict[str, str]]:
+    ) -> SavedPlaylist:
         playlist = data["playlists"].get(code)
         if not isinstance(playlist, dict):
             raise PlaylistNotFoundError("Playlist code does not exist")
@@ -106,13 +137,20 @@ class PlaylistStore:
         if not isinstance(owner_id, int) or isinstance(owner_id, bool):
             raise PlaylistDataError("Playlist owner is invalid")
 
-        expires_at = self._parse_timestamp(playlist.get("expires_at"))
+        created_at = self._parse_timestamp(playlist.get("created_at"), "creation time")
+        expires_at = self._parse_timestamp(playlist.get("expires_at"), "expiry")
         if expires_at <= self._now():
             del data["playlists"][code]
             self._write(data)
             raise PlaylistExpiredError("Playlist code has expired")
 
-        return self._validate_tracks(playlist.get("tracks"))
+        return SavedPlaylist(
+            code=code,
+            owner_id=owner_id,
+            created_at=created_at,
+            expires_at=expires_at,
+            tracks=self._validate_tracks(playlist.get("tracks")),
+        )
 
     def _new_code(self, playlists: Mapping[str, object]) -> str:
         for _ in range(100):
@@ -149,15 +187,15 @@ class PlaylistStore:
             raise PlaylistStoreError("Could not save playlist data") from error
 
     @staticmethod
-    def _parse_timestamp(value: object) -> datetime:
+    def _parse_timestamp(value: object, field_name: str) -> datetime:
         if not isinstance(value, str):
-            raise PlaylistDataError("Playlist expiry is missing")
+            raise PlaylistDataError(f"Playlist {field_name} is missing")
         try:
             timestamp = datetime.fromisoformat(value)
         except ValueError as error:
-            raise PlaylistDataError("Playlist expiry is invalid") from error
+            raise PlaylistDataError(f"Playlist {field_name} is invalid") from error
         if timestamp.tzinfo is None:
-            raise PlaylistDataError("Playlist expiry has no timezone")
+            raise PlaylistDataError(f"Playlist {field_name} has no timezone")
         return timestamp.astimezone(UTC)
 
     @staticmethod

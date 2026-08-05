@@ -22,6 +22,7 @@ from utils.playlist_store import (
     PlaylistDataError,
     PlaylistExpiredError,
     PlaylistNotFoundError,
+    SavedPlaylist,
     PlaylistStore,
     PlaylistStoreError,
 )
@@ -586,6 +587,183 @@ class QueuePaginator(discord.ui.View):
             except Exception:
                 pass
 
+def _discord_timestamp(value, style: str = "F") -> str:
+    return f"<t:{int(value.timestamp())}:{style}>"
+
+
+class PlaylistDetailsPaginator(discord.ui.View):
+    def __init__(self, playlist: SavedPlaylist, items_per_page: int = 10):
+        super().__init__(timeout=180)
+        self.playlist = playlist
+        self.items_per_page = items_per_page
+        self.current_page = 1
+        self.total_pages = max(1, math.ceil(len(playlist.tracks) / items_per_page))
+        self.update_buttons()
+
+    def get_embed(self) -> discord.Embed:
+        start = (self.current_page - 1) * self.items_per_page
+        end = start + self.items_per_page
+        tracks = self.playlist.tracks[start:end]
+        lines = []
+        for number, track in enumerate(tracks, start=start + 1):
+            title = track["title"] or track["query"]
+            lines.append(f"{number}. [{title}]({track['query']})")
+
+        embed = discord.Embed(
+            title="💾 รายละเอียดเพลย์ลิสต์",
+            description="\n".join(lines),
+            color=discord.Color.blurple(),
+        )
+        embed.add_field(name="รหัสเพลย์ลิสต์", value=f"`{self.playlist.code}`", inline=False)
+        embed.add_field(name="ผู้สร้าง", value=f"<@{self.playlist.owner_id}>", inline=True)
+        embed.add_field(name="จำนวนเพลง", value=f"`{len(self.playlist.tracks)}` เพลง", inline=True)
+        embed.add_field(
+            name="สร้างเมื่อ",
+            value=f"{_discord_timestamp(self.playlist.created_at)}\n{_discord_timestamp(self.playlist.created_at, 'R')}",
+            inline=True,
+        )
+        embed.add_field(
+            name="หมดอายุเมื่อ",
+            value=f"{_discord_timestamp(self.playlist.expires_at)}\n{_discord_timestamp(self.playlist.expires_at, 'R')}",
+            inline=True,
+        )
+        embed.set_footer(
+            text=f"เพลง {start + 1}-{min(end, len(self.playlist.tracks))} จาก {len(self.playlist.tracks)} | หน้า {self.current_page}/{self.total_pages}"
+        )
+        return embed
+
+    def update_buttons(self):
+        self.previous_button.disabled = self.current_page <= 1
+        self.next_button.disabled = self.current_page >= self.total_pages
+
+    @discord.ui.button(label="◀️", style=discord.ButtonStyle.primary)
+    async def previous_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        self.current_page -= 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    @discord.ui.button(label="▶️", style=discord.ButtonStyle.primary)
+    async def next_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        self.current_page += 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+
+
+class PlaylistNumberModal(discord.ui.Modal):
+    def __init__(self, paginator: "PlaylistListPaginator"):
+        super().__init__(title="ดูรายละเอียดเพลย์ลิสต์")
+        self.paginator = paginator
+        self.number_input = discord.ui.InputText(
+            label=f"หมายเลขเพลย์ลิสต์ (1-{len(paginator.playlists)})",
+            placeholder="พิมพ์หมายเลขจากรายการนะคะ",
+            style=discord.InputTextStyle.short,
+            required=True,
+        )
+        self.add_item(self.number_input)
+
+    async def callback(self, interaction: discord.Interaction):
+        raw = self.number_input.value.strip()
+        if not raw.isdigit() or not (1 <= int(raw) <= len(self.paginator.playlists)):
+            await interaction.response.send_message(
+                embed=error_embed(
+                    "หมายเลขเพลย์ลิสต์ไม่ถูกต้องค่ะ",
+                    f"กรุณาใส่หมายเลขระหว่าง 1-{len(self.paginator.playlists)} นะคะ (´・ω・)",
+                ),
+                ephemeral=True,
+            )
+            return
+
+        playlist = self.paginator.playlists[int(raw) - 1]
+        details = PlaylistDetailsPaginator(playlist)
+        await interaction.response.send_message(
+            embed=details.get_embed(), view=details, ephemeral=True
+        )
+
+
+class PlaylistListPaginator(discord.ui.View):
+    def __init__(self, cog: "PlayerCog", playlists: list[SavedPlaylist], items_per_page: int = 10):
+        super().__init__(timeout=180)
+        self.cog = cog
+        self.playlists = playlists
+        self.items_per_page = items_per_page
+        self.current_page = 1
+        self.total_pages = max(1, math.ceil(len(playlists) / items_per_page))
+        self.message = None
+        self.update_buttons()
+
+    def get_embed(self) -> discord.Embed:
+        embed = discord.Embed(title="💾 เพลย์ลิสต์ที่บันทึกไว้", color=discord.Color.blurple())
+        start = (self.current_page - 1) * self.items_per_page
+        end = start + self.items_per_page
+        lines = []
+        for number, playlist in enumerate(self.playlists[start:end], start=start + 1):
+            lines.append(
+                f"**{number}.** `{playlist.code}` • `{len(playlist.tracks)}` เพลง\n"
+                f"ผู้สร้าง: <@{playlist.owner_id}> • สร้าง {_discord_timestamp(playlist.created_at, 'R')}\n"
+                f"หมดอายุ {_discord_timestamp(playlist.expires_at, 'R')}"
+            )
+        embed.description = "\n\n".join(lines) or "*ยังไม่มีเพลย์ลิสต์ที่ใช้ได้ค่ะ*"
+        embed.set_footer(
+            text=f"หน้า {self.current_page}/{self.total_pages} | ทั้งหมด {len(self.playlists)} เพลย์ลิสต์"
+        )
+        return embed
+
+    def update_buttons(self):
+        self.total_pages = max(1, math.ceil(len(self.playlists) / self.items_per_page))
+        if self.current_page > self.total_pages:
+            self.current_page = self.total_pages
+        self.previous_button.disabled = self.current_page <= 1
+        self.next_button.disabled = self.current_page >= self.total_pages
+        self.page_button.disabled = self.total_pages <= 1
+        self.details_button.disabled = not self.playlists
+
+    @discord.ui.button(label="◀️", style=discord.ButtonStyle.primary)
+    async def previous_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        self.current_page -= 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    @discord.ui.button(label="▶️", style=discord.ButtonStyle.primary)
+    async def next_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        self.current_page += 1
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    @discord.ui.button(label="🔢", style=discord.ButtonStyle.secondary)
+    async def page_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await interaction.response.send_modal(JumpToPageModal(self))
+
+    @discord.ui.button(label="รายละเอียด", style=discord.ButtonStyle.secondary)
+    async def details_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await interaction.response.send_modal(PlaylistNumberModal(self))
+
+    @discord.ui.button(label="🔄", style=discord.ButtonStyle.secondary)
+    async def reload_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        try:
+            self.playlists = self.cog.playlist_store.list_playlists()
+        except PlaylistStoreError:
+            await interaction.response.send_message(
+                embed=error_embed("โหลดรายการไม่ได้ค่ะ", "ระบบจัดเก็บเพลย์ลิสต์มีปัญหาชั่วคราว ลองใหม่อีกครั้งนะคะ"),
+                ephemeral=True,
+            )
+            return
+        self.update_buttons()
+        await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except Exception:
+                pass
+
+
 class PlayerCog(commands.Cog):
     def __init__(self, bot: discord.Bot, playlist_store: PlaylistStore | None = None):
         self.bot = bot
@@ -597,6 +775,35 @@ class PlayerCog(commands.Cog):
         if guild_id not in self.states:
             self.states[guild_id] = AudioState(self.bot, guild_id)
         return self.states[guild_id]
+
+    async def _show_saved_playlists(self, ctx: discord.ApplicationContext) -> None:
+        await ctx.defer(ephemeral=True)
+        try:
+            playlists = self.playlist_store.list_playlists()
+        except PlaylistStoreError:
+            logger.error(f"Playlist list failed in guild {ctx.guild.id}")
+            await ctx.interaction.edit_original_response(
+                embed=error_embed(
+                    "โหลดรายการไม่ได้ค่ะ",
+                    "ระบบจัดเก็บเพลย์ลิสต์มีปัญหาชั่วคราว ลองใหม่อีกครั้งนะคะ",
+                )
+            )
+            return
+
+        if not playlists:
+            await ctx.interaction.edit_original_response(
+                embed=info_embed(
+                    "ยังไม่มีเพลย์ลิสต์ค่ะ",
+                    "ตอนนี้ไม่มีเพลย์ลิสต์ที่บันทึกไว้และยังใช้ได้เลยนะคะ (´・ω・)",
+                )
+            )
+            return
+
+        paginator = PlaylistListPaginator(self, playlists)
+        message = await ctx.interaction.edit_original_response(
+            embed=paginator.get_embed(), view=paginator
+        )
+        paginator.message = message
 
     @staticmethod
     def _playlist_tracks(state: AudioState) -> list[Track]:
@@ -1628,8 +1835,11 @@ class PlayerCog(commands.Cog):
         state.last_queue_message = msg
 
     @music.command(name="restore", description="♻️ กู้คืนคิวเพลงที่บันทึกไว้")
-    @discord.option("code", description="รหัสเพลย์ลิสต์ xxxx-xxxx")
+    @discord.option("code", description="รหัสเพลย์ลิสต์ xxxx-xxxx หรือพิมพ์ list")
     async def restore(self, ctx: discord.ApplicationContext, code: str):
+        if code.strip().lower() == "list":
+            return await self._show_saved_playlists(ctx)
+
         state = self.get_state(ctx.guild.id)
         state.text_channel = ctx.channel
         await ctx.defer(ephemeral=True)

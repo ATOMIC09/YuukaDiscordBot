@@ -36,17 +36,11 @@
 - `/music stop` หยุดเพลงและล้างคิวทั้งหมด
 - `/music skip` ข้ามเพลงปัจจุบัน หรือกระโดดข้ามไปยังคิวที่ระบุได้
 - `/music loop` ตั้งค่าวนลูป (เพลงเดียว, ทั้งคิว, ปิด)
-- `/music queue show` ดูคิวเพลงทั้งหมด (มีปุ่มเลื่อนหน้า และปุ่มอัปเดตคิว)
+- `/music queue` ดูคิวเพลงทั้งหมด (มีปุ่มเลื่อนหน้า และปุ่มอัปเดตคิว)
+- `/music restore` ดึงคิวที่บันทึกมาเล่น
 - `/music volume` ปรับระดับเสียงเพลง (0-100)
 - `/music nowplaying` เรียกแผงควบคุมเพลงล่าสุด
 - `/music leave` สั่งบอทออกจากห้องเสียง (หรือบอทจะออกเองเมื่อไม่มีเพลงเล่นเกิน 3 นาที)
-
-#### Saved playlists
-
-- Press the **💾 Save** button beside **Crossfade** to save the currently playing song and remaining queue. The bot sends an ephemeral `xxxx-xxxx` code that expires after 30 days.
-- Restore it from a voice channel with `/music queue restore <code>`; the current queue is replaced, playback starts with the first saved song, and the code is consumed.
-- Saved playlist codes are **private**: only the Discord user who created a code can restore it.
-- Queue viewing is now `/music queue show`, because Discord requires `queue` to be a command group for `/music queue restore`.
 
 ### 🖼️ คำสั่งรูปภาพและมัลติมีเดีย (Image)
 - `/pet` สร้างภาพลูบหัว (Petpet)

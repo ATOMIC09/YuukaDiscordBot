@@ -22,7 +22,6 @@ from utils.playlist_store import (
     PlaylistDataError,
     PlaylistExpiredError,
     PlaylistNotFoundError,
-    PlaylistOwnershipError,
     PlaylistStore,
     PlaylistStoreError,
 )
@@ -300,6 +299,7 @@ class AudioState:
         self.text_channel: discord.TextChannel | discord.Thread | None = None
         self.idle_task: asyncio.Task | None = None
         self.suppress_next_after: bool = False
+        self.playback_generation: int = 0
 
 class PlayerControls(discord.ui.View):
     def __init__(self, cog: "PlayerCog", state: "AudioState"):
@@ -441,7 +441,7 @@ class PlayerControls(discord.ui.View):
         await interaction.response.send_message(
             embed=success_embed(
                 "💾 บันทึกเพลย์ลิสต์แล้วค่ะ",
-                f"รหัสส่วนตัวของเซ็นเซย์คือ `{code}`\nใช้ `/music queue restore {code}` เพื่อกู้คืนภายใน 30 วันนะคะ",
+                f"รหัสเพลย์ลิสต์คือ `{code}`\nแชร์ให้คนอื่นใช้ `/music restore {code}` ได้ภายใน 30 วันนะคะ",
             ),
             ephemeral=True,
         )
@@ -661,6 +661,9 @@ class PlayerCog(commands.Cog):
         state.voice_client = await channel.connect()
 
     def _replace_queue(self, state: AudioState, tracks: list[Track]) -> None:
+        # Invalidate callbacks and queued transitions belonging to the source
+        # being stopped, before the restored queue becomes visible to them.
+        state.playback_generation += 1
         self._clear_crossfade(state)
         state.queue.clear()
         state.history.clear()
@@ -1084,8 +1087,20 @@ class PlayerCog(commands.Cog):
         if state.text_channel:
             await self._update_controller(state, self._build_player_embed(next_track, state))
 
-    async def _play_next_async(self, guild_id: int, auto_send: bool = True):
+    async def _play_next_async(
+        self,
+        guild_id: int,
+        auto_send: bool = True,
+        expected_generation: int | None = None,
+    ):
         state = self.get_state(guild_id)
+        if (
+            expected_generation is not None
+            and expected_generation != state.playback_generation
+        ):
+            logger.debug(f"Ignoring stale playback transition in guild {guild_id}")
+            return
+        playback_generation = state.playback_generation
         if not state.voice_client or not state.voice_client.is_connected():
             state.current = None
             state.queue.clear()
@@ -1160,12 +1175,19 @@ class PlayerCog(commands.Cog):
             except Exception as e:
                 logger.error(f"Error extracting stream url for {track.original_url}: {e}")
                 # Skip to next if failed
-                self.bot.loop.create_task(self._play_next_async(guild_id))
+                self.bot.loop.create_task(
+                    self._play_next_async(guild_id, expected_generation=playback_generation)
+                )
                 return
+
+        if playback_generation != state.playback_generation:
+            return
 
         if not track.stream_url:
             logger.warning(f"Could not find stream URL for {track.title}, skipping.")
-            self.bot.loop.create_task(self._play_next_async(guild_id))
+            self.bot.loop.create_task(
+                self._play_next_async(guild_id, expected_generation=playback_generation)
+            )
             return
 
         try:
@@ -1178,14 +1200,25 @@ class PlayerCog(commands.Cog):
             # Wait for the buffer to actually pre-fill (rather than a blind fixed sleep)
             # before Discord starts pulling frames on its strict 20ms clock.
             await asyncio.get_event_loop().run_in_executor(self._executor, buffered_source.wait_ready)
+            if playback_generation != state.playback_generation:
+                buffered_source.cleanup()
+                return
 
             def after_playing(e):
+                if playback_generation != state.playback_generation:
+                    return
                 if state.suppress_next_after:
                     state.suppress_next_after = False
                     return
                 if e:
                     logger.error(f"Player error in guild {guild_id}: {e}")
-                self.bot.loop.create_task(self._play_next_async(guild_id))
+                self.bot.loop.call_soon_threadsafe(
+                    lambda: self.bot.loop.create_task(
+                        self._play_next_async(
+                            guild_id, expected_generation=playback_generation
+                        )
+                    )
+                )
 
             state.voice_client.play(volume_source, after=after_playing)
             state.active_audio_source = persistent_source
@@ -1203,7 +1236,9 @@ class PlayerCog(commands.Cog):
                 await self._update_controller(state, embed)
         except Exception as e:
             logger.error(f"Error playing track in guild {guild_id}: {e}")
-            self.bot.loop.create_task(self._play_next_async(guild_id))
+            self.bot.loop.create_task(
+                self._play_next_async(guild_id, expected_generation=playback_generation)
+            )
 
     music = discord.SlashCommandGroup("music", "🎵 ระบบเครื่องเล่นเพลง")
 
@@ -1572,10 +1607,8 @@ class PlayerCog(commands.Cog):
             
         await ctx.respond(embed=success_embed("ตั้งค่าลูป", msg))
 
-    queue_commands = music.create_subgroup("queue", "จัดการคิวเพลง")
-
-    @queue_commands.command(name="show", description="📜 ดูคิวเพลงทั้งหมด")
-    async def queue_show(self, ctx: discord.ApplicationContext):
+    @music.command(name="queue", description="📜 ดูคิวเพลงทั้งหมด")
+    async def queue(self, ctx: discord.ApplicationContext):
         state = self.get_state(ctx.guild.id)
         if not state.current and len(state.queue) == 0:
             return await ctx.respond(embed=info_embed("คิวว่าง", "ไม่มีเพลงในคิวเลยค่ะ (´・ω・)"), ephemeral=True)
@@ -1594,25 +1627,19 @@ class PlayerCog(commands.Cog):
         paginator.message = msg
         state.last_queue_message = msg
 
-    @queue_commands.command(name="restore", description="♻️ กู้คืนคิวเพลงที่บันทึกไว้")
+    @music.command(name="restore", description="♻️ กู้คืนคิวเพลงที่บันทึกไว้")
     @discord.option("code", description="รหัสเพลย์ลิสต์ xxxx-xxxx")
-    async def queue_restore(self, ctx: discord.ApplicationContext, code: str):
+    async def restore(self, ctx: discord.ApplicationContext, code: str):
         state = self.get_state(ctx.guild.id)
         state.text_channel = ctx.channel
         await ctx.defer(ephemeral=True)
 
         try:
-            playlist_tracks = self.playlist_store.load(code, ctx.author.id)
+            playlist_tracks = self.playlist_store.load(code)
         except PlaylistNotFoundError:
             logger.warning(f"Playlist restore rejected in guild {ctx.guild.id}: invalid code")
             await ctx.interaction.edit_original_response(
                 embed=error_embed("ไม่พบรหัสเพลย์ลิสต์ค่ะ", "ตรวจสอบรหัสแล้วลองใหม่อีกครั้งนะคะ")
-            )
-            return
-        except PlaylistOwnershipError:
-            logger.warning(f"Playlist restore rejected in guild {ctx.guild.id}: owner mismatch")
-            await ctx.interaction.edit_original_response(
-                embed=error_embed("ใช้รหัสนี้ไม่ได้ค่ะ", "รหัสเพลย์ลิสต์เป็นรหัสส่วนตัวของผู้บันทึกนะคะ")
             )
             return
         except PlaylistExpiredError:
@@ -1636,7 +1663,7 @@ class PlayerCog(commands.Cog):
 
         try:
             await self._ensure_voice_connection(ctx, state)
-            playlist_tracks = self.playlist_store.consume(code, ctx.author.id)
+            playlist_tracks = self.playlist_store.consume(code)
             await self._restore_playlist_to_state(state, playlist_tracks, ctx.author)
         except UserError as error:
             logger.warning(f"Playlist restore rejected in guild {ctx.guild.id}: voice validation")

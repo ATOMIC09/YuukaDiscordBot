@@ -1,4 +1,4 @@
-"""Small, durable storage for privately saved music playlists."""
+"""Small, durable storage for expiring, shareable music playlists."""
 
 from __future__ import annotations
 
@@ -28,10 +28,6 @@ class PlaylistExpiredError(PlaylistStoreError):
     """The supplied code identifies an expired playlist."""
 
 
-class PlaylistOwnershipError(PlaylistStoreError):
-    """The playlist belongs to a different Discord user."""
-
-
 class PlaylistDataError(PlaylistStoreError):
     """Stored playlist JSON is malformed or otherwise unusable."""
 
@@ -44,7 +40,7 @@ def generate_playlist_code() -> str:
 
 
 class PlaylistStore:
-    """A locked JSON datastore with owner-bound, expiring playlists."""
+    """A locked JSON datastore with creator metadata and expiring playlists."""
 
     def __init__(
         self,
@@ -76,18 +72,18 @@ class PlaylistStore:
             self._write(data)
         return code
 
-    def load(self, code: str, requester_id: int) -> list[dict[str, str]]:
+    def load(self, code: str) -> list[dict[str, str]]:
         normalized_code = self._normalize_code(code)
         with self._lock:
             data = self._read()
-            return self._validated_tracks(data, normalized_code, requester_id)
+            return self._validated_tracks(data, normalized_code)
 
-    def consume(self, code: str, requester_id: int) -> list[dict[str, str]]:
+    def consume(self, code: str) -> list[dict[str, str]]:
         """Return a valid playlist and permanently remove it in the same write."""
         normalized_code = self._normalize_code(code)
         with self._lock:
             data = self._read()
-            tracks = self._validated_tracks(data, normalized_code, requester_id)
+            tracks = self._validated_tracks(data, normalized_code)
             del data["playlists"][normalized_code]
             self._write(data)
         return tracks
@@ -100,7 +96,7 @@ class PlaylistStore:
         return normalized_code
 
     def _validated_tracks(
-        self, data: dict[str, dict[str, object]], code: str, requester_id: int
+        self, data: dict[str, dict[str, object]], code: str
     ) -> list[dict[str, str]]:
         playlist = data["playlists"].get(code)
         if not isinstance(playlist, dict):
@@ -109,8 +105,6 @@ class PlaylistStore:
         owner_id = playlist.get("owner_id")
         if not isinstance(owner_id, int) or isinstance(owner_id, bool):
             raise PlaylistDataError("Playlist owner is invalid")
-        if owner_id != requester_id:
-            raise PlaylistOwnershipError("Playlist belongs to another user")
 
         expires_at = self._parse_timestamp(playlist.get("expires_at"))
         if expires_at <= self._now():

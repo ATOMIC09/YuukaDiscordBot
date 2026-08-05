@@ -680,7 +680,7 @@ class PlaylistNumberModal(discord.ui.Modal):
         playlist = self.paginator.playlists[int(raw) - 1]
         details = PlaylistDetailsPaginator(playlist)
         await interaction.response.send_message(
-            embed=details.get_embed(), view=details, ephemeral=True
+            embed=details.get_embed(), view=details
         )
 
 
@@ -777,7 +777,7 @@ class PlayerCog(commands.Cog):
         return self.states[guild_id]
 
     async def _show_saved_playlists(self, ctx: discord.ApplicationContext) -> None:
-        await ctx.defer(ephemeral=True)
+        await ctx.defer()
         try:
             playlists = self.playlist_store.list_playlists()
         except PlaylistStoreError:

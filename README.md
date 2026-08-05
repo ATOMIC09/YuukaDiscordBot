@@ -61,3 +61,13 @@
 ## © เครดิต
 - ภาพโปรไฟล์ของบอท [👀](https://www.pixiv.net/en/artworks/121894766)
 - ภาพปกของบอท [🖼](https://x.com/morphling_2/status/1655501344164433922)
+
+## 📜 License
+
+This project is licensed under the **GNU Affero General Public License v3.0 (AGPLv3)**, with the **[Commons Clause](COMMONS-CLAUSE.md)** condition applied.
+
+- ✅ You may clone, edit, fork, self-host, and submit pull requests freely.
+- ✅ If you distribute or run a modified version as a network service, you must make that source code available.
+- ❌ You may **not** sell this software or use it to provide a commercial product/service.
+
+See [LICENSE](LICENSE) and [COMMONS-CLAUSE.md](COMMONS-CLAUSE.md) for full terms.

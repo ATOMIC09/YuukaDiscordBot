@@ -411,8 +411,13 @@ class PlayerControls(discord.ui.View):
             )
         self.update_buttons()
 
-        embed = self.cog._build_player_embed(self.state.current, self.state)
-        await interaction.response.edit_message(embed=embed, view=self)
+        if self.state.current:
+            embed = self.cog._build_player_embed(self.state.current, self.state)
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            # The player controller can be clicked while the first track is
+            # still being prepared, before `_play_next_async` assigns current.
+            await interaction.response.edit_message(view=self)
 
         if self.state.crossfade_enabled:
             self.cog.bot.loop.create_task(self.cog._prepare_current_crossfade(self.state))

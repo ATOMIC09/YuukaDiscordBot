@@ -49,6 +49,7 @@ BUFFER_SECONDS = 5.0
 PREFILL_SECONDS = 1.0
 CROSSFADE_SECONDS = 7.0
 CROSSFADE_BUFFER_SECONDS = 2.0
+CROSSFADE_STARTUP_GRACE_SECONDS = 5.0
 
 class BufferedAudioSource(discord.AudioSource):
     """
@@ -281,6 +282,7 @@ class AudioState:
         self.crossfade_audio_source: BufferedAudioSource | None = None
         self.active_audio_source: SeamlessCrossfadeSource | None = None
         self.crossfade_task: asyncio.Task | None = None
+        self.crossfade_prepare_task: asyncio.Task | None = None
         self.playback_started_at: float | None = None
         self.playback_paused_at: float | None = None
         self.playback_offset_seconds: float = 0.0
@@ -410,7 +412,7 @@ class PlayerControls(discord.ui.View):
             await interaction.response.edit_message(view=self)
 
         if self.state.crossfade_enabled:
-            self.cog.bot.loop.create_task(self.cog._prepare_current_crossfade(self.state))
+            self.cog._request_crossfade_prepare(self.state)
 
     @discord.ui.button(style=discord.ButtonStyle.danger, emoji="⏹️", row=0)
     async def stop(self, button: discord.ui.Button, interaction: discord.Interaction):
@@ -564,6 +566,9 @@ class PlayerCog(commands.Cog):
         return self.states[guild_id]
 
     def _clear_crossfade(self, state: AudioState):
+        if state.crossfade_prepare_task and not state.crossfade_prepare_task.done():
+            state.crossfade_prepare_task.cancel()
+        state.crossfade_prepare_task = None
         if state.crossfade_task and not state.crossfade_task.done():
             state.crossfade_task.cancel()
         state.crossfade_task = None
@@ -789,6 +794,38 @@ class PlayerCog(commands.Cog):
         if state.playback_started_at is not None and state.playback_paused_at is not None:
             state.playback_started_at += self.bot.loop.time() - state.playback_paused_at
             state.playback_paused_at = None
+
+    def _request_crossfade_prepare(self, state: AudioState):
+        """Prepare the next stream after the newly started source is stable."""
+        if (
+            not state.crossfade_enabled
+            or not state.current
+            or not state.voice_client
+            or not state.voice_client.is_playing()
+            or (state.crossfade_prepare_task and not state.crossfade_prepare_task.done())
+        ):
+            return
+        track = state.current
+        state.crossfade_prepare_task = self.bot.loop.create_task(
+            self._prepare_crossfade_after_startup(state, track)
+        )
+
+    async def _prepare_crossfade_after_startup(self, state: AudioState, track: Track):
+        task = asyncio.current_task()
+        try:
+            if state.playback_started_at is not None:
+                elapsed = self._current_playback_position(state)
+                await asyncio.sleep(max(0.0, CROSSFADE_STARTUP_GRACE_SECONDS - elapsed))
+            if (
+                state.crossfade_enabled
+                and state.current is track
+                and state.voice_client
+                and state.voice_client.is_playing()
+            ):
+                await self._prepare_current_crossfade(state)
+        finally:
+            if state.crossfade_prepare_task is task:
+                state.crossfade_prepare_task = None
 
     async def _prepare_current_crossfade(self, state: AudioState):
         """Preload the queued successor without replacing the active source."""
@@ -1069,7 +1106,7 @@ class PlayerCog(commands.Cog):
             state.playback_paused_at = None
             state.playback_offset_seconds = 0.0
             if state.crossfade_enabled and not was_skipped and not was_rewinding:
-                self.bot.loop.create_task(self._prepare_current_crossfade(state))
+                self._request_crossfade_prepare(state)
             logger.info(f"Playing track in guild {guild_id}: {track.title}")
             
             # Auto-update controller if this was an automatic track progression
@@ -1206,7 +1243,7 @@ class PlayerCog(commands.Cog):
             embed = self._build_player_embed(display_track, state)
             await self._update_controller(state, embed)
             if state.crossfade_enabled:
-                self.bot.loop.create_task(self._prepare_current_crossfade(state))
+                self._request_crossfade_prepare(state)
 
     @music.command(name="play", description="▶️ เปิดเพลงจาก YouTube (รองรับ Playlist)")
     @discord.option("query", description="ชื่อเพลงหรือ URL ของวิดีโอ/เพลย์ลิสต์ค่ะ")
@@ -1320,7 +1357,7 @@ class PlayerCog(commands.Cog):
             # if playing is stopped, start it
             self.bot.loop.create_task(self._play_next_async(ctx.guild.id, auto_send=True))
         elif state.crossfade_enabled:
-            self.bot.loop.create_task(self._prepare_current_crossfade(state))
+            self._request_crossfade_prepare(state)
 
     @music.command(name="pause", description="⏸️ หยุดเพลงชั่วคราว")
     async def pause(self, ctx: discord.ApplicationContext):

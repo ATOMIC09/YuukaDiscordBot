@@ -18,6 +18,14 @@ from discord.ext import commands
 from bot.logger import logger
 from utils.embeds import success_embed, error_embed, info_embed
 from utils.errors import UserError
+from utils.playlist_store import (
+    PlaylistDataError,
+    PlaylistExpiredError,
+    PlaylistNotFoundError,
+    PlaylistOwnershipError,
+    PlaylistStore,
+    PlaylistStoreError,
+)
 
 yt_dlp.utils.bug_reports_message = lambda: ''
 
@@ -291,6 +299,7 @@ class AudioState:
         self.last_queue_message: discord.WebhookMessage | discord.Message | None = None
         self.text_channel: discord.TextChannel | discord.Thread | None = None
         self.idle_task: asyncio.Task | None = None
+        self.suppress_next_after: bool = False
 
 class PlayerControls(discord.ui.View):
     def __init__(self, cog: "PlayerCog", state: "AudioState"):
@@ -406,6 +415,36 @@ class PlayerControls(discord.ui.View):
 
         if self.state.crossfade_enabled:
             self.cog.bot.loop.create_task(self.cog._prepare_current_crossfade(self.state))
+
+    @discord.ui.button(label="Save", style=discord.ButtonStyle.secondary, emoji="💾", row=1)
+    async def save(self, button: discord.ui.Button, interaction: discord.Interaction):
+        try:
+            code, track_count = self.cog.save_playlist(self.state, interaction.user.id)
+        except PlaylistDataError:
+            logger.warning(
+                f"Playlist save rejected in guild {self.state.guild_id}: empty or invalid queue"
+            )
+            await interaction.response.send_message(
+                embed=error_embed("บันทึกคิวไม่ได้ค่ะ", "ไม่มีเพลงให้บันทึกในคิวตอนนี้นะคะ"),
+                ephemeral=True,
+            )
+            return
+        except PlaylistStoreError:
+            logger.error(f"Playlist save failed in guild {self.state.guild_id}")
+            await interaction.response.send_message(
+                embed=error_embed("บันทึกคิวไม่ได้ค่ะ", "ระบบจัดเก็บเพลย์ลิสต์มีปัญหาชั่วคราว ลองใหม่อีกครั้งนะคะ"),
+                ephemeral=True,
+            )
+            return
+
+        logger.info(f"Saved playlist in guild {self.state.guild_id} with {track_count} tracks")
+        await interaction.response.send_message(
+            embed=success_embed(
+                "💾 บันทึกเพลย์ลิสต์แล้วค่ะ",
+                f"รหัสส่วนตัวของเซ็นเซย์คือ `{code}`\nใช้ `/music queue restore {code}` เพื่อกู้คืนภายใน 30 วันนะคะ",
+            ),
+            ephemeral=True,
+        )
 
     @discord.ui.button(style=discord.ButtonStyle.danger, emoji="⏹️", row=0)
     async def stop(self, button: discord.ui.Button, interaction: discord.Interaction):
@@ -548,15 +587,103 @@ class QueuePaginator(discord.ui.View):
                 pass
 
 class PlayerCog(commands.Cog):
-    def __init__(self, bot: discord.Bot):
+    def __init__(self, bot: discord.Bot, playlist_store: PlaylistStore | None = None):
         self.bot = bot
         self.states: dict[int, AudioState] = {}
         self._executor = ThreadPoolExecutor(max_workers=4)
+        self.playlist_store = playlist_store or PlaylistStore()
 
     def get_state(self, guild_id: int) -> AudioState:
         if guild_id not in self.states:
             self.states[guild_id] = AudioState(self.bot, guild_id)
         return self.states[guild_id]
+
+    @staticmethod
+    def _playlist_tracks(state: AudioState) -> list[Track]:
+        tracks = [state.current] if state.current else []
+        if state.crossfade_next:
+            tracks.append(state.crossfade_next)
+        tracks.extend(state.queue)
+        return tracks
+
+    def save_playlist(self, state: AudioState, owner_id: int) -> tuple[str, int]:
+        tracks = self._playlist_tracks(state)
+        playlist_tracks = [
+            {
+                "query": track.original_url or track.title,
+                "title": track.title,
+            }
+            for track in tracks
+        ]
+        code = self.playlist_store.save(owner_id, playlist_tracks)
+        return code, len(playlist_tracks)
+
+    @staticmethod
+    def _restore_tracks(
+        playlist_tracks: list[dict[str, str]], requester: discord.User | discord.Member
+    ) -> list[Track]:
+        return [
+            Track(
+                title=item["title"] or item["query"],
+                duration=0,
+                thumbnail="",
+                requester=requester,
+                original_url=item["query"],
+            )
+            for item in playlist_tracks
+        ]
+
+    async def _ensure_voice_connection(
+        self, ctx: discord.ApplicationContext, state: AudioState
+    ) -> None:
+        if not ctx.author.voice or not ctx.author.voice.channel:
+            raise UserError(
+                "ยังไม่ได้เข้าห้องเสียงค่ะ",
+                "เซ็นเซย์ต้องเข้าห้องเสียงก่อน แล้วหนูจะตามเข้าไปนะคะ",
+            )
+
+        channel = ctx.author.voice.channel
+        voice_client = ctx.guild.voice_client
+        if voice_client and voice_client.is_connected():
+            if voice_client.channel.id != channel.id:
+                raise UserError(
+                    "อยู่คนละห้องค่ะ",
+                    "เซ็นเซย์ต้องอยู่ห้องเสียงเดียวกับหนูก่อนนะคะ",
+                )
+            state.voice_client = voice_client
+            return
+
+        if voice_client:
+            try:
+                await voice_client.disconnect(force=True)
+            except Exception:
+                pass
+        state.voice_client = await channel.connect()
+
+    def _replace_queue(self, state: AudioState, tracks: list[Track]) -> None:
+        self._clear_crossfade(state)
+        state.queue.clear()
+        state.history.clear()
+        state.forward_history.clear()
+        state.current = None
+        state.current_played = False
+        state.skip_request = False
+        state.queue.extend(tracks)
+
+        if state.voice_client and (
+            state.voice_client.is_playing() or state.voice_client.is_paused()
+        ):
+            state.suppress_next_after = True
+            state.voice_client.stop()
+
+    async def _restore_playlist_to_state(
+        self,
+        state: AudioState,
+        playlist_tracks: list[dict[str, str]],
+        requester: discord.User | discord.Member,
+    ) -> None:
+        self._replace_queue(state, self._restore_tracks(playlist_tracks, requester))
+        await self._play_next_async(state.guild_id, auto_send=True)
 
     def _clear_crossfade(self, state: AudioState):
         if state.crossfade_task and not state.crossfade_task.done():
@@ -1053,6 +1180,9 @@ class PlayerCog(commands.Cog):
             await asyncio.get_event_loop().run_in_executor(self._executor, buffered_source.wait_ready)
 
             def after_playing(e):
+                if state.suppress_next_after:
+                    state.suppress_next_after = False
+                    return
                 if e:
                     logger.error(f"Player error in guild {guild_id}: {e}")
                 self.bot.loop.create_task(self._play_next_async(guild_id))
@@ -1184,15 +1314,7 @@ class PlayerCog(commands.Cog):
             
             await ctx.interaction.edit_original_response(embed=success_embed("✅ เพิ่มเข้าคิวแล้ว!", f"เพิ่ม `{title}` ลงคิวเรียบร้อยค่ะ! (๑>◡<๑)"))
 
-        if not ctx.guild.voice_client or not ctx.guild.voice_client.is_connected():
-            if ctx.guild.voice_client:
-                try:
-                    await ctx.guild.voice_client.disconnect(force=True)
-                except Exception:
-                    pass
-            state.voice_client = await channel.connect()
-        else:
-            state.voice_client = ctx.guild.voice_client
+        await self._ensure_voice_connection(ctx, state)
 
         if not state.current or not state.voice_client.is_playing():
             self.bot.loop.create_task(self._play_next_async(ctx.guild.id, auto_send=True))
@@ -1301,15 +1423,7 @@ class PlayerCog(commands.Cog):
         msg = f"Playlist ({added_count} เพลง)" if is_playlist else f"[{first_track.title}]({first_track.original_url})"
         await ctx.interaction.edit_original_response(embed=success_embed("✅ เพิ่มเข้าคิวแล้ว!", f"เพิ่ม {msg} ลงคิวเรียบร้อยค่ะ! ไปดูที่หน้าเล่นเพลงได้เลยนะคะ (๑>◡<๑)"))
 
-        if not ctx.guild.voice_client or not ctx.guild.voice_client.is_connected():
-            if ctx.guild.voice_client:
-                try:
-                    await ctx.guild.voice_client.disconnect(force=True)
-                except Exception:
-                    pass
-            state.voice_client = await channel.connect()
-        else:
-            state.voice_client = ctx.guild.voice_client
+        await self._ensure_voice_connection(ctx, state)
 
         if not state.current or not state.voice_client.is_playing():
             # if playing is stopped, start it
@@ -1458,8 +1572,10 @@ class PlayerCog(commands.Cog):
             
         await ctx.respond(embed=success_embed("ตั้งค่าลูป", msg))
 
-    @music.command(name="queue", description="📜 ดูคิวเพลงทั้งหมด")
-    async def queue(self, ctx: discord.ApplicationContext):
+    queue_commands = music.create_subgroup("queue", "จัดการคิวเพลง")
+
+    @queue_commands.command(name="show", description="📜 ดูคิวเพลงทั้งหมด")
+    async def queue_show(self, ctx: discord.ApplicationContext):
         state = self.get_state(ctx.guild.id)
         if not state.current and len(state.queue) == 0:
             return await ctx.respond(embed=info_embed("คิวว่าง", "ไม่มีเพลงในคิวเลยค่ะ (´・ω・)"), ephemeral=True)
@@ -1477,6 +1593,77 @@ class PlayerCog(commands.Cog):
             msg = await msg.original_response()
         paginator.message = msg
         state.last_queue_message = msg
+
+    @queue_commands.command(name="restore", description="♻️ กู้คืนคิวเพลงที่บันทึกไว้")
+    @discord.option("code", description="รหัสเพลย์ลิสต์ xxxx-xxxx")
+    async def queue_restore(self, ctx: discord.ApplicationContext, code: str):
+        state = self.get_state(ctx.guild.id)
+        state.text_channel = ctx.channel
+        await ctx.defer(ephemeral=True)
+
+        try:
+            playlist_tracks = self.playlist_store.load(code, ctx.author.id)
+        except PlaylistNotFoundError:
+            logger.warning(f"Playlist restore rejected in guild {ctx.guild.id}: invalid code")
+            await ctx.interaction.edit_original_response(
+                embed=error_embed("ไม่พบรหัสเพลย์ลิสต์ค่ะ", "ตรวจสอบรหัสแล้วลองใหม่อีกครั้งนะคะ")
+            )
+            return
+        except PlaylistOwnershipError:
+            logger.warning(f"Playlist restore rejected in guild {ctx.guild.id}: owner mismatch")
+            await ctx.interaction.edit_original_response(
+                embed=error_embed("ใช้รหัสนี้ไม่ได้ค่ะ", "รหัสเพลย์ลิสต์เป็นรหัสส่วนตัวของผู้บันทึกนะคะ")
+            )
+            return
+        except PlaylistExpiredError:
+            logger.warning(f"Playlist restore rejected in guild {ctx.guild.id}: expired code")
+            await ctx.interaction.edit_original_response(
+                embed=error_embed("รหัสเพลย์ลิสต์หมดอายุแล้วค่ะ", "บันทึกใหม่อีกครั้งเพื่อรับรหัสใหม่นะคะ")
+            )
+            return
+        except PlaylistDataError:
+            logger.warning(f"Playlist restore rejected in guild {ctx.guild.id}: malformed data")
+            await ctx.interaction.edit_original_response(
+                embed=error_embed("ข้อมูลเพลย์ลิสต์ใช้ไม่ได้ค่ะ", "ข้อมูลที่บันทึกไว้ไม่สมบูรณ์ ลองบันทึกคิวใหม่อีกครั้งนะคะ")
+            )
+            return
+        except PlaylistStoreError:
+            logger.error(f"Playlist restore failed in guild {ctx.guild.id}: datastore error")
+            await ctx.interaction.edit_original_response(
+                embed=error_embed("กู้คืนคิวไม่ได้ค่ะ", "ระบบจัดเก็บเพลย์ลิสต์มีปัญหาชั่วคราว ลองใหม่อีกครั้งนะคะ")
+            )
+            return
+
+        try:
+            await self._ensure_voice_connection(ctx, state)
+            playlist_tracks = self.playlist_store.consume(code, ctx.author.id)
+            await self._restore_playlist_to_state(state, playlist_tracks, ctx.author)
+        except UserError as error:
+            logger.warning(f"Playlist restore rejected in guild {ctx.guild.id}: voice validation")
+            await ctx.interaction.edit_original_response(
+                embed=error_embed(error.title, error.description)
+            )
+            return
+        except PlaylistStoreError:
+            logger.warning(f"Playlist restore failed in guild {ctx.guild.id}: playlist was unavailable")
+            await ctx.interaction.edit_original_response(
+                embed=error_embed("กู้คืนคิวไม่ได้ค่ะ", "เพลย์ลิสต์นี้ถูกใช้หรือเปลี่ยนแปลงแล้ว ลองบันทึกคิวใหม่อีกครั้งนะคะ")
+            )
+            return
+        except Exception:
+            logger.exception(f"Playlist restore failed in guild {ctx.guild.id}: playback setup")
+            await ctx.interaction.edit_original_response(
+                embed=error_embed("กู้คืนคิวไม่ได้ค่ะ", "หนูเริ่มเล่นเพลย์ลิสต์นี้ไม่ได้ ลองใหม่อีกครั้งนะคะ")
+            )
+            return
+
+        logger.info(f"Restored playlist in guild {ctx.guild.id} with {len(playlist_tracks)} tracks")
+        await ctx.interaction.edit_original_response(
+            embed=success_embed(
+                "♻️ กู้คืนเพลย์ลิสต์แล้วค่ะ",
+                f"กำลังเริ่มเล่น {len(playlist_tracks)} เพลงตามลำดับที่บันทึกไว้นะคะ",
+            )
+        )
 
     @music.command(name="volume", description="🔊 ปรับระดับเสียง (0-100)")
     async def volume(self, ctx: discord.ApplicationContext, level: discord.Option(int, min_value=0, max_value=100)):

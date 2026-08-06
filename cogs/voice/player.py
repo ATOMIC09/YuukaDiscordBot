@@ -580,6 +580,43 @@ class PlayerCog(commands.Cog):
             self.states[guild_id] = AudioState(self.bot, guild_id)
         return self.states[guild_id]
 
+    def _peek_next_track(self, state: AudioState) -> Track | None:
+        """Which track follows `state.current`, honouring the loop mode.
+
+        `_play_next_async` reaches the same answer imperatively when it advances
+        the queue. The crossfade preloader has to agree with it, or a faded
+        transition ends up playing a different song than a gapless one would.
+        Under track loop - or queue loop with nothing else queued - the answer
+        is the current track itself, and it gets crossfaded into itself.
+        """
+        if state.loop_mode == "track":
+            return state.current
+        if state.queue:
+            return state.queue[0]
+        if state.loop_mode == "queue":
+            return state.current
+        return None
+
+    def _crossfade_still_valid(
+        self, state: AudioState, current_track: Track, candidate: Track
+    ) -> bool:
+        """Whether a preload started for `candidate` is still the right thing.
+
+        Preparing a crossfade means awaiting yt-dlp, then sleeping most of the
+        song, then awaiting a decoder prefill. Playback can be skipped, stopped,
+        re-queued or re-ordered across any of those, so every step re-checks.
+        """
+        return (
+            state.crossfade_enabled
+            and state.current is current_track
+            and state.voice_client is not None
+            and state.voice_client.is_playing()
+            and state.crossfade_next is None
+            and state.active_audio_source is not None
+            and not state.active_audio_source.has_pending_crossfade()
+            and self._peek_next_track(state) is candidate
+        )
+
     def _clear_crossfade(self, state: AudioState):
         if state.crossfade_prepare_task and not state.crossfade_prepare_task.done():
             state.crossfade_prepare_task.cancel()
@@ -606,9 +643,11 @@ class PlayerCog(commands.Cog):
         if state.active_audio_source and state.active_audio_source.is_crossfade_active():
             return
         self._clear_crossfade(state)
-        if pending:
+        # A self-crossfade preloaded the track that is still playing; putting it
+        # back in the queue would schedule it twice.
+        if pending and pending is not state.current:
             state.queue.appendleft(pending)
-        
+
     def _build_player_embed(self, track: Track, state: AudioState) -> discord.Embed:
         embed = discord.Embed(
             title=track.title,
@@ -852,13 +891,14 @@ class PlayerCog(commands.Cog):
             or state.crossfade_next
             or not state.active_audio_source
             or state.active_audio_source.has_pending_crossfade()
-            or not state.queue
             or state.current.duration <= 0
         ):
             return
 
         current_track = state.current
-        candidate = state.queue[0]
+        candidate = self._peek_next_track(state)
+        if candidate is None:
+            return
         logger.debug(
             f"[Crossfade] guild {state.guild_id}: preloading next stream "
             f"'{candidate.title}' for active '{current_track.title}'"
@@ -871,17 +911,7 @@ class PlayerCog(commands.Cog):
                 )
                 return
 
-            if (
-                not state.crossfade_enabled
-                or state.current is not current_track
-                or not state.voice_client
-                or not state.voice_client.is_playing()
-                or state.crossfade_next
-                or not state.active_audio_source
-                or state.active_audio_source.has_pending_crossfade()
-                or not state.queue
-                or state.queue[0] is not candidate
-            ):
+            if not self._crossfade_still_valid(state, current_track, candidate):
                 logger.debug(
                     f"[Crossfade] guild {state.guild_id}: preload discarded; "
                     "playback changed while resolving the next stream"
@@ -908,17 +938,7 @@ class PlayerCog(commands.Cog):
             if preload_delay:
                 await asyncio.sleep(preload_delay)
 
-            if (
-                not state.crossfade_enabled
-                or state.current is not current_track
-                or not state.voice_client
-                or not state.voice_client.is_playing()
-                or state.crossfade_next
-                or not state.active_audio_source
-                or state.active_audio_source.has_pending_crossfade()
-                or not state.queue
-                or state.queue[0] is not candidate
-            ):
+            if not self._crossfade_still_valid(state, current_track, candidate):
                 return
 
             next_audio = BufferedAudioSource(
@@ -928,17 +948,7 @@ class PlayerCog(commands.Cog):
             await asyncio.get_event_loop().run_in_executor(
                 self._executor, next_audio.wait_ready
             )
-            if (
-                not state.crossfade_enabled
-                or state.current is not current_track
-                or not state.voice_client
-                or not state.voice_client.is_playing()
-                or state.crossfade_next
-                or not state.queue
-                or state.queue[0] is not candidate
-                or not state.active_audio_source
-                or state.active_audio_source.has_pending_crossfade()
-            ):
+            if not self._crossfade_still_valid(state, current_track, candidate):
                 next_audio.cleanup()
                 return
 
@@ -949,7 +959,11 @@ class PlayerCog(commands.Cog):
                 next_audio.cleanup()
                 return
 
-            state.crossfade_next = state.queue.popleft()
+            # Under a loop mode the successor can be the current track itself,
+            # in which case it was never in the queue to begin with.
+            if state.queue and state.queue[0] is candidate:
+                state.queue.popleft()
+            state.crossfade_next = candidate
             state.crossfade_audio_source = next_audio
             logger.debug(
                 f"[Crossfade] guild {state.guild_id}: preload complete for "
@@ -1034,6 +1048,12 @@ class PlayerCog(commands.Cog):
         state.crossfade_task = None
         if previous and state.current_played:
             state.history.append(previous)
+        # `_play_next_async` sends the outgoing track back to the tail under
+        # queue loop; a faded transition has to do the same or the song drops
+        # out of the rotation one lap at a time. A self-crossfade (track loop,
+        # or queue loop with nothing else queued) never left the rotation.
+        if state.loop_mode == "queue" and previous is not next_track:
+            state.queue.append(previous)
         state.current = next_track
         state.current_played = True
         state.playback_started_at = self.bot.loop.time()
@@ -1062,15 +1082,18 @@ class PlayerCog(commands.Cog):
 
         was_rewinding = state.is_rewinding
         state.is_rewinding = False
-        had_pending_crossfade = state.crossfade_next is not None
-        if had_pending_crossfade:
+        pending = state.crossfade_next
+        if pending is not None:
             # A preloaded successor was never mixed (skip/rewind/source end).
-            pending = state.crossfade_next
             self._clear_crossfade(state)
-            if was_rewinding:
-                state.queue.insert(1, pending)
-            else:
-                state.queue.appendleft(pending)
+            # A self-crossfade preloads the track that is already playing; the
+            # loop bookkeeping below re-queues it, so doing it here too would
+            # make a skip replay the song instead of advancing past it.
+            if pending is not state.current:
+                if was_rewinding:
+                    state.queue.insert(1, pending)
+                else:
+                    state.queue.appendleft(pending)
 
         if state.skip_request:
             state.skip_request = False
@@ -1482,8 +1505,11 @@ class PlayerCog(commands.Cog):
         if state.crossfade_next:
             pending = state.crossfade_next
             self._clear_crossfade(state)
-            state.queue.appendleft(pending)
-        
+            # A self-crossfade preloaded the playing track; re-queueing it here
+            # would make the skip replay it instead of advancing.
+            if pending is not state.current:
+                state.queue.appendleft(pending)
+
         if position:
             if position > len(state.queue):
                 raise UserError("ไม่มีเพลงในคิวนั้นค่ะ", f"คิวมีแค่ {len(state.queue)} เพลงนะคะ (´-ω-`)")

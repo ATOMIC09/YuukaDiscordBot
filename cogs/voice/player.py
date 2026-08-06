@@ -1,5 +1,4 @@
 import asyncio
-import array
 import collections
 import dataclasses
 import math
@@ -8,6 +7,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import discord
+import numpy as np
 import yt_dlp
 
 try:
@@ -46,6 +46,9 @@ ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
 
 FRAME_MS = 20
 PCM_FRAME_BYTES = 3840  # 20 ms of 48 kHz, 16-bit, stereo PCM
+PCM_DTYPE = "<i2"  # what ffmpeg's `-f s16le` writes, regardless of host endianness
+PCM_SAMPLE_MIN = -32768
+PCM_SAMPLE_MAX = 32767
 SILENCE_FRAME = b"\x00" * PCM_FRAME_BYTES
 BUFFER_SECONDS = 5.0
 PREFILL_SECONDS = 1.0
@@ -130,9 +133,15 @@ class BufferedAudioSource(discord.AudioSource):
 
 
 class SeamlessCrossfadeSource(discord.AudioSource):
-    """A persistent Discord source that can mix in a preloaded PCM stream."""
+    """A persistent Discord source that can mix in a preloaded PCM stream.
 
-    def __init__(self, current: BufferedAudioSource):
+    Volume is applied here rather than by wrapping this source in a
+    `PCMVolumeTransformer`: the pinned py-cord build scales samples with a
+    Python loop, and stacking that on top of the fade would mean two
+    per-sample passes per frame on the voice send thread.
+    """
+
+    def __init__(self, current: BufferedAudioSource, volume: float = 1.0):
         self._current = current
         self._next: BufferedAudioSource | None = None
         self._fade_frames = 0
@@ -143,7 +152,17 @@ class SeamlessCrossfadeSource(discord.AudioSource):
         self._fade_in_gains: list[float] = []
         self._on_fade_started = None
         self._on_fade_finished = None
+        self._volume = max(0.0, float(volume))
         self._lock = threading.Lock()
+
+    @property
+    def volume(self) -> float:
+        return self._volume
+
+    @volume.setter
+    def volume(self, value: float):
+        # A bare float assignment; `read` snapshots it once per frame.
+        self._volume = max(0.0, float(value))
 
     def schedule_crossfade(
         self,
@@ -186,33 +205,41 @@ class SeamlessCrossfadeSource(discord.AudioSource):
         with self._lock:
             return self._next is not None and self._mix_started
 
-    def _mix_pcm(self, current: bytes, next_frame: bytes, fade_index: int) -> bytes:
-        current_samples = array.array("h")
-        current_samples.frombytes(current)
-        next_samples = array.array("h")
-        next_samples.frombytes(next_frame)
-        out_gain = self._fade_out_gains[fade_index]
-        in_gain = self._fade_in_gains[fade_index]
-        for index, next_sample in enumerate(next_samples):
-            sample = round(current_samples[index] * out_gain + next_sample * in_gain)
-            current_samples[index] = max(-32768, min(32767, sample))
-        return current_samples.tobytes()
+    def _scale(self, frame: bytes, gain: float) -> bytes:
+        if not frame:
+            return frame
+        if gain == 1.0:
+            return frame
+        samples = np.frombuffer(frame, dtype=PCM_DTYPE).astype(np.float32)
+        samples *= gain
+        np.clip(samples, PCM_SAMPLE_MIN, PCM_SAMPLE_MAX, out=samples)
+        return samples.astype(PCM_DTYPE).tobytes()
+
+    def _mix(self, current: bytes, next_frame: bytes, fade_index: int, volume: float) -> bytes:
+        """Blend both decks and apply volume in a single vectorised pass."""
+        out_gain = self._fade_out_gains[fade_index] * volume
+        in_gain = self._fade_in_gains[fade_index] * volume
+        mixed = np.frombuffer(current, dtype=PCM_DTYPE).astype(np.float32) * out_gain
+        mixed += np.frombuffer(next_frame, dtype=PCM_DTYPE).astype(np.float32) * in_gain
+        np.clip(mixed, PCM_SAMPLE_MIN, PCM_SAMPLE_MAX, out=mixed)
+        return mixed.astype(PCM_DTYPE).tobytes()
 
     def read(self) -> bytes:
         current = self._current.read()
+        volume = self._volume
         callback = None
         finish_callback = None
         with self._lock:
             next_source = self._next
 
         if not next_source:
-            return current
+            return self._scale(current, volume)
 
         with self._lock:
             if self._frames_until_fade > 0:
                 if current:
                     self._frames_until_fade -= 1
-                    return current
+                    return self._scale(current, volume)
                 # The outgoing stream ended before the position estimate said it
                 # would. Begin the overlap now rather than dropping into silence
                 # and tearing down a deck that is already buffered and ready.
@@ -228,14 +255,14 @@ class SeamlessCrossfadeSource(discord.AudioSource):
 
         next_frame = next_source.read()
         if not next_frame:
-            return current
+            return self._scale(current, volume)
         if not current:
             # Outgoing deck is spent mid-fade. Keep running the same curve
             # against silence so the incoming track still ramps up to full
             # instead of snapping there, which clicks.
             current = SILENCE_FRAME
 
-        mixed = self._mix_pcm(current, next_frame, fade_index)
+        mixed = self._mix(current, next_frame, fade_index, volume)
         with self._lock:
             self._fade_frame += 1
             if self._fade_frame >= self._fade_frames:
@@ -1186,8 +1213,10 @@ class PlayerCog(commands.Cog):
             buffered_source = BufferedAudioSource(
                 discord.FFmpegPCMAudio(track.stream_url, **ffmpeg_options)
             )
-            persistent_source = SeamlessCrossfadeSource(buffered_source)
-            volume_source = discord.PCMVolumeTransformer(persistent_source, volume=state.volume)
+            # Volume lives inside the mixer rather than in a PCMVolumeTransformer
+            # wrapper, so a frame costs one vectorised pass instead of two
+            # per-sample Python loops on the voice send thread.
+            persistent_source = SeamlessCrossfadeSource(buffered_source, volume=state.volume)
 
             # Wait for the buffer to actually pre-fill (rather than a blind fixed sleep)
             # before Discord starts pulling frames on its strict 20ms clock.
@@ -1198,7 +1227,7 @@ class PlayerCog(commands.Cog):
                     logger.error(f"Player error in guild {guild_id}: {e}")
                 self.bot.loop.create_task(self._play_next_async(guild_id))
 
-            state.voice_client.play(volume_source, after=after_playing)
+            state.voice_client.play(persistent_source, after=after_playing)
             state.active_audio_source = persistent_source
             state.current_played = True
             state.playback_started_at = self.bot.loop.time()
@@ -1629,10 +1658,9 @@ class PlayerCog(commands.Cog):
         state = self.get_state(ctx.guild.id)
         state.volume = level / 100.0
         
-        if ctx.voice_client and ctx.voice_client.source:
-            if isinstance(ctx.voice_client.source, discord.PCMVolumeTransformer):
-                ctx.voice_client.source.volume = state.volume
-                
+        if state.active_audio_source:
+            state.active_audio_source.volume = state.volume
+
         if state.current:
             embed = self._build_player_embed(state.current, state)
             await self._update_controller(state, embed)

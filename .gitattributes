@@ -1,0 +1,24 @@
+# Normalise to LF in the repository, check out with the platform's endings.
+# The index is already LF throughout, so this only makes the existing
+# behaviour explicit and keeps it that way for anyone whose core.autocrlf
+# differs from the default.
+* text=auto
+
+# uv rewrites lock files with LF whenever `uv lock` or `uv add` runs. Without
+# this, git on Windows wants CRLF in the working tree and reports the file as
+# modified even though the content is byte-for-byte identical - which blocks
+# branch switching for no reason.
+*.lock text eol=lf
+
+# Binary assets: never touch these.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.mp3 binary
+*.wav binary
+*.ogg binary
+*.opus binary
+*.ttf binary
+*.otf binary

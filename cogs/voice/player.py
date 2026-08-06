@@ -419,6 +419,9 @@ class PlayerControls(discord.ui.View):
         if self.state.voice_client.is_paused():
             self.state.voice_client.resume()
             self.cog._mark_playback_resumed(self.state)
+            # Arming is refused while paused, so a crossfade toggled on during
+            # the pause would silently miss this track. Retry now.
+            self.cog._request_crossfade_prepare(self.state)
         elif self.state.voice_client.is_playing():
             self.state.voice_client.pause()
             self.cog._mark_playback_paused(self.state)
@@ -1044,6 +1047,7 @@ class PlayerCog(commands.Cog):
             await state.voice_client.disconnect()
             state.voice_client = None
             self._clear_crossfade(state)
+            state.active_audio_source = None
             state.queue.clear()
             state.current = None
             state.history.clear()
@@ -1120,6 +1124,7 @@ class PlayerCog(commands.Cog):
             state.history.clear()
             state.forward_history.clear()
             state.crossfade_next = None
+            state.active_audio_source = None
             return
 
         # A previous track may still be waiting to open its delayed preload.
@@ -1167,6 +1172,9 @@ class PlayerCog(commands.Cog):
 
         if len(state.queue) == 0:
             state.current = None
+            # The source that just ended is finished; keeping the handle would
+            # leave `/volume` and the crossfade guards pointing at a dead mixer.
+            state.active_audio_source = None
             if state.last_controller_message:
                 try:
                     embeds = state.last_controller_message.embeds
@@ -1256,6 +1264,7 @@ class PlayerCog(commands.Cog):
 
         state = self.get_state(ctx.guild.id)
         self._clear_crossfade(state)
+        state.active_audio_source = None
         state.queue.clear()
         state.current = None
         state.history.clear()
@@ -1513,10 +1522,13 @@ class PlayerCog(commands.Cog):
         
         state = self.get_state(ctx.guild.id)
         self._mark_playback_resumed(state)
+        # Arming is refused while paused, so a crossfade toggled on during the
+        # pause would silently miss this track. Retry now.
+        self._request_crossfade_prepare(state)
         if state.current:
             embed = self._build_player_embed(state.current, state)
             await self._update_controller(state, embed)
-            
+
         await ctx.respond(embed=info_embed("▶️ เล่นเพลงต่อ", "หนูเล่นเพลงต่อแล้วนะคะ! (๑>◡<๑)"))
 
     @music.command(name="stop", description="⏹️ หยุดเพลงและล้างคิวทั้งหมด")

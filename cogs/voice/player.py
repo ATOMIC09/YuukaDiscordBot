@@ -50,6 +50,7 @@ PREFILL_SECONDS = 1.0
 CROSSFADE_SECONDS = 7.0
 CROSSFADE_BUFFER_SECONDS = 2.0
 CROSSFADE_STARTUP_GRACE_SECONDS = 5.0
+CROSSFADE_PRELOAD_LEAD_SECONDS = CROSSFADE_BUFFER_SECONDS + PREFILL_SECONDS
 
 class BufferedAudioSource(discord.AudioSource):
     """
@@ -123,6 +124,7 @@ class SeamlessCrossfadeSource(discord.AudioSource):
         self._frames_until_fade = 0
         self._mix_started = False
         self._on_fade_started = None
+        self._on_fade_finished = None
         self._lock = threading.Lock()
 
     def schedule_crossfade(
@@ -131,6 +133,7 @@ class SeamlessCrossfadeSource(discord.AudioSource):
         duration: float,
         frames_until_fade: int,
         on_fade_started,
+        on_fade_finished,
     ):
         with self._lock:
             self._next = next_source
@@ -139,6 +142,7 @@ class SeamlessCrossfadeSource(discord.AudioSource):
             self._frames_until_fade = max(0, frames_until_fade)
             self._mix_started = False
             self._on_fade_started = on_fade_started
+            self._on_fade_finished = on_fade_finished
 
     def cancel_scheduled_crossfade(self):
         with self._lock:
@@ -147,6 +151,7 @@ class SeamlessCrossfadeSource(discord.AudioSource):
             next_source = self._next
             self._next = None
             self._on_fade_started = None
+            self._on_fade_finished = None
             return next_source
 
     def has_pending_crossfade(self) -> bool:
@@ -172,6 +177,7 @@ class SeamlessCrossfadeSource(discord.AudioSource):
     def read(self) -> bytes:
         current = self._current.read()
         callback = None
+        finish_callback = None
         with self._lock:
             next_source = self._next
             fade_frame = self._fade_frame
@@ -197,6 +203,10 @@ class SeamlessCrossfadeSource(discord.AudioSource):
             with self._lock:
                 self._current = next_source
                 self._next = None
+                finish_callback = self._on_fade_finished
+                self._on_fade_finished = None
+            if finish_callback:
+                finish_callback()
             return next_frame
         if not next_frame:
             return current
@@ -210,7 +220,11 @@ class SeamlessCrossfadeSource(discord.AudioSource):
                 self._current = next_source
                 self._next = None
                 self._on_fade_started = None
+                finish_callback = self._on_fade_finished
+                self._on_fade_finished = None
                 old_current.cleanup()
+        if finish_callback:
+            finish_callback()
         return mixed
 
     def is_opus(self) -> bool:
@@ -221,6 +235,7 @@ class SeamlessCrossfadeSource(discord.AudioSource):
             sources = (self._current, self._next)
             self._next = None
             self._on_fade_started = None
+            self._on_fade_finished = None
         for source in sources:
             if source:
                 source.cleanup()
@@ -883,6 +898,29 @@ class PlayerCog(commands.Cog):
                 )
                 return
 
+            # Resolving metadata is cheap, but starting another FFmpeg decoder
+            # during most of the current song can starve the active stream.
+            # Open it only shortly before its buffered frames are needed.
+            preload_delay = max(
+                0.0,
+                remaining - duration - CROSSFADE_PRELOAD_LEAD_SECONDS,
+            )
+            if preload_delay:
+                await asyncio.sleep(preload_delay)
+
+            if (
+                not state.crossfade_enabled
+                or state.current is not current_track
+                or not state.voice_client
+                or not state.voice_client.is_playing()
+                or state.crossfade_next
+                or not state.active_audio_source
+                or state.active_audio_source.has_pending_crossfade()
+                or not state.queue
+                or state.queue[0] is not candidate
+            ):
+                return
+
             next_audio = BufferedAudioSource(
                 discord.FFmpegPCMAudio(candidate.stream_url, **ffmpeg_options),
                 buffer_seconds=CROSSFADE_BUFFER_SECONDS,
@@ -893,9 +931,13 @@ class PlayerCog(commands.Cog):
             if (
                 not state.crossfade_enabled
                 or state.current is not current_track
+                or not state.voice_client
+                or not state.voice_client.is_playing()
+                or state.crossfade_next
                 or not state.queue
                 or state.queue[0] is not candidate
                 or not state.active_audio_source
+                or state.active_audio_source.has_pending_crossfade()
             ):
                 next_audio.cleanup()
                 return
@@ -922,6 +964,9 @@ class PlayerCog(commands.Cog):
                     lambda: self.bot.loop.create_task(
                         self._activate_crossfade(state, current_track, candidate, duration)
                     )
+                ),
+                lambda: self.bot.loop.call_soon_threadsafe(
+                    self._request_crossfade_prepare, state
                 ),
             )
         except Exception as e:
@@ -1008,6 +1053,12 @@ class PlayerCog(commands.Cog):
             state.forward_history.clear()
             state.crossfade_next = None
             return
+
+        # A previous track may still be waiting to open its delayed preload.
+        # It must not block preparation for the new current track.
+        if state.crossfade_prepare_task and not state.crossfade_prepare_task.done():
+            state.crossfade_prepare_task.cancel()
+        state.crossfade_prepare_task = None
 
         was_rewinding = state.is_rewinding
         state.is_rewinding = False

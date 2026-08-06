@@ -387,7 +387,7 @@ class PlayerControls(discord.ui.View):
             self.loop.style = discord.ButtonStyle.success
 
         # Use Blurple for the enabled state and grey while disabled.
-        self.crossfade.label = "Crossfade"
+        self.crossfade.label = None
         self.crossfade.emoji = "🔀"
         self.crossfade.style = (
             discord.ButtonStyle.primary
@@ -454,7 +454,7 @@ class PlayerControls(discord.ui.View):
         embed = self.cog._build_player_embed(self.state.current, self.state)
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="Crossfade", style=discord.ButtonStyle.secondary, emoji="🔀", row=1)
+    @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="🔀", row=1)
     async def crossfade(self, button: discord.ui.Button, interaction: discord.Interaction):
         self.state.crossfade_enabled = not self.state.crossfade_enabled
         if not self.state.crossfade_enabled:

@@ -56,6 +56,9 @@ CROSSFADE_SECONDS = 5.0
 CROSSFADE_BUFFER_SECONDS = BUFFER_SECONDS
 CROSSFADE_STARTUP_GRACE_SECONDS = 5.0
 CROSSFADE_PRELOAD_LEAD_SECONDS = CROSSFADE_BUFFER_SECONDS + PREFILL_SECONDS
+SEEK_BACKWARD_SECONDS = 10.0
+SEEK_FORWARD_SECONDS = 30.0
+PROGRESS_BAR_SLOTS = 20
 
 
 def equal_power_gains(fade_frames: int) -> tuple[list[float], list[float]]:
@@ -113,6 +116,15 @@ class BufferedAudioSource(discord.AudioSource):
     def wait_ready(self, timeout: float = 3.0):
         self._ready.wait(timeout=timeout)
 
+    def started_ok(self) -> bool:
+        """Whether the decoder produced audio rather than dying on startup.
+
+        Only meaningful before anything drains the queue: a decoder that has
+        already finished without a single buffered frame never played at all,
+        which is what an expired stream URL looks like.
+        """
+        return not (self._finished.is_set() and self._queue.empty())
+
     def read(self) -> bytes:
         while True:
             try:
@@ -153,6 +165,7 @@ class SeamlessCrossfadeSource(discord.AudioSource):
         self._on_fade_started = None
         self._on_fade_finished = None
         self._volume = max(0.0, float(volume))
+        self._generation = 0
         self._lock = threading.Lock()
 
     @property
@@ -205,6 +218,21 @@ class SeamlessCrossfadeSource(discord.AudioSource):
         with self._lock:
             return self._next is not None and self._mix_started
 
+    def swap_current(self, new_source: BufferedAudioSource) -> BufferedAudioSource | None:
+        """Replace the playing deck in place - how a seek lands.
+
+        The voice client goes on pulling frames from this same object, so the
+        track never "ends" and `after_playing` never advances the queue. The
+        caller must have cleared any armed crossfade first: its frame countdown
+        was measured against the deck being retired. Returns the displaced deck
+        so the caller can tear it down away from the send thread.
+        """
+        with self._lock:
+            displaced = self._current
+            self._current = new_source
+            self._generation += 1
+        return displaced
+
     def _scale(self, frame: bytes, gain: float) -> bytes:
         if not frame:
             return frame
@@ -225,11 +253,21 @@ class SeamlessCrossfadeSource(discord.AudioSource):
         return mixed.astype(PCM_DTYPE).tobytes()
 
     def read(self) -> bytes:
-        current = self._current.read()
+        with self._lock:
+            deck = self._current
+            generation = self._generation
+        current = deck.read()
         volume = self._volume
         callback = None
         finish_callback = None
         with self._lock:
+            if generation != self._generation:
+                # A seek retired this deck while we were blocked reading it.
+                # The empty frame that a torn-down deck returns means "replaced",
+                # not "track over" - passing it on would stop the voice client
+                # and advance the queue. Emit 20 ms of silence instead and let
+                # the next call pick up the deck that took its place.
+                return SILENCE_FRAME
             next_source = self._next
 
         if not next_source:
@@ -305,6 +343,25 @@ def format_duration(seconds: int | None) -> str:
         return f"{hours}:{mins:02d}:{secs:02d}"
     return f"{mins}:{secs:02d}"
 
+def render_progress_bar(position: float, duration: int, paused: bool = False) -> str:
+    head = "⏸️" if paused else "▶️"
+    elapsed = format_duration(int(position)) if position >= 1 else "0:00"
+    if duration <= 0:
+        return f"{head} 🔴 **LIVE**  `{elapsed}`"
+    ratio = min(1.0, max(0.0, position / duration))
+    knob = int(ratio * (PROGRESS_BAR_SLOTS - 1))
+    bar = "▬" * knob + "🔘" + "▬" * (PROGRESS_BAR_SLOTS - 1 - knob)
+    return f"{head} {bar}\n`{elapsed} / {format_duration(duration)}`"
+
+def parse_timestamp(raw: str) -> float | None:
+    parts = raw.strip().split(":")
+    if not 1 <= len(parts) <= 3 or not all(part.isdigit() for part in parts):
+        return None
+    total = 0.0
+    for part in parts:
+        total = total * 60 + int(part)
+    return total
+
 @dataclasses.dataclass
 class Track:
     title: str
@@ -340,6 +397,7 @@ class AudioState:
         self.forward_history: collections.deque[Track] = collections.deque(maxlen=10)
         self.is_rewinding: bool = False
         self.rewind_lock: asyncio.Lock = asyncio.Lock()
+        self.seek_lock: asyncio.Lock = asyncio.Lock()
         self.voice_client: discord.VoiceClient | None = None
         self.loop_mode: str = "off"  # "off", "track", "queue"
         self.crossfade_enabled: bool = False
@@ -368,6 +426,12 @@ class PlayerControls(discord.ui.View):
 
     def update_buttons(self):
         self.rewind.disabled = len(self.state.history) == 0
+
+        # Live streams have no duration to seek within, and mid-fade there are
+        # two tracks playing at once with no single position to move.
+        can_seek = self.cog._can_seek(self.state)
+        self.seek_back.disabled = not can_seek
+        self.seek_forward.disabled = not can_seek
 
         if self.state.voice_client and self.state.voice_client.is_paused():
             self.pause_resume.emoji = "▶️"
@@ -404,12 +468,48 @@ class PlayerControls(discord.ui.View):
             return False
         return True
 
+    async def _handle_seek(self, interaction: discord.Interaction, delta: float):
+        state = self.state
+        if not self.cog._can_seek(state):
+            return await interaction.response.send_message(
+                "ตอนนี้เลื่อนเวลาไม่ได้ค่ะ (´・ω・)", ephemeral=True
+            )
+        if state.seek_lock.locked():
+            # Opening a decoder takes about a second; let the one in flight land
+            # rather than stacking another FFmpeg process behind it.
+            return await interaction.response.send_message(
+                "รอสักครู่นะคะ หนูกำลังเลื่อนเพลงอยู่ค่ะ (´・ω・)", ephemeral=True
+            )
+
+        await interaction.response.defer()
+        async with state.seek_lock:
+            track = state.current
+            if not track:
+                return
+            position = self.cog._current_playback_position(state)
+            target = min(max(0.0, position + delta), max(0.0, track.duration - 1))
+            await self.cog._seek_async(state, target)
+
+        self.update_buttons()
+        try:
+            if state.current:
+                embed = self.cog._build_player_embed(state.current, state)
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.edit_original_response(view=self)
+        except Exception:
+            pass
+
     @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="⏮️", row=0)
     async def rewind(self, button: discord.ui.Button, interaction: discord.Interaction):
         ok = await self.cog._rewind_async(self.state.guild_id)
         if not ok:
             return await interaction.response.send_message("ไม่มีเพลงก่อนหน้าให้ย้อนกลับนะคะ (´・ω・)", ephemeral=True)
         await interaction.response.defer()
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="⏪", row=0)
+    async def seek_back(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await self._handle_seek(interaction, -SEEK_BACKWARD_SECONDS)
 
     @discord.ui.button(style=discord.ButtonStyle.primary, emoji="⏸️", row=0)
     async def pause_resume(self, button: discord.ui.Button, interaction: discord.Interaction):
@@ -419,17 +519,24 @@ class PlayerControls(discord.ui.View):
         if self.state.voice_client.is_paused():
             self.state.voice_client.resume()
             self.cog._mark_playback_resumed(self.state)
-            # Arming is refused while paused, so a crossfade toggled on during
-            # the pause would silently miss this track. Retry now.
             self.cog._request_crossfade_prepare(self.state)
         elif self.state.voice_client.is_playing():
             self.state.voice_client.pause()
             self.cog._mark_playback_paused(self.state)
         else:
             return await interaction.response.send_message("ไม่มีเพลงเล่นอยู่นะคะ", ephemeral=True)
-            
+
         self.update_buttons()
-        await interaction.response.edit_message(view=self)
+
+        if self.state.current:
+            embed = self.cog._build_player_embed(self.state.current, self.state)
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.edit_message(view=self)
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="⏩", row=0)
+    async def seek_forward(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await self._handle_seek(interaction, SEEK_FORWARD_SECONDS)
 
     @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="⏭️", row=0)
     async def skip(self, button: discord.ui.Button, interaction: discord.Interaction):
@@ -439,7 +546,7 @@ class PlayerControls(discord.ui.View):
         self.state.skip_request = True
         self.state.voice_client.stop()
         await interaction.response.defer()
-        
+
     @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="🔁", row=1)
     async def loop(self, button: discord.ui.Button, interaction: discord.Interaction):
         if self.state.loop_mode == "off":
@@ -482,7 +589,7 @@ class PlayerControls(discord.ui.View):
         if self.state.crossfade_enabled:
             self.cog._request_crossfade_prepare(self.state)
 
-    @discord.ui.button(style=discord.ButtonStyle.danger, emoji="⏹️", row=0)
+    @discord.ui.button(style=discord.ButtonStyle.danger, emoji="⏹️", row=1)
     async def stop(self, button: discord.ui.Button, interaction: discord.Interaction):
         self.cog._clear_crossfade(self.state)
         self.state.queue.clear()
@@ -490,10 +597,10 @@ class PlayerControls(discord.ui.View):
         self.state.forward_history.clear()
         self.state.loop_mode = "off"
         self.state.last_controller_message = None
-            
+
         if self.state.voice_client and self.state.voice_client.is_playing():
             self.state.voice_client.stop()
-            
+
         try:
             embeds = interaction.message.embeds
             if embeds:
@@ -504,7 +611,17 @@ class PlayerControls(discord.ui.View):
                 await interaction.response.edit_message(view=None)
         except Exception:
             pass
-            
+        
+    @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="⏱️", row=1)
+    async def refresh(self, button: discord.ui.Button, interaction: discord.Interaction):
+        self.update_buttons()
+        if self.state.current:
+            embed = self.cog._build_player_embed(self.state.current, self.state)
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.edit_message(view=self)
+
+
     async def on_timeout(self):
         for child in self.children:
             child.disabled = True
@@ -744,8 +861,17 @@ class PlayerCog(commands.Cog):
             if track.bitrate:
                 embed.add_field(name="🎵 บิตเรต", value=f"`{int(track.bitrate)} kbps`", inline=True)
         
-        # Append queue
         desc = ""
+        # Guard against a stale caller: the bar belongs to the playing track,
+        # and position is only meaningful for that one.
+        if state.current is track:
+            position = self._current_playback_position(state)
+            if track.duration > 0:
+                position = min(position, track.duration)
+            paused = bool(state.voice_client and state.voice_client.is_paused())
+            desc += render_progress_bar(position, track.duration, paused) + "\n\n"
+
+        # Append queue
         queued_tracks = ([state.crossfade_next] if state.crossfade_next else []) + list(state.queue)
         if queued_tracks:
             desc += "**🎶 คิวถัดไป:**\n"
@@ -899,6 +1025,89 @@ class PlayerCog(commands.Cog):
         if state.playback_started_at is not None and state.playback_paused_at is not None:
             state.playback_started_at += self.bot.loop.time() - state.playback_paused_at
             state.playback_paused_at = None
+
+    @staticmethod
+    def _seek_ffmpeg_options(position: float) -> dict:
+        """Input-seek to `position`. `-ss` has to land before `-i`, and py-cord
+        builds its command line as `before_options` then `-i url`."""
+        options = dict(ffmpeg_options)
+        options["before_options"] = f"-ss {position:.3f} {options['before_options']}"
+        return options
+
+    def _can_seek(self, state: AudioState) -> bool:
+        return bool(
+            state.current
+            and state.current.duration > 0
+            and state.voice_client
+            and state.voice_client.is_connected()
+            and state.active_audio_source is not None
+            and not state.active_audio_source.is_crossfade_active()
+        )
+
+    async def _seek_async(self, state: AudioState, target: float) -> bool:
+        """Restart the decoder at `target` without ending the track.
+
+        FFmpeg cannot seek a pipe that is already being drained, so this opens a
+        second decoder at the new offset and hands it to the live mixer.
+        Stopping the voice client to replay would fire `after_playing` and
+        advance the queue, so the deck is swapped underneath it instead.
+        """
+        track = state.current
+        mixer = state.active_audio_source
+        if not track or not mixer or not track.stream_url:
+            return False
+
+        # An armed fade counts frames from the old position and the preload task
+        # sleeps on the old remaining time; both are wrong the moment we jump.
+        self._cancel_prepared_crossfade(state)
+
+        new_source = BufferedAudioSource(
+            discord.FFmpegPCMAudio(track.stream_url, **self._seek_ffmpeg_options(target))
+        )
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(self._executor, new_source.wait_ready)
+
+        # A stream URL that expired mid-session yields a decoder that dies
+        # immediately. Swapping it in would read as end-of-track and skip the
+        # song, so leave the deck that is playing fine exactly where it is.
+        if not new_source.started_ok():
+            new_source.cleanup()
+            logger.warning(
+                f"[Seek] guild {state.guild_id}: decoder produced no audio for "
+                f"'{track.title}'; keeping the current stream"
+            )
+            self._request_crossfade_prepare(state)
+            return False
+
+        # Opening a decoder takes long enough for a skip, stop or disconnect to
+        # have landed in the meantime.
+        if (
+            state.current is not track
+            or state.active_audio_source is not mixer
+            or not state.voice_client
+            or not state.voice_client.is_connected()
+        ):
+            new_source.cleanup()
+            return False
+
+        displaced = mixer.swap_current(new_source)
+        now = self.bot.loop.time()
+        state.playback_offset_seconds = target
+        state.playback_started_at = now
+        # Seeking while paused stays paused, and reads back as `target` because
+        # the position math stops the clock at `playback_paused_at`.
+        state.playback_paused_at = now if state.voice_client.is_paused() else None
+
+        if displaced:
+            # Tearing down an FFmpeg process blocks; keep it off the event loop.
+            await loop.run_in_executor(self._executor, displaced.cleanup)
+
+        logger.debug(
+            f"[Seek] guild {state.guild_id}: '{track.title}' -> "
+            f"{format_duration(int(target))}"
+        )
+        self._request_crossfade_prepare(state)
+        return True
 
     def _request_crossfade_prepare(self, state: AudioState):
         """Prepare the next stream after the newly started source is stable."""
@@ -1608,6 +1817,41 @@ class PlayerCog(commands.Cog):
                 color=discord.Color(0x5865F2)
             )
         await ctx.respond(embed=embed)
+
+    @music.command(name="seek", description="⏩ เลื่อนไปยังเวลาที่ต้องการ")
+    @discord.option("timestamp", description="เช่น 90, 1:30 หรือ 1:02:03")
+    async def seek(self, ctx: discord.ApplicationContext, timestamp: str):
+        state = self.get_state(ctx.guild.id)
+        track = state.current
+        if not track or not self._can_seek(state):
+            raise UserError("เลื่อนเวลาไม่ได้ค่ะ", "ตอนนี้ไม่มีเพลงที่เลื่อนเวลาได้อยู่เลยค่ะ (´・ω・)")
+
+        target = parse_timestamp(timestamp)
+        if target is None:
+            raise UserError("รูปแบบเวลาไม่ถูกต้องค่ะ", "ลองพิมพ์แบบ `90`, `1:30` หรือ `1:02:03` ดูนะคะ (´・ω・)")
+
+        duration = track.duration
+        if target >= duration:
+            raise UserError(
+                "เวลาเกินความยาวเพลงค่ะ",
+                f"เพลงนี้ยาว {format_duration(duration)} เท่านั้นนะคะ (´-ω-`)",
+            )
+        if state.seek_lock.locked():
+            raise UserError("รอสักครู่นะคะ", "หนูกำลังเลื่อนเพลงอยู่ค่ะ (´・ω・)")
+
+        await ctx.defer()
+        async with state.seek_lock:
+            ok = await self._seek_async(state, target)
+
+        if not ok:
+            raise UserError("เลื่อนเวลาไม่สำเร็จค่ะ", "เพลงเปลี่ยนไปก่อนที่หนูจะเลื่อนเสร็จค่ะ (´-ω-`)")
+
+        if state.current:
+            await self._update_controller(state, self._build_player_embed(state.current, state))
+
+        await ctx.respond(
+            embed=success_embed("⏩ เลื่อนเวลาแล้ว", f"เลื่อนไปที่ {format_duration(int(target))} ให้แล้วนะคะ! (๑>◡<๑)")
+        )
 
     @music.command(name="previous", description="⏮️ ย้อนกลับไปเพลงก่อนหน้า")
     async def previous(self, ctx: discord.ApplicationContext):

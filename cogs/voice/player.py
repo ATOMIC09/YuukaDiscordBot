@@ -1072,7 +1072,6 @@ class PlayerCog(commands.Cog):
             else:
                 state.queue.appendleft(pending)
 
-        was_skipped = state.skip_request
         if state.skip_request:
             state.skip_request = False
         else:
@@ -1089,6 +1088,11 @@ class PlayerCog(commands.Cog):
         # Redo priority: forward history (from a previous rewind) before the normal queue.
         if state.forward_history and not was_rewinding:
             state.queue.appendleft(state.forward_history.pop())
+        elif state.forward_history and was_rewinding:
+            # The rewind itself is a hard transition to the previous track.
+            # Put the track we came from immediately after it so its later,
+            # natural ending can Crossfade back into the expected sequence.
+            state.queue.insert(1, state.forward_history.pop())
 
         if len(state.queue) == 0:
             state.current = None
@@ -1156,7 +1160,9 @@ class PlayerCog(commands.Cog):
             state.playback_started_at = self.bot.loop.time()
             state.playback_paused_at = None
             state.playback_offset_seconds = 0.0
-            if state.crossfade_enabled and not was_skipped and not was_rewinding:
+            # Skip/rewind only disable the transition that just happened. Once
+            # this track is playing, its own natural ending is eligible again.
+            if state.crossfade_enabled:
                 self._request_crossfade_prepare(state)
             logger.info(f"Playing track in guild {guild_id}: {track.title}")
             

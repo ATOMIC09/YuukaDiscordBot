@@ -2,6 +2,7 @@ import asyncio
 import array
 import collections
 import dataclasses
+import math
 import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -45,12 +46,27 @@ ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
 
 FRAME_MS = 20
 PCM_FRAME_BYTES = 3840  # 20 ms of 48 kHz, 16-bit, stereo PCM
+SILENCE_FRAME = b"\x00" * PCM_FRAME_BYTES
 BUFFER_SECONDS = 5.0
 PREFILL_SECONDS = 1.0
 CROSSFADE_SECONDS = 7.0
 CROSSFADE_BUFFER_SECONDS = BUFFER_SECONDS
 CROSSFADE_STARTUP_GRACE_SECONDS = 5.0
 CROSSFADE_PRELOAD_LEAD_SECONDS = CROSSFADE_BUFFER_SECONDS + PREFILL_SECONDS
+
+
+def equal_power_gains(fade_frames: int) -> tuple[list[float], list[float]]:
+    """Constant-energy fade curves, one gain pair per frame of the overlap.
+
+    A linear ramp drops both tracks to 0.5 amplitude at the midpoint, which for
+    uncorrelated audio sums to half the power - an audible 3 dB sag every time.
+    cos/sin keeps `out**2 + in**2 == 1` the whole way across instead. The tables
+    run to `fade_frames` inclusive so the final frame can index a clean 0.0/1.0.
+    """
+    step = math.pi / 2 / fade_frames
+    fade_out = [math.cos(index * step) for index in range(fade_frames + 1)]
+    fade_in = [math.sin(index * step) for index in range(fade_frames + 1)]
+    return fade_out, fade_in
 
 class BufferedAudioSource(discord.AudioSource):
     """
@@ -123,6 +139,8 @@ class SeamlessCrossfadeSource(discord.AudioSource):
         self._fade_frame = 0
         self._frames_until_fade = 0
         self._mix_started = False
+        self._fade_out_gains: list[float] = []
+        self._fade_in_gains: list[float] = []
         self._on_fade_started = None
         self._on_fade_finished = None
         self._lock = threading.Lock()
@@ -135,9 +153,15 @@ class SeamlessCrossfadeSource(discord.AudioSource):
         on_fade_started,
         on_fade_finished,
     ):
+        fade_frames = max(1, round(duration * 1000 / FRAME_MS))
+        # Built outside the lock: this is the only trigonometry in the path, and
+        # the send thread must never wait on it.
+        fade_out, fade_in = equal_power_gains(fade_frames)
         with self._lock:
             self._next = next_source
-            self._fade_frames = max(1, round(duration * 1000 / FRAME_MS))
+            self._fade_frames = fade_frames
+            self._fade_out_gains = fade_out
+            self._fade_in_gains = fade_in
             self._fade_frame = 0
             self._frames_until_fade = max(0, frames_until_fade)
             self._mix_started = False
@@ -162,15 +186,15 @@ class SeamlessCrossfadeSource(discord.AudioSource):
         with self._lock:
             return self._next is not None and self._mix_started
 
-    @staticmethod
-    def _mix_pcm(current: bytes, next_frame: bytes, progress: float) -> bytes:
+    def _mix_pcm(self, current: bytes, next_frame: bytes, fade_index: int) -> bytes:
         current_samples = array.array("h")
         current_samples.frombytes(current)
         next_samples = array.array("h")
         next_samples.frombytes(next_frame)
-        current_gain = 1.0 - progress
+        out_gain = self._fade_out_gains[fade_index]
+        in_gain = self._fade_in_gains[fade_index]
         for index, next_sample in enumerate(next_samples):
-            sample = round(current_samples[index] * current_gain + next_sample * progress)
+            sample = round(current_samples[index] * out_gain + next_sample * in_gain)
             current_samples[index] = max(-32768, min(32767, sample))
         return current_samples.tobytes()
 
@@ -180,16 +204,20 @@ class SeamlessCrossfadeSource(discord.AudioSource):
         finish_callback = None
         with self._lock:
             next_source = self._next
-            fade_frame = self._fade_frame
-            fade_frames = self._fade_frames
 
         if not next_source:
             return current
 
         with self._lock:
             if self._frames_until_fade > 0:
-                self._frames_until_fade -= 1
-                return current
+                if current:
+                    self._frames_until_fade -= 1
+                    return current
+                # The outgoing stream ended before the position estimate said it
+                # would. Begin the overlap now rather than dropping into silence
+                # and tearing down a deck that is already buffered and ready.
+                self._frames_until_fade = 0
+            fade_index = min(self._fade_frame, self._fade_frames)
             if self._fade_frame == 0 and self._on_fade_started:
                 self._mix_started = True
                 callback = self._on_fade_started
@@ -199,20 +227,15 @@ class SeamlessCrossfadeSource(discord.AudioSource):
             callback()
 
         next_frame = next_source.read()
-        if not current:
-            with self._lock:
-                self._current = next_source
-                self._next = None
-                finish_callback = self._on_fade_finished
-                self._on_fade_finished = None
-            if finish_callback:
-                finish_callback()
-            return next_frame
         if not next_frame:
             return current
+        if not current:
+            # Outgoing deck is spent mid-fade. Keep running the same curve
+            # against silence so the incoming track still ramps up to full
+            # instead of snapping there, which clicks.
+            current = SILENCE_FRAME
 
-        progress = min(1.0, fade_frame / fade_frames)
-        mixed = self._mix_pcm(current, next_frame, progress)
+        mixed = self._mix_pcm(current, next_frame, fade_index)
         with self._lock:
             self._fade_frame += 1
             if self._fade_frame >= self._fade_frames:
@@ -460,8 +483,6 @@ class PlayerControls(discord.ui.View):
                 await self.state.last_controller_message.edit(view=self)
             except Exception:
                 pass
-
-import math
 
 class JumpToPageModal(discord.ui.Modal):
     def __init__(self, paginator: "QueuePaginator"):

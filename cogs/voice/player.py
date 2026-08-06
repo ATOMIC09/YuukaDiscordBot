@@ -54,7 +54,8 @@ BUFFER_SECONDS = 5.0
 PREFILL_SECONDS = 1.0
 CROSSFADE_SECONDS = 5.0
 CROSSFADE_BUFFER_SECONDS = BUFFER_SECONDS
-CROSSFADE_STARTUP_GRACE_SECONDS = 5.0
+CROSSFADE_STARTUP_MAX_WAIT_SECONDS = 20.0
+CROSSFADE_STARTUP_POLL_SECONDS = 0.25
 CROSSFADE_PRELOAD_LEAD_SECONDS = CROSSFADE_BUFFER_SECONDS + PREFILL_SECONDS
 SEEK_BACKWARD_SECONDS = 10.0
 SEEK_FORWARD_SECONDS = 30.0
@@ -124,6 +125,16 @@ class BufferedAudioSource(discord.AudioSource):
         which is what an expired stream URL looks like.
         """
         return not (self._finished.is_set() and self._queue.empty())
+
+    def is_full(self) -> bool:
+        """Whether the buffer has reached its full depth and gone idle.
+
+        Right after a track starts, this thread is racing to fill from the 1s
+        prefill up to the full cushion, competing for network/CPU the whole
+        way. Once full, it just tops off one frame per 20ms and has slack to
+        spare - the buffer is a lot less exposed to competing background work.
+        """
+        return self._queue.full()
 
     def read(self) -> bytes:
         while True:
@@ -217,6 +228,11 @@ class SeamlessCrossfadeSource(discord.AudioSource):
     def is_crossfade_active(self) -> bool:
         with self._lock:
             return self._next is not None and self._mix_started
+
+    def current_buffer_full(self) -> bool:
+        with self._lock:
+            current = self._current
+        return current.is_full()
 
     def swap_current(self, new_source: BufferedAudioSource) -> BufferedAudioSource | None:
         """Replace the playing deck in place - how a seek lands.
@@ -1125,11 +1141,32 @@ class PlayerCog(commands.Cog):
         )
 
     async def _prepare_crossfade_after_startup(self, state: AudioState, track: Track):
+        """Hold off preparing the next track until this one's own buffer can
+        spare the CPU/network budget.
+
+        Preparing the next track means a yt-dlp extraction (pure-Python,
+        occasionally running a JS interpreter for signature decryption) that
+        can hold the GIL long enough to starve this track's buffer thread.
+        Right after a track starts, that thread is racing from a 1s prefill up
+        to its full cushion and has no slack to give - competing with it here
+        is exactly when it stutters. Waiting for the buffer to actually reach
+        full depth (rather than guessing a fixed delay) adapts to whatever the
+        network is doing instead of assuming a delay that fit one test run.
+        """
         task = asyncio.current_task()
         try:
-            if state.playback_started_at is not None:
-                elapsed = self._current_playback_position(state)
-                await asyncio.sleep(max(0.0, CROSSFADE_STARTUP_GRACE_SECONDS - elapsed))
+            deadline = self.bot.loop.time() + CROSSFADE_STARTUP_MAX_WAIT_SECONDS
+            while self.bot.loop.time() < deadline:
+                if (
+                    not state.crossfade_enabled
+                    or state.current is not track
+                    or not state.voice_client
+                    or not state.voice_client.is_playing()
+                ):
+                    return
+                if state.active_audio_source and state.active_audio_source.current_buffer_full():
+                    break
+                await asyncio.sleep(CROSSFADE_STARTUP_POLL_SECONDS)
             if (
                 state.crossfade_enabled
                 and state.current is track

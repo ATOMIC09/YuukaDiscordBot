@@ -1824,27 +1824,42 @@ class PlayerCog(commands.Cog):
         state = self.get_state(ctx.guild.id)
         track = state.current
         if not track or not self._can_seek(state):
-            raise UserError("เลื่อนเวลาไม่ได้ค่ะ", "ตอนนี้ไม่มีเพลงที่เลื่อนเวลาได้อยู่เลยค่ะ (´・ω・)")
+            return await ctx.respond(
+                embed=error_embed("เลื่อนเวลาไม่ได้ค่ะ", "ตอนนี้ไม่มีเพลงที่เลื่อนเวลาได้อยู่เลยค่ะ (´・ω・)"),
+                ephemeral=True
+            )
 
         target = parse_timestamp(timestamp)
         if target is None:
-            raise UserError("รูปแบบเวลาไม่ถูกต้องค่ะ", "ลองพิมพ์แบบ `90`, `1:30` หรือ `1:02:03` ดูนะคะ (´・ω・)")
+            return await ctx.respond(
+                embed=error_embed("รูปแบบเวลาไม่ถูกต้องค่ะ", "ลองพิมพ์แบบ `90`, `1:30` หรือ `1:02:03` ดูนะคะ (´・ω・)"),
+                ephemeral=True
+            )
 
         duration = track.duration
         if target >= duration:
-            raise UserError(
-                "เวลาเกินความยาวเพลงค่ะ",
-                f"เพลงนี้ยาว {format_duration(duration)} เท่านั้นนะคะ (´-ω-`)",
+            return await ctx.respond(
+                embed=error_embed(
+                    "เวลาเกินความยาวเพลงค่ะ",
+                    f"เพลงนี้ยาว {format_duration(duration)} เท่านั้นนะคะ (´-ω-`)",
+                ),
+                ephemeral=True
             )
         if state.seek_lock.locked():
-            raise UserError("รอสักครู่นะคะ", "หนูกำลังเลื่อนเพลงอยู่ค่ะ (´・ω・)")
+            return await ctx.respond(
+                embed=error_embed("รอสักครู่นะคะ", "หนูกำลังเลื่อนเพลงอยู่ค่ะ (´・ω・)"),
+                ephemeral=True
+            )
 
         await ctx.defer()
         async with state.seek_lock:
             ok = await self._seek_async(state, target)
 
         if not ok:
-            raise UserError("เลื่อนเวลาไม่สำเร็จค่ะ", "เพลงเปลี่ยนไปก่อนที่หนูจะเลื่อนเสร็จค่ะ (´-ω-`)")
+            return await ctx.respond(
+                embed=error_embed("เลื่อนเวลาไม่สำเร็จค่ะ", "เพลงเปลี่ยนไปก่อนที่หนูจะเลื่อนเสร็จค่ะ (´-ω-`)"),
+                ephemeral=True
+            )
 
         if state.current:
             await self._update_controller(state, self._build_player_embed(state.current, state))

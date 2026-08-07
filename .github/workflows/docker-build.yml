@@ -4,6 +4,11 @@ on:
   push:
     tags: [ "v*.*.*" ]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to tag the image with (e.g. 3.0.8) — required so the image gets a proper version tag"
+        required: true
+        type: string
 
 env:
   REGISTRY: ghcr.io
@@ -49,6 +54,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=long
+            type=raw,value=${{ github.event.inputs.version }},enable=${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5

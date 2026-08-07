@@ -59,6 +59,17 @@ git push origin <your-branch> --tags
 ```
 *(Or simply `git push --tags` if your upstream branch is already set).*
 
+### Manual Build Trigger (Optional)
+You can also trigger the `Build and Publish Docker Image` workflow manually instead of relying on the tag push:
+```bash
+gh workflow run docker-build.yml --ref <your-branch> -f version=<A.B.C>
+```
+Example:
+```bash
+gh workflow run docker-build.yml --ref yuuka-v3 -f version=3.0.8
+```
+This publishes the image tagged `A.B.C` to `ghcr.io`, same as a tag-push build.
+
 ### How to Undo a Bump (Unbump)
 If you accidentally bumped the version and haven't pushed yet, you can completely reverse it by deleting the tag and undoing the commit:
 

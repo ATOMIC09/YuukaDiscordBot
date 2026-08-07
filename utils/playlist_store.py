@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import secrets
 import threading
@@ -15,6 +16,7 @@ from typing import Callable, Mapping
 CODE_PATTERN = re.compile(r"^[a-z0-9]{4}-[a-z0-9]{4}$")
 CODE_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
 DEFAULT_EXPIRY = timedelta(days=30)
+PlaylistTrack = dict[str, str | int]
 
 
 @dataclass(frozen=True)
@@ -25,7 +27,8 @@ class SavedPlaylist:
     owner_id: int
     created_at: datetime
     expires_at: datetime
-    tracks: list[dict[str, str]]
+    start_position_seconds: float
+    tracks: list[PlaylistTrack]
 
 
 class PlaylistStoreError(Exception):
@@ -69,8 +72,15 @@ class PlaylistStore:
         self._code_factory = code_factory
         self._lock = threading.Lock()
 
-    def save(self, owner_id: int, tracks: list[Mapping[str, str]]) -> str:
+    def save(
+        self,
+        owner_id: int,
+        tracks: list[Mapping[str, object]],
+        *,
+        start_position_seconds: float = 0.0,
+    ) -> str:
         clean_tracks = self._validate_tracks(tracks)
+        start_position = self._validate_start_position(start_position_seconds)
         with self._lock:
             data = self._read()
             code = self._new_code(data["playlists"])
@@ -79,26 +89,31 @@ class PlaylistStore:
                 "owner_id": owner_id,
                 "created_at": now.isoformat(),
                 "expires_at": (now + self.expiry).isoformat(),
+                "start_position_seconds": start_position,
                 "tracks": clean_tracks,
             }
             self._write(data)
         return code
 
-    def load(self, code: str) -> list[dict[str, str]]:
+    def load(self, code: str) -> list[PlaylistTrack]:
         normalized_code = self._normalize_code(code)
         with self._lock:
             data = self._read()
             return self._playlist_info(data, normalized_code).tracks
 
-    def consume(self, code: str) -> list[dict[str, str]]:
+    def consume(self, code: str) -> list[PlaylistTrack]:
         """Return a valid playlist and permanently remove it in the same write."""
+        return self.consume_playlist(code).tracks
+
+    def consume_playlist(self, code: str) -> SavedPlaylist:
+        """Return playlist metadata and permanently remove it in the same write."""
         normalized_code = self._normalize_code(code)
         with self._lock:
             data = self._read()
-            tracks = self._playlist_info(data, normalized_code).tracks
+            playlist = self._playlist_info(data, normalized_code)
             del data["playlists"][normalized_code]
             self._write(data)
-        return tracks
+        return playlist
 
     def details(self, code: str) -> SavedPlaylist:
         """Return display metadata without consuming a valid playlist."""
@@ -149,6 +164,9 @@ class PlaylistStore:
             owner_id=owner_id,
             created_at=created_at,
             expires_at=expires_at,
+            start_position_seconds=self._validate_start_position(
+                playlist.get("start_position_seconds", 0.0)
+            ),
             tracks=self._validate_tracks(playlist.get("tracks")),
         )
 
@@ -199,11 +217,11 @@ class PlaylistStore:
         return timestamp.astimezone(UTC)
 
     @staticmethod
-    def _validate_tracks(tracks: object) -> list[dict[str, str]]:
+    def _validate_tracks(tracks: object) -> list[PlaylistTrack]:
         if not isinstance(tracks, list) or not tracks:
             raise PlaylistDataError("Playlist has no tracks")
 
-        clean_tracks: list[dict[str, str]] = []
+        clean_tracks: list[PlaylistTrack] = []
         for track in tracks:
             if not isinstance(track, Mapping):
                 raise PlaylistDataError("Playlist track is invalid")
@@ -211,7 +229,23 @@ class PlaylistStore:
             title = track.get("title")
             if not isinstance(query, str) or not query.strip():
                 raise PlaylistDataError("Playlist track has no search query")
-            clean_tracks.append(
-                {"query": query.strip(), "title": title.strip() if isinstance(title, str) else ""}
-            )
+            clean_track: PlaylistTrack = {
+                "query": query.strip(),
+                "title": title.strip() if isinstance(title, str) else "",
+            }
+            duration = track.get("duration")
+            if duration is not None:
+                if isinstance(duration, bool) or not isinstance(duration, int) or duration < 0:
+                    raise PlaylistDataError("Playlist track duration is invalid")
+                clean_track["duration"] = duration
+            clean_tracks.append(clean_track)
         return clean_tracks
+
+    @staticmethod
+    def _validate_start_position(value: object) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise PlaylistDataError("Playlist start position is invalid")
+        position = float(value)
+        if not math.isfinite(position) or position < 0:
+            raise PlaylistDataError("Playlist start position is invalid")
+        return position

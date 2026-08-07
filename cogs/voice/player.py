@@ -23,6 +23,7 @@ from utils.playlist_store import (
     PlaylistDataError,
     PlaylistExpiredError,
     PlaylistNotFoundError,
+    PlaylistTrack,
     SavedPlaylist,
     PlaylistStore,
     PlaylistStoreError,
@@ -433,6 +434,7 @@ class AudioState:
         self.playback_started_at: float | None = None
         self.playback_paused_at: float | None = None
         self.playback_offset_seconds: float = 0.0
+        self.restore_start_position_seconds: float = 0.0
         self.volume: float = 1.0
         self.is_playing_loop: bool = False
         self.skip_request: bool = False
@@ -615,7 +617,6 @@ class PlayerControls(discord.ui.View):
         if self.state.crossfade_enabled:
             self.cog._request_crossfade_prepare(self.state)
 
-    @discord.ui.button(label="Save", style=discord.ButtonStyle.secondary, emoji="💾", row=1)
     async def save(self, button: discord.ui.Button, interaction: discord.Interaction):
         try:
             code, track_count = self.cog.save_playlist(self.state, interaction.user.id)
@@ -676,6 +677,10 @@ class PlayerControls(discord.ui.View):
             await interaction.response.edit_message(embed=embed, view=self)
         else:
             await interaction.response.edit_message(view=self)
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="💾", row=1)
+    async def save_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await self.save(button, interaction)
 
 
     async def on_timeout(self):
@@ -763,19 +768,19 @@ class QueuePaginator(discord.ui.View):
         self.next_button.disabled = self.current_page >= self.total_pages
         self.jump_button.disabled = self.total_pages <= 1
 
-    @discord.ui.button(label="◀️", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="◀️", style=discord.ButtonStyle.primary, row=0)
     async def prev_button(self, button: discord.ui.Button, interaction: discord.Interaction):
         self.current_page -= 1
         self.update_buttons()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
-    @discord.ui.button(label="▶️", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="▶️", style=discord.ButtonStyle.primary, row=0)
     async def next_button(self, button: discord.ui.Button, interaction: discord.Interaction):
         self.current_page += 1
         self.update_buttons()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
-    @discord.ui.button(label="🔢", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="🔢", style=discord.ButtonStyle.secondary, row=0)
     async def jump_button(self, button: discord.ui.Button, interaction: discord.Interaction):
         await interaction.response.send_modal(JumpToPageModal(self))
 
@@ -797,9 +802,50 @@ def _discord_timestamp(value, style: str = "F") -> str:
     return f"<t:{int(value.timestamp())}:{style}>"
 
 
+class RestoreConfirmationView(discord.ui.View):
+    def __init__(
+        self,
+        cog: "PlayerCog",
+        playlist: SavedPlaylist,
+        requester_id: int,
+    ):
+        super().__init__(timeout=60)
+        self.cog = cog
+        self.playlist = playlist
+        self.requester_id = requester_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.requester_id:
+            return True
+        await interaction.response.send_message(
+            embed=error_embed("ปุ่มนี้ไม่ใช่ของเซ็นเซย์ค่ะ", "เปิดหน้ารายการแล้วเลือกเพลย์ลิสต์ของตัวเองได้เลยนะคะ"),
+            ephemeral=True,
+        )
+        return False
+
+    @discord.ui.button(label="♻️ โหลดเพลย์ลิสต์", style=discord.ButtonStyle.primary)
+    async def confirm_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(view=self)
+        await self.cog._restore_saved_playlist(interaction, self.playlist.code)
+
+    @discord.ui.button(label="ยกเลิก", style=discord.ButtonStyle.secondary)
+    async def cancel_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await interaction.response.edit_message(
+            embed=info_embed("ยกเลิกแล้วค่ะ", "คิวที่กำลังเล่นอยู่ยังเหมือนเดิมนะคะ"),
+            view=None,
+        )
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+
+
 class PlaylistDetailsPaginator(discord.ui.View):
-    def __init__(self, playlist: SavedPlaylist, items_per_page: int = 10):
+    def __init__(self, cog: "PlayerCog", playlist: SavedPlaylist, items_per_page: int = 10):
         super().__init__(timeout=180)
+        self.cog = cog
         self.playlist = playlist
         self.items_per_page = items_per_page
         self.current_page = 1
@@ -842,17 +888,21 @@ class PlaylistDetailsPaginator(discord.ui.View):
         self.previous_button.disabled = self.current_page <= 1
         self.next_button.disabled = self.current_page >= self.total_pages
 
-    @discord.ui.button(label="◀️", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="◀️", style=discord.ButtonStyle.primary, row=0)
     async def previous_button(self, button: discord.ui.Button, interaction: discord.Interaction):
         self.current_page -= 1
         self.update_buttons()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
-    @discord.ui.button(label="▶️", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="▶️", style=discord.ButtonStyle.primary, row=0)
     async def next_button(self, button: discord.ui.Button, interaction: discord.Interaction):
         self.current_page += 1
         self.update_buttons()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
+
+    @discord.ui.button(label="♻️", style=discord.ButtonStyle.secondary)
+    async def load_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await self.cog._show_restore_confirmation(interaction, self.playlist)
 
     async def on_timeout(self):
         for child in self.children:
@@ -860,9 +910,10 @@ class PlaylistDetailsPaginator(discord.ui.View):
 
 
 class PlaylistNumberModal(discord.ui.Modal):
-    def __init__(self, paginator: "PlaylistListPaginator"):
-        super().__init__(title="ดูรายละเอียดเพลย์ลิสต์")
+    def __init__(self, paginator: "PlaylistListPaginator", action: str):
+        super().__init__(title="ดูรายละเอียดเพลย์ลิสต์" if action == "details" else "โหลดเพลย์ลิสต์")
         self.paginator = paginator
+        self.action = action
         self.number_input = discord.ui.InputText(
             label=f"หมายเลขเพลย์ลิสต์ (1-{len(paginator.playlists)})",
             placeholder="พิมพ์หมายเลขจากรายการนะคะ",
@@ -884,10 +935,12 @@ class PlaylistNumberModal(discord.ui.Modal):
             return
 
         playlist = self.paginator.playlists[int(raw) - 1]
-        details = PlaylistDetailsPaginator(playlist)
-        await interaction.response.send_message(
-            embed=details.get_embed(), view=details
-        )
+        if self.action == "load":
+            await self.paginator.cog._show_restore_confirmation(interaction, playlist)
+            return
+
+        details = PlaylistDetailsPaginator(self.paginator.cog, playlist)
+        await interaction.response.send_message(embed=details.get_embed(), view=details)
 
 
 class PlaylistListPaginator(discord.ui.View):
@@ -926,28 +979,33 @@ class PlaylistListPaginator(discord.ui.View):
         self.next_button.disabled = self.current_page >= self.total_pages
         self.page_button.disabled = self.total_pages <= 1
         self.details_button.disabled = not self.playlists
+        self.load_button.disabled = not self.playlists
 
-    @discord.ui.button(label="◀️", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="◀️", style=discord.ButtonStyle.primary, row=0)
     async def previous_button(self, button: discord.ui.Button, interaction: discord.Interaction):
         self.current_page -= 1
         self.update_buttons()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
-    @discord.ui.button(label="▶️", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="▶️", style=discord.ButtonStyle.primary, row=0)
     async def next_button(self, button: discord.ui.Button, interaction: discord.Interaction):
         self.current_page += 1
         self.update_buttons()
         await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
-    @discord.ui.button(label="🔢", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="🔢", style=discord.ButtonStyle.secondary, row=0)
     async def page_button(self, button: discord.ui.Button, interaction: discord.Interaction):
         await interaction.response.send_modal(JumpToPageModal(self))
 
-    @discord.ui.button(label="รายละเอียด", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="📄", style=discord.ButtonStyle.secondary, row=1)
     async def details_button(self, button: discord.ui.Button, interaction: discord.Interaction):
-        await interaction.response.send_modal(PlaylistNumberModal(self))
+        await interaction.response.send_modal(PlaylistNumberModal(self, "details"))
 
-    @discord.ui.button(label="🔄", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="♻️", style=discord.ButtonStyle.secondary, row=1)
+    async def load_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await interaction.response.send_modal(PlaylistNumberModal(self, "load"))
+
+    @discord.ui.button(label="🔄", style=discord.ButtonStyle.secondary, row=0)
     async def reload_button(self, button: discord.ui.Button, interaction: discord.Interaction):
         try:
             self.playlists = self.cog.playlist_store.list_playlists()
@@ -981,6 +1039,52 @@ class PlayerCog(commands.Cog):
         if guild_id not in self.states:
             self.states[guild_id] = AudioState(self.bot, guild_id)
         return self.states[guild_id]
+
+    async def _show_restore_confirmation(
+        self, interaction: discord.Interaction, playlist: SavedPlaylist
+    ) -> None:
+        view = RestoreConfirmationView(self, playlist, interaction.user.id)
+        await interaction.response.send_message(
+            embed=info_embed(
+                "♻️ โหลดเพลย์ลิสต์นี้ไหมคะ?",
+                f"เพลย์ลิสต์นี้มี `{len(playlist.tracks)}` เพลง และจะแทนที่คิวที่กำลังเล่นอยู่ค่ะ",
+            ),
+            view=view,
+            ephemeral=True,
+        )
+
+    async def _show_restore_confirmation_for_code(
+        self, interaction: discord.Interaction, code: str
+    ) -> None:
+        try:
+            playlist = self.playlist_store.details(code)
+        except PlaylistNotFoundError:
+            await interaction.response.send_message(
+                embed=error_embed("ไม่พบรหัสเพลย์ลิสต์ค่ะ", "ตรวจสอบรหัสแล้วลองใหม่อีกครั้งนะคะ"),
+                ephemeral=True,
+            )
+            return
+        except PlaylistExpiredError:
+            await interaction.response.send_message(
+                embed=error_embed("รหัสเพลย์ลิสต์หมดอายุแล้วค่ะ", "บันทึกใหม่อีกครั้งเพื่อรับรหัสใหม่นะคะ"),
+                ephemeral=True,
+            )
+            return
+        except PlaylistDataError:
+            await interaction.response.send_message(
+                embed=error_embed("ข้อมูลเพลย์ลิสต์ใช้ไม่ได้ค่ะ", "ข้อมูลที่บันทึกไว้ไม่สมบูรณ์ ลองบันทึกคิวใหม่อีกครั้งนะคะ"),
+                ephemeral=True,
+            )
+            return
+        except PlaylistStoreError:
+            logger.error(f"Playlist restore confirmation failed in guild {interaction.guild.id}")
+            await interaction.response.send_message(
+                embed=error_embed("กู้คืนคิวไม่ได้ค่ะ", "ระบบจัดเก็บเพลย์ลิสต์มีปัญหาชั่วคราว ลองใหม่อีกครั้งนะคะ"),
+                ephemeral=True,
+            )
+            return
+
+        await self._show_restore_confirmation(interaction, playlist)
 
     async def _show_saved_playlists(self, ctx: discord.ApplicationContext) -> None:
         await ctx.defer()
@@ -1025,37 +1129,53 @@ class PlayerCog(commands.Cog):
             {
                 "query": track.original_url or track.title,
                 "title": track.title,
+                "duration": max(0, int(track.duration or 0)),
             }
             for track in tracks
         ]
-        code = self.playlist_store.save(owner_id, playlist_tracks)
+        start_position = (
+            self._current_playback_position(state) if state.current else 0.0
+        )
+        logger.debug(
+            f"Playlist save snapshot in guild {state.guild_id}: "
+            f"tracks={len(playlist_tracks)}, current={state.current is not None}, "
+            f"crossfade_pending={state.crossfade_next is not None}, "
+            f"resume_offset={start_position:.1f}s"
+        )
+        code = self.playlist_store.save(
+            owner_id, playlist_tracks, start_position_seconds=start_position
+        )
+        logger.debug(
+            f"Playlist save persisted in guild {state.guild_id}: tracks={len(playlist_tracks)}"
+        )
         return code, len(playlist_tracks)
 
     @staticmethod
     def _restore_tracks(
-        playlist_tracks: list[dict[str, str]], requester: discord.User | discord.Member
+        playlist_tracks: list[PlaylistTrack], requester: discord.User | discord.Member
     ) -> list[Track]:
         return [
             Track(
-                title=item["title"] or item["query"],
-                duration=0,
+                title=str(item["title"] or item["query"]),
+                duration=item.get("duration", 0) if isinstance(item.get("duration", 0), int) else 0,
                 thumbnail="",
                 requester=requester,
-                original_url=item["query"],
+                original_url=str(item["query"]),
             )
             for item in playlist_tracks
         ]
 
     async def _ensure_voice_connection(
-        self, ctx: discord.ApplicationContext, state: AudioState
+        self, ctx: discord.ApplicationContext | discord.Interaction, state: AudioState
     ) -> None:
-        if not ctx.author.voice or not ctx.author.voice.channel:
+        requester = getattr(ctx, "author", None) or ctx.user
+        if not requester.voice or not requester.voice.channel:
             raise UserError(
                 "ยังไม่ได้เข้าห้องเสียงค่ะ",
                 "เซ็นเซย์ต้องเข้าห้องเสียงก่อน แล้วหนูจะตามเข้าไปนะคะ",
             )
 
-        channel = ctx.author.voice.channel
+        channel = requester.voice.channel
         voice_client = ctx.guild.voice_client
         if voice_client and voice_client.is_connected():
             if voice_client.channel.id != channel.id:
@@ -1077,6 +1197,11 @@ class PlayerCog(commands.Cog):
         # Invalidate callbacks and queued transitions belonging to the source
         # being stopped, before the restored queue becomes visible to them.
         state.playback_generation += 1
+        logger.debug(
+            f"Playlist restore replacing queue in guild {state.guild_id}: "
+            f"tracks={len(tracks)}, generation={state.playback_generation}, "
+            f"was_active={bool(state.voice_client and (state.voice_client.is_playing() or state.voice_client.is_paused()))}"
+        )
         self._clear_crossfade(state)
         state.queue.clear()
         state.history.clear()
@@ -1095,11 +1220,18 @@ class PlayerCog(commands.Cog):
     async def _restore_playlist_to_state(
         self,
         state: AudioState,
-        playlist_tracks: list[dict[str, str]],
+        playlist_tracks: list[PlaylistTrack],
         requester: discord.User | discord.Member,
+        start_position_seconds: float = 0.0,
     ) -> None:
         self._replace_queue(state, self._restore_tracks(playlist_tracks, requester))
+        state.restore_start_position_seconds = start_position_seconds
+        logger.debug(
+            f"Playlist restore queued in guild {state.guild_id}: "
+            f"tracks={len(playlist_tracks)}, resume_offset={start_position_seconds:.1f}s"
+        )
         await self._play_next_async(state.guild_id, auto_send=True)
+
     def _peek_next_track(self, state: AudioState) -> Track | None:
         """Which track follows `state.current`, honouring the loop mode.
 
@@ -1795,6 +1927,8 @@ class PlayerCog(commands.Cog):
         track = state.queue.popleft()
         state.current = track
         state.current_played = False
+        start_position = state.restore_start_position_seconds
+        state.restore_start_position_seconds = 0.0
 
         # JIT extraction for flat playlist tracks
         if not track.stream_url:
@@ -1818,9 +1952,27 @@ class PlayerCog(commands.Cog):
             )
             return
 
+        if track.duration > 0:
+            start_position = min(start_position, max(0.0, track.duration - 1))
+        else:
+            start_position = 0.0
+
+        if start_position > 0:
+            logger.debug(
+                f"Playlist restore applying resume offset in guild {guild_id}: "
+                f"offset={start_position:.1f}s"
+            )
+
         try:
             buffered_source = BufferedAudioSource(
-                discord.FFmpegPCMAudio(track.stream_url, **ffmpeg_options)
+                discord.FFmpegPCMAudio(
+                    track.stream_url,
+                    **(
+                        self._seek_ffmpeg_options(start_position)
+                        if start_position > 0
+                        else ffmpeg_options
+                    ),
+                )
             )
             # Volume lives inside the mixer rather than in a PCMVolumeTransformer
             # wrapper, so a frame costs one vectorised pass instead of two
@@ -1855,7 +2007,7 @@ class PlayerCog(commands.Cog):
             state.current_played = True
             state.playback_started_at = self.bot.loop.time()
             state.playback_paused_at = None
-            state.playback_offset_seconds = 0.0
+            state.playback_offset_seconds = start_position
             # Skip/rewind only disable the transition that just happened. Once
             # this track is playing, its own natural ending is eligible again.
             if state.crossfade_enabled:
@@ -2322,65 +2474,94 @@ class PlayerCog(commands.Cog):
         if code.strip().lower() == "list":
             return await self._show_saved_playlists(ctx)
 
-        state = self.get_state(ctx.guild.id)
-        state.text_channel = ctx.channel
-        await ctx.defer(ephemeral=True)
+        await self._show_restore_confirmation_for_code(ctx.interaction, code)
+
+    async def _restore_saved_playlist(
+        self, interaction: discord.Interaction, code: str
+    ) -> None:
+        state = self.get_state(interaction.guild.id)
+        state.text_channel = interaction.channel
+        is_followup = interaction.response.is_done()
+        if not is_followup:
+            await interaction.response.defer(ephemeral=True)
+
+        async def respond(*, embed: discord.Embed) -> None:
+            if is_followup:
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                await interaction.edit_original_response(embed=embed)
 
         try:
             playlist_tracks = self.playlist_store.load(code)
+            logger.debug(
+                f"Playlist restore validated in guild {interaction.guild.id}: "
+                f"tracks={len(playlist_tracks)}"
+            )
         except PlaylistNotFoundError:
-            logger.warning(f"Playlist restore rejected in guild {ctx.guild.id}: invalid code")
-            await ctx.interaction.edit_original_response(
+            logger.warning(f"Playlist restore rejected in guild {interaction.guild.id}: invalid code")
+            await respond(
                 embed=error_embed("ไม่พบรหัสเพลย์ลิสต์ค่ะ", "ตรวจสอบรหัสแล้วลองใหม่อีกครั้งนะคะ")
             )
             return
         except PlaylistExpiredError:
-            logger.warning(f"Playlist restore rejected in guild {ctx.guild.id}: expired code")
-            await ctx.interaction.edit_original_response(
+            logger.warning(f"Playlist restore rejected in guild {interaction.guild.id}: expired code")
+            await respond(
                 embed=error_embed("รหัสเพลย์ลิสต์หมดอายุแล้วค่ะ", "บันทึกใหม่อีกครั้งเพื่อรับรหัสใหม่นะคะ")
             )
             return
         except PlaylistDataError:
-            logger.warning(f"Playlist restore rejected in guild {ctx.guild.id}: malformed data")
-            await ctx.interaction.edit_original_response(
+            logger.warning(f"Playlist restore rejected in guild {interaction.guild.id}: malformed data")
+            await respond(
                 embed=error_embed("ข้อมูลเพลย์ลิสต์ใช้ไม่ได้ค่ะ", "ข้อมูลที่บันทึกไว้ไม่สมบูรณ์ ลองบันทึกคิวใหม่อีกครั้งนะคะ")
             )
             return
         except PlaylistStoreError:
-            logger.error(f"Playlist restore failed in guild {ctx.guild.id}: datastore error")
-            await ctx.interaction.edit_original_response(
+            logger.error(f"Playlist restore failed in guild {interaction.guild.id}: datastore error")
+            await respond(
                 embed=error_embed("กู้คืนคิวไม่ได้ค่ะ", "ระบบจัดเก็บเพลย์ลิสต์มีปัญหาชั่วคราว ลองใหม่อีกครั้งนะคะ")
             )
             return
 
         try:
-            await self._ensure_voice_connection(ctx, state)
-            playlist_tracks = self.playlist_store.consume(code)
-            await self._restore_playlist_to_state(state, playlist_tracks, ctx.author)
+            await self._ensure_voice_connection(interaction, state)
+            saved_playlist = self.playlist_store.consume_playlist(code)
+            logger.debug(
+                f"Playlist restore consumed in guild {interaction.guild.id}: "
+                f"tracks={len(saved_playlist.tracks)}, "
+                f"resume_offset={saved_playlist.start_position_seconds:.1f}s"
+            )
+            await self._restore_playlist_to_state(
+                state,
+                saved_playlist.tracks,
+                interaction.user,
+                saved_playlist.start_position_seconds,
+            )
         except UserError as error:
-            logger.warning(f"Playlist restore rejected in guild {ctx.guild.id}: voice validation")
-            await ctx.interaction.edit_original_response(
+            logger.warning(f"Playlist restore rejected in guild {interaction.guild.id}: voice validation")
+            await respond(
                 embed=error_embed(error.title, error.description)
             )
             return
         except PlaylistStoreError:
-            logger.warning(f"Playlist restore failed in guild {ctx.guild.id}: playlist was unavailable")
-            await ctx.interaction.edit_original_response(
+            logger.warning(f"Playlist restore failed in guild {interaction.guild.id}: playlist was unavailable")
+            await respond(
                 embed=error_embed("กู้คืนคิวไม่ได้ค่ะ", "เพลย์ลิสต์นี้ถูกใช้หรือเปลี่ยนแปลงแล้ว ลองบันทึกคิวใหม่อีกครั้งนะคะ")
             )
             return
         except Exception:
-            logger.exception(f"Playlist restore failed in guild {ctx.guild.id}: playback setup")
-            await ctx.interaction.edit_original_response(
+            logger.exception(f"Playlist restore failed in guild {interaction.guild.id}: playback setup")
+            await respond(
                 embed=error_embed("กู้คืนคิวไม่ได้ค่ะ", "หนูเริ่มเล่นเพลย์ลิสต์นี้ไม่ได้ ลองใหม่อีกครั้งนะคะ")
             )
             return
 
-        logger.info(f"Restored playlist in guild {ctx.guild.id} with {len(playlist_tracks)} tracks")
-        await ctx.interaction.edit_original_response(
+        logger.info(
+            f"Restored playlist in guild {interaction.guild.id} with {len(saved_playlist.tracks)} tracks"
+        )
+        await respond(
             embed=success_embed(
                 "♻️ กู้คืนเพลย์ลิสต์แล้วค่ะ",
-                f"กำลังเริ่มเล่น {len(playlist_tracks)} เพลงตามลำดับที่บันทึกไว้นะคะ",
+                f"กำลังเริ่มเล่น {len(saved_playlist.tracks)} เพลงตามลำดับที่บันทึกไว้นะคะ",
             )
         )
 

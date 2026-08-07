@@ -842,6 +842,46 @@ class RestoreConfirmationView(discord.ui.View):
             child.disabled = True
 
 
+class DeletePlaylistConfirmationView(discord.ui.View):
+    def __init__(
+        self,
+        cog: "PlayerCog",
+        playlist: SavedPlaylist,
+        requester_id: int,
+    ):
+        super().__init__(timeout=60)
+        self.cog = cog
+        self.playlist = playlist
+        self.requester_id = requester_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.requester_id:
+            return True
+        await interaction.response.send_message(
+            embed=error_embed("ปุ่มนี้ไม่ใช่ของเซ็นเซย์ค่ะ", "เปิดหน้ารายการแล้วเลือกเพลย์ลิสต์ที่ต้องการได้เลยนะคะ"),
+            ephemeral=True,
+        )
+        return False
+
+    @discord.ui.button(label="🗑️ ลบเพลย์ลิสต์", style=discord.ButtonStyle.danger)
+    async def confirm_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(view=self)
+        await self.cog._delete_saved_playlist(interaction, self.playlist.code)
+
+    @discord.ui.button(label="ยกเลิก", style=discord.ButtonStyle.secondary)
+    async def cancel_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await interaction.response.edit_message(
+            embed=info_embed("ยกเลิกแล้วค่ะ", "เพลย์ลิสต์นี้ยังอยู่เหมือนเดิมนะคะ"),
+            view=None,
+        )
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+
+
 class PlaylistDetailsPaginator(discord.ui.View):
     def __init__(self, cog: "PlayerCog", playlist: SavedPlaylist, items_per_page: int = 10):
         super().__init__(timeout=180)
@@ -904,6 +944,10 @@ class PlaylistDetailsPaginator(discord.ui.View):
     async def load_button(self, button: discord.ui.Button, interaction: discord.Interaction):
         await self.cog._show_restore_confirmation(interaction, self.playlist)
 
+    @discord.ui.button(label="🗑️", style=discord.ButtonStyle.danger)
+    async def delete_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await self.cog._show_delete_confirmation(interaction, self.playlist)
+
     async def on_timeout(self):
         for child in self.children:
             child.disabled = True
@@ -911,7 +955,12 @@ class PlaylistDetailsPaginator(discord.ui.View):
 
 class PlaylistNumberModal(discord.ui.Modal):
     def __init__(self, paginator: "PlaylistListPaginator", action: str):
-        super().__init__(title="ดูรายละเอียดเพลย์ลิสต์" if action == "details" else "โหลดเพลย์ลิสต์")
+        titles = {
+            "details": "ดูรายละเอียดเพลย์ลิสต์",
+            "load": "โหลดเพลย์ลิสต์",
+            "delete": "ลบเพลย์ลิสต์",
+        }
+        super().__init__(title=titles[action])
         self.paginator = paginator
         self.action = action
         self.number_input = discord.ui.InputText(
@@ -937,6 +986,9 @@ class PlaylistNumberModal(discord.ui.Modal):
         playlist = self.paginator.playlists[int(raw) - 1]
         if self.action == "load":
             await self.paginator.cog._show_restore_confirmation(interaction, playlist)
+            return
+        if self.action == "delete":
+            await self.paginator.cog._show_delete_confirmation(interaction, playlist)
             return
 
         details = PlaylistDetailsPaginator(self.paginator.cog, playlist)
@@ -980,6 +1032,7 @@ class PlaylistListPaginator(discord.ui.View):
         self.page_button.disabled = self.total_pages <= 1
         self.details_button.disabled = not self.playlists
         self.load_button.disabled = not self.playlists
+        self.delete_button.disabled = not self.playlists
 
     @discord.ui.button(label="◀️", style=discord.ButtonStyle.primary, row=0)
     async def previous_button(self, button: discord.ui.Button, interaction: discord.Interaction):
@@ -1004,6 +1057,10 @@ class PlaylistListPaginator(discord.ui.View):
     @discord.ui.button(label="♻️", style=discord.ButtonStyle.secondary, row=1)
     async def load_button(self, button: discord.ui.Button, interaction: discord.Interaction):
         await interaction.response.send_modal(PlaylistNumberModal(self, "load"))
+
+    @discord.ui.button(label="🗑️", style=discord.ButtonStyle.danger, row=1)
+    async def delete_button(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await interaction.response.send_modal(PlaylistNumberModal(self, "delete"))
 
     @discord.ui.button(label="🔄", style=discord.ButtonStyle.secondary, row=0)
     async def reload_button(self, button: discord.ui.Button, interaction: discord.Interaction):
@@ -1051,6 +1108,66 @@ class PlayerCog(commands.Cog):
             ),
             view=view,
             ephemeral=True,
+        )
+
+    async def _show_delete_confirmation(
+        self, interaction: discord.Interaction, playlist: SavedPlaylist
+    ) -> None:
+        view = DeletePlaylistConfirmationView(self, playlist, interaction.user.id)
+        await interaction.response.send_message(
+            embed=info_embed(
+                "🗑️ ลบเพลย์ลิสต์นี้ไหมคะ?",
+                f"เพลย์ลิสต์นี้มี `{len(playlist.tracks)}` เพลง และจะไม่สามารถกู้คืนได้นะคะ",
+            ),
+            view=view,
+            ephemeral=True,
+        )
+
+    async def _delete_saved_playlist(
+        self, interaction: discord.Interaction, code: str
+    ) -> None:
+        is_followup = interaction.response.is_done()
+        if not is_followup:
+            await interaction.response.defer(ephemeral=True)
+
+        async def respond(*, embed: discord.Embed) -> None:
+            if is_followup:
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            else:
+                await interaction.edit_original_response(embed=embed)
+
+        try:
+            playlist = self.playlist_store.delete_playlist(code)
+        except PlaylistNotFoundError:
+            logger.warning(f"Playlist delete rejected in guild {interaction.guild.id}: unavailable playlist")
+            await respond(
+                embed=error_embed("ลบเพลย์ลิสต์ไม่ได้ค่ะ", "เพลย์ลิสต์นี้ถูกลบหรือถูกใช้ไปแล้วนะคะ")
+            )
+            return
+        except PlaylistExpiredError:
+            logger.warning(f"Playlist delete rejected in guild {interaction.guild.id}: expired playlist")
+            await respond(
+                embed=error_embed("ลบเพลย์ลิสต์ไม่ได้ค่ะ", "เพลย์ลิสต์นี้หมดอายุไปแล้วค่ะ")
+            )
+            return
+        except PlaylistDataError:
+            logger.warning(f"Playlist delete rejected in guild {interaction.guild.id}: malformed playlist")
+            await respond(
+                embed=error_embed("ลบเพลย์ลิสต์ไม่ได้ค่ะ", "ข้อมูลเพลย์ลิสต์นี้ใช้ไม่ได้ค่ะ")
+            )
+            return
+        except PlaylistStoreError:
+            logger.exception(f"Playlist delete failed in guild {interaction.guild.id}")
+            await respond(
+                embed=error_embed("ลบเพลย์ลิสต์ไม่ได้ค่ะ", "ระบบจัดเก็บเพลย์ลิสต์มีปัญหาชั่วคราว ลองใหม่อีกครั้งนะคะ")
+            )
+            return
+
+        logger.info(
+            f"Deleted playlist in guild {interaction.guild.id} with {len(playlist.tracks)} tracks"
+        )
+        await respond(
+            embed=success_embed("🗑️ ลบเพลย์ลิสต์แล้วค่ะ", "ลบเพลย์ลิสต์นี้ออกจากรายการแล้วนะคะ")
         )
 
     async def _show_restore_confirmation_for_code(

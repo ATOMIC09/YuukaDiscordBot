@@ -115,6 +115,16 @@ class PlaylistStore:
             self._write(data)
         return playlist
 
+    def delete_playlist(self, code: str) -> SavedPlaylist:
+        """Validate and permanently remove a playlist in one locked write."""
+        normalized_code = self._normalize_code(code)
+        with self._lock:
+            data = self._read()
+            playlist = self._playlist_info(data, normalized_code)
+            del data["playlists"][normalized_code]
+            self._write(data)
+        return playlist
+
     def details(self, code: str) -> SavedPlaylist:
         """Return display metadata without consuming a valid playlist."""
         normalized_code = self._normalize_code(code)

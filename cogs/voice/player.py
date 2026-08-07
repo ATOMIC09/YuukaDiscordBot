@@ -1,12 +1,13 @@
 import asyncio
-import array
 import collections
 import dataclasses
+import math
 import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
 import discord
+import numpy as np
 import yt_dlp
 
 try:
@@ -53,10 +54,34 @@ ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
 
 FRAME_MS = 20
 PCM_FRAME_BYTES = 3840  # 20 ms of 48 kHz, 16-bit, stereo PCM
+PCM_DTYPE = "<i2"  # what ffmpeg's `-f s16le` writes, regardless of host endianness
+PCM_SAMPLE_MIN = -32768
+PCM_SAMPLE_MAX = 32767
+SILENCE_FRAME = b"\x00" * PCM_FRAME_BYTES
 BUFFER_SECONDS = 5.0
 PREFILL_SECONDS = 1.0
 CROSSFADE_SECONDS = 7.0
-CROSSFADE_BUFFER_SECONDS = 2.0
+CROSSFADE_BUFFER_SECONDS = BUFFER_SECONDS
+CROSSFADE_STARTUP_MAX_WAIT_SECONDS = 20.0
+CROSSFADE_STARTUP_POLL_SECONDS = 0.25
+CROSSFADE_PRELOAD_LEAD_SECONDS = CROSSFADE_BUFFER_SECONDS + PREFILL_SECONDS
+SEEK_BACKWARD_SECONDS = 10.0
+SEEK_FORWARD_SECONDS = 30.0
+PROGRESS_BAR_SLOTS = 20
+
+
+def equal_power_gains(fade_frames: int) -> tuple[list[float], list[float]]:
+    """Constant-energy fade curves, one gain pair per frame of the overlap.
+
+    A linear ramp drops both tracks to 0.5 amplitude at the midpoint, which for
+    uncorrelated audio sums to half the power - an audible 3 dB sag every time.
+    cos/sin keeps `out**2 + in**2 == 1` the whole way across instead. The tables
+    run to `fade_frames` inclusive so the final frame can index a clean 0.0/1.0.
+    """
+    step = math.pi / 2 / fade_frames
+    fade_out = [math.cos(index * step) for index in range(fade_frames + 1)]
+    fade_in = [math.sin(index * step) for index in range(fade_frames + 1)]
+    return fade_out, fade_in
 
 class BufferedAudioSource(discord.AudioSource):
     """
@@ -100,6 +125,25 @@ class BufferedAudioSource(discord.AudioSource):
     def wait_ready(self, timeout: float = 3.0):
         self._ready.wait(timeout=timeout)
 
+    def started_ok(self) -> bool:
+        """Whether the decoder produced audio rather than dying on startup.
+
+        Only meaningful before anything drains the queue: a decoder that has
+        already finished without a single buffered frame never played at all,
+        which is what an expired stream URL looks like.
+        """
+        return not (self._finished.is_set() and self._queue.empty())
+
+    def is_full(self) -> bool:
+        """Whether the buffer has reached its full depth and gone idle.
+
+        Right after a track starts, this thread is racing to fill from the 1s
+        prefill up to the full cushion, competing for network/CPU the whole
+        way. Once full, it just tops off one frame per 20ms and has slack to
+        spare - the buffer is a lot less exposed to competing background work.
+        """
+        return self._queue.full()
+
     def read(self) -> bytes:
         while True:
             try:
@@ -120,17 +164,37 @@ class BufferedAudioSource(discord.AudioSource):
 
 
 class SeamlessCrossfadeSource(discord.AudioSource):
-    """A persistent Discord source that can mix in a preloaded PCM stream."""
+    """A persistent Discord source that can mix in a preloaded PCM stream.
 
-    def __init__(self, current: BufferedAudioSource):
+    Volume is applied here rather than by wrapping this source in a
+    `PCMVolumeTransformer`: the pinned py-cord build scales samples with a
+    Python loop, and stacking that on top of the fade would mean two
+    per-sample passes per frame on the voice send thread.
+    """
+
+    def __init__(self, current: BufferedAudioSource, volume: float = 1.0):
         self._current = current
         self._next: BufferedAudioSource | None = None
         self._fade_frames = 0
         self._fade_frame = 0
         self._frames_until_fade = 0
         self._mix_started = False
+        self._fade_out_gains: list[float] = []
+        self._fade_in_gains: list[float] = []
         self._on_fade_started = None
+        self._on_fade_finished = None
+        self._volume = max(0.0, float(volume))
+        self._generation = 0
         self._lock = threading.Lock()
+
+    @property
+    def volume(self) -> float:
+        return self._volume
+
+    @volume.setter
+    def volume(self, value: float):
+        # A bare float assignment; `read` snapshots it once per frame.
+        self._volume = max(0.0, float(value))
 
     def schedule_crossfade(
         self,
@@ -138,14 +202,22 @@ class SeamlessCrossfadeSource(discord.AudioSource):
         duration: float,
         frames_until_fade: int,
         on_fade_started,
+        on_fade_finished,
     ):
+        fade_frames = max(1, round(duration * 1000 / FRAME_MS))
+        # Built outside the lock: this is the only trigonometry in the path, and
+        # the send thread must never wait on it.
+        fade_out, fade_in = equal_power_gains(fade_frames)
         with self._lock:
             self._next = next_source
-            self._fade_frames = max(1, round(duration * 1000 / FRAME_MS))
+            self._fade_frames = fade_frames
+            self._fade_out_gains = fade_out
+            self._fade_in_gains = fade_in
             self._fade_frame = 0
             self._frames_until_fade = max(0, frames_until_fade)
             self._mix_started = False
             self._on_fade_started = on_fade_started
+            self._on_fade_finished = on_fade_finished
 
     def cancel_scheduled_crossfade(self):
         with self._lock:
@@ -154,6 +226,7 @@ class SeamlessCrossfadeSource(discord.AudioSource):
             next_source = self._next
             self._next = None
             self._on_fade_started = None
+            self._on_fade_finished = None
             return next_source
 
     def has_pending_crossfade(self) -> bool:
@@ -164,33 +237,76 @@ class SeamlessCrossfadeSource(discord.AudioSource):
         with self._lock:
             return self._next is not None and self._mix_started
 
-    @staticmethod
-    def _mix_pcm(current: bytes, next_frame: bytes, progress: float) -> bytes:
-        current_samples = array.array("h")
-        current_samples.frombytes(current)
-        next_samples = array.array("h")
-        next_samples.frombytes(next_frame)
-        current_gain = 1.0 - progress
-        for index, next_sample in enumerate(next_samples):
-            sample = round(current_samples[index] * current_gain + next_sample * progress)
-            current_samples[index] = max(-32768, min(32767, sample))
-        return current_samples.tobytes()
+    def current_buffer_full(self) -> bool:
+        with self._lock:
+            current = self._current
+        return current.is_full()
+
+    def swap_current(self, new_source: BufferedAudioSource) -> BufferedAudioSource | None:
+        """Replace the playing deck in place - how a seek lands.
+
+        The voice client goes on pulling frames from this same object, so the
+        track never "ends" and `after_playing` never advances the queue. The
+        caller must have cleared any armed crossfade first: its frame countdown
+        was measured against the deck being retired. Returns the displaced deck
+        so the caller can tear it down away from the send thread.
+        """
+        with self._lock:
+            displaced = self._current
+            self._current = new_source
+            self._generation += 1
+        return displaced
+
+    def _scale(self, frame: bytes, gain: float) -> bytes:
+        if not frame:
+            return frame
+        if gain == 1.0:
+            return frame
+        samples = np.frombuffer(frame, dtype=PCM_DTYPE).astype(np.float32)
+        samples *= gain
+        np.clip(samples, PCM_SAMPLE_MIN, PCM_SAMPLE_MAX, out=samples)
+        return samples.astype(PCM_DTYPE).tobytes()
+
+    def _mix(self, current: bytes, next_frame: bytes, fade_index: int, volume: float) -> bytes:
+        """Blend both decks and apply volume in a single vectorised pass."""
+        out_gain = self._fade_out_gains[fade_index] * volume
+        in_gain = self._fade_in_gains[fade_index] * volume
+        mixed = np.frombuffer(current, dtype=PCM_DTYPE).astype(np.float32) * out_gain
+        mixed += np.frombuffer(next_frame, dtype=PCM_DTYPE).astype(np.float32) * in_gain
+        np.clip(mixed, PCM_SAMPLE_MIN, PCM_SAMPLE_MAX, out=mixed)
+        return mixed.astype(PCM_DTYPE).tobytes()
 
     def read(self) -> bytes:
-        current = self._current.read()
-        callback = None
         with self._lock:
+            deck = self._current
+            generation = self._generation
+        current = deck.read()
+        volume = self._volume
+        callback = None
+        finish_callback = None
+        with self._lock:
+            if generation != self._generation:
+                # A seek retired this deck while we were blocked reading it.
+                # The empty frame that a torn-down deck returns means "replaced",
+                # not "track over" - passing it on would stop the voice client
+                # and advance the queue. Emit 20 ms of silence instead and let
+                # the next call pick up the deck that took its place.
+                return SILENCE_FRAME
             next_source = self._next
-            fade_frame = self._fade_frame
-            fade_frames = self._fade_frames
 
         if not next_source:
-            return current
+            return self._scale(current, volume)
 
         with self._lock:
             if self._frames_until_fade > 0:
-                self._frames_until_fade -= 1
-                return current
+                if current:
+                    self._frames_until_fade -= 1
+                    return self._scale(current, volume)
+                # The outgoing stream ended before the position estimate said it
+                # would. Begin the overlap now rather than dropping into silence
+                # and tearing down a deck that is already buffered and ready.
+                self._frames_until_fade = 0
+            fade_index = min(self._fade_frame, self._fade_frames)
             if self._fade_frame == 0 and self._on_fade_started:
                 self._mix_started = True
                 callback = self._on_fade_started
@@ -200,16 +316,15 @@ class SeamlessCrossfadeSource(discord.AudioSource):
             callback()
 
         next_frame = next_source.read()
-        if not current:
-            with self._lock:
-                self._current = next_source
-                self._next = None
-            return next_frame
         if not next_frame:
-            return current
+            return self._scale(current, volume)
+        if not current:
+            # Outgoing deck is spent mid-fade. Keep running the same curve
+            # against silence so the incoming track still ramps up to full
+            # instead of snapping there, which clicks.
+            current = SILENCE_FRAME
 
-        progress = min(1.0, fade_frame / fade_frames)
-        mixed = self._mix_pcm(current, next_frame, progress)
+        mixed = self._mix(current, next_frame, fade_index, volume)
         with self._lock:
             self._fade_frame += 1
             if self._fade_frame >= self._fade_frames:
@@ -217,7 +332,11 @@ class SeamlessCrossfadeSource(discord.AudioSource):
                 self._current = next_source
                 self._next = None
                 self._on_fade_started = None
+                finish_callback = self._on_fade_finished
+                self._on_fade_finished = None
                 old_current.cleanup()
+        if finish_callback:
+            finish_callback()
         return mixed
 
     def is_opus(self) -> bool:
@@ -228,6 +347,7 @@ class SeamlessCrossfadeSource(discord.AudioSource):
             sources = (self._current, self._next)
             self._next = None
             self._on_fade_started = None
+            self._on_fade_finished = None
         for source in sources:
             if source:
                 source.cleanup()
@@ -246,6 +366,25 @@ def format_duration(seconds: int | None) -> str:
     if hours > 0:
         return f"{hours}:{mins:02d}:{secs:02d}"
     return f"{mins}:{secs:02d}"
+
+def render_progress_bar(position: float, duration: int, paused: bool = False) -> str:
+    head = "⏸️" if paused else "▶️"
+    elapsed = format_duration(int(position)) if position >= 1 else "0:00"
+    if duration <= 0:
+        return f"{head} 🔴 **LIVE**  `{elapsed}`"
+    ratio = min(1.0, max(0.0, position / duration))
+    knob = int(ratio * (PROGRESS_BAR_SLOTS - 1))
+    bar = "▬" * knob + "🔘" + "▬" * (PROGRESS_BAR_SLOTS - 1 - knob)
+    return f"{head} {bar}\n`{elapsed} / {format_duration(duration)}`"
+
+def parse_timestamp(raw: str) -> float | None:
+    parts = raw.strip().split(":")
+    if not 1 <= len(parts) <= 3 or not all(part.isdigit() for part in parts):
+        return None
+    total = 0.0
+    for part in parts:
+        total = total * 60 + int(part)
+    return total
 
 @dataclasses.dataclass
 class Track:
@@ -282,6 +421,7 @@ class AudioState:
         self.forward_history: collections.deque[Track] = collections.deque(maxlen=10)
         self.is_rewinding: bool = False
         self.rewind_lock: asyncio.Lock = asyncio.Lock()
+        self.seek_lock: asyncio.Lock = asyncio.Lock()
         self.voice_client: discord.VoiceClient | None = None
         self.loop_mode: str = "off"  # "off", "track", "queue"
         self.crossfade_enabled: bool = False
@@ -289,6 +429,7 @@ class AudioState:
         self.crossfade_audio_source: BufferedAudioSource | None = None
         self.active_audio_source: SeamlessCrossfadeSource | None = None
         self.crossfade_task: asyncio.Task | None = None
+        self.crossfade_prepare_task: asyncio.Task | None = None
         self.playback_started_at: float | None = None
         self.playback_paused_at: float | None = None
         self.playback_offset_seconds: float = 0.0
@@ -312,6 +453,12 @@ class PlayerControls(discord.ui.View):
     def update_buttons(self):
         self.rewind.disabled = len(self.state.history) == 0
 
+        # Live streams have no duration to seek within, and mid-fade there are
+        # two tracks playing at once with no single position to move.
+        can_seek = self.cog._can_seek(self.state)
+        self.seek_back.disabled = not can_seek
+        self.seek_forward.disabled = not can_seek
+
         if self.state.voice_client and self.state.voice_client.is_paused():
             self.pause_resume.emoji = "▶️"
             self.pause_resume.style = discord.ButtonStyle.primary
@@ -330,7 +477,7 @@ class PlayerControls(discord.ui.View):
             self.loop.style = discord.ButtonStyle.success
 
         # Use Blurple for the enabled state and grey while disabled.
-        self.crossfade.label = "Crossfade"
+        self.crossfade.label = None
         self.crossfade.emoji = "🔀"
         self.crossfade.style = (
             discord.ButtonStyle.primary
@@ -347,12 +494,48 @@ class PlayerControls(discord.ui.View):
             return False
         return True
 
+    async def _handle_seek(self, interaction: discord.Interaction, delta: float):
+        state = self.state
+        if not self.cog._can_seek(state):
+            return await interaction.response.send_message(
+                "ตอนนี้เลื่อนเวลาไม่ได้ค่ะ (´・ω・)", ephemeral=True
+            )
+        if state.seek_lock.locked():
+            # Opening a decoder takes about a second; let the one in flight land
+            # rather than stacking another FFmpeg process behind it.
+            return await interaction.response.send_message(
+                "รอสักครู่นะคะ หนูกำลังเลื่อนเพลงอยู่ค่ะ (´・ω・)", ephemeral=True
+            )
+
+        await interaction.response.defer()
+        async with state.seek_lock:
+            track = state.current
+            if not track:
+                return
+            position = self.cog._current_playback_position(state)
+            target = min(max(0.0, position + delta), max(0.0, track.duration - 1))
+            await self.cog._seek_async(state, target)
+
+        self.update_buttons()
+        try:
+            if state.current:
+                embed = self.cog._build_player_embed(state.current, state)
+                await interaction.edit_original_response(embed=embed, view=self)
+            else:
+                await interaction.edit_original_response(view=self)
+        except Exception:
+            pass
+
     @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="⏮️", row=0)
     async def rewind(self, button: discord.ui.Button, interaction: discord.Interaction):
         ok = await self.cog._rewind_async(self.state.guild_id)
         if not ok:
             return await interaction.response.send_message("ไม่มีเพลงก่อนหน้าให้ย้อนกลับนะคะ (´・ω・)", ephemeral=True)
         await interaction.response.defer()
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="⏪", row=0)
+    async def seek_back(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await self._handle_seek(interaction, -SEEK_BACKWARD_SECONDS)
 
     @discord.ui.button(style=discord.ButtonStyle.primary, emoji="⏸️", row=0)
     async def pause_resume(self, button: discord.ui.Button, interaction: discord.Interaction):
@@ -362,14 +545,24 @@ class PlayerControls(discord.ui.View):
         if self.state.voice_client.is_paused():
             self.state.voice_client.resume()
             self.cog._mark_playback_resumed(self.state)
+            self.cog._request_crossfade_prepare(self.state)
         elif self.state.voice_client.is_playing():
             self.state.voice_client.pause()
             self.cog._mark_playback_paused(self.state)
         else:
             return await interaction.response.send_message("ไม่มีเพลงเล่นอยู่นะคะ", ephemeral=True)
-            
+
         self.update_buttons()
-        await interaction.response.edit_message(view=self)
+
+        if self.state.current:
+            embed = self.cog._build_player_embed(self.state.current, self.state)
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.edit_message(view=self)
+
+    @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="⏩", row=0)
+    async def seek_forward(self, button: discord.ui.Button, interaction: discord.Interaction):
+        await self._handle_seek(interaction, SEEK_FORWARD_SECONDS)
 
     @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="⏭️", row=0)
     async def skip(self, button: discord.ui.Button, interaction: discord.Interaction):
@@ -379,7 +572,7 @@ class PlayerControls(discord.ui.View):
         self.state.skip_request = True
         self.state.voice_client.stop()
         await interaction.response.defer()
-        
+
     @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="🔁", row=1)
     async def loop(self, button: discord.ui.Button, interaction: discord.Interaction):
         if self.state.loop_mode == "off":
@@ -394,7 +587,7 @@ class PlayerControls(discord.ui.View):
         embed = self.cog._build_player_embed(self.state.current, self.state)
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="Crossfade", style=discord.ButtonStyle.secondary, emoji="🔀", row=1)
+    @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="🔀", row=1)
     async def crossfade(self, button: discord.ui.Button, interaction: discord.Interaction):
         self.state.crossfade_enabled = not self.state.crossfade_enabled
         if not self.state.crossfade_enabled:
@@ -420,7 +613,7 @@ class PlayerControls(discord.ui.View):
             await interaction.response.edit_message(view=self)
 
         if self.state.crossfade_enabled:
-            self.cog.bot.loop.create_task(self.cog._prepare_current_crossfade(self.state))
+            self.cog._request_crossfade_prepare(self.state)
 
     @discord.ui.button(label="Save", style=discord.ButtonStyle.secondary, emoji="💾", row=1)
     async def save(self, button: discord.ui.Button, interaction: discord.Interaction):
@@ -452,7 +645,7 @@ class PlayerControls(discord.ui.View):
             ephemeral=True,
         )
 
-    @discord.ui.button(style=discord.ButtonStyle.danger, emoji="⏹️", row=0)
+    @discord.ui.button(style=discord.ButtonStyle.danger, emoji="⏹️", row=1)
     async def stop(self, button: discord.ui.Button, interaction: discord.Interaction):
         self.cog._clear_crossfade(self.state)
         self.state.queue.clear()
@@ -460,10 +653,10 @@ class PlayerControls(discord.ui.View):
         self.state.forward_history.clear()
         self.state.loop_mode = "off"
         self.state.last_controller_message = None
-            
+
         if self.state.voice_client and self.state.voice_client.is_playing():
             self.state.voice_client.stop()
-            
+
         try:
             embeds = interaction.message.embeds
             if embeds:
@@ -474,7 +667,17 @@ class PlayerControls(discord.ui.View):
                 await interaction.response.edit_message(view=None)
         except Exception:
             pass
-            
+        
+    @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="⏱️", row=1)
+    async def refresh(self, button: discord.ui.Button, interaction: discord.Interaction):
+        self.update_buttons()
+        if self.state.current:
+            embed = self.cog._build_player_embed(self.state.current, self.state)
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            await interaction.response.edit_message(view=self)
+
+
     async def on_timeout(self):
         for child in self.children:
             child.disabled = True
@@ -483,8 +686,6 @@ class PlayerControls(discord.ui.View):
                 await self.state.last_controller_message.edit(view=self)
             except Exception:
                 pass
-
-import math
 
 class JumpToPageModal(discord.ui.Modal):
     def __init__(self, paginator: "QueuePaginator"):
@@ -899,8 +1100,47 @@ class PlayerCog(commands.Cog):
     ) -> None:
         self._replace_queue(state, self._restore_tracks(playlist_tracks, requester))
         await self._play_next_async(state.guild_id, auto_send=True)
+    def _peek_next_track(self, state: AudioState) -> Track | None:
+        """Which track follows `state.current`, honouring the loop mode.
+
+        `_play_next_async` reaches the same answer imperatively when it advances
+        the queue. The crossfade preloader has to agree with it, or a faded
+        transition ends up playing a different song than a gapless one would.
+        Under track loop - or queue loop with nothing else queued - the answer
+        is the current track itself, and it gets crossfaded into itself.
+        """
+        if state.loop_mode == "track":
+            return state.current
+        if state.queue:
+            return state.queue[0]
+        if state.loop_mode == "queue":
+            return state.current
+        return None
+
+    def _crossfade_still_valid(
+        self, state: AudioState, current_track: Track, candidate: Track
+    ) -> bool:
+        """Whether a preload started for `candidate` is still the right thing.
+
+        Preparing a crossfade means awaiting yt-dlp, then sleeping most of the
+        song, then awaiting a decoder prefill. Playback can be skipped, stopped,
+        re-queued or re-ordered across any of those, so every step re-checks.
+        """
+        return (
+            state.crossfade_enabled
+            and state.current is current_track
+            and state.voice_client is not None
+            and state.voice_client.is_playing()
+            and state.crossfade_next is None
+            and state.active_audio_source is not None
+            and not state.active_audio_source.has_pending_crossfade()
+            and self._peek_next_track(state) is candidate
+        )
 
     def _clear_crossfade(self, state: AudioState):
+        if state.crossfade_prepare_task and not state.crossfade_prepare_task.done():
+            state.crossfade_prepare_task.cancel()
+        state.crossfade_prepare_task = None
         if state.crossfade_task and not state.crossfade_task.done():
             state.crossfade_task.cancel()
         state.crossfade_task = None
@@ -923,9 +1163,11 @@ class PlayerCog(commands.Cog):
         if state.active_audio_source and state.active_audio_source.is_crossfade_active():
             return
         self._clear_crossfade(state)
-        if pending:
+        # A self-crossfade preloaded the track that is still playing; putting it
+        # back in the queue would schedule it twice.
+        if pending and pending is not state.current:
             state.queue.appendleft(pending)
-        
+
     def _build_player_embed(self, track: Track, state: AudioState) -> discord.Embed:
         embed = discord.Embed(
             title=track.title,
@@ -971,8 +1213,17 @@ class PlayerCog(commands.Cog):
             if track.bitrate:
                 embed.add_field(name="🎵 บิตเรต", value=f"`{int(track.bitrate)} kbps`", inline=True)
         
-        # Append queue
         desc = ""
+        # Guard against a stale caller: the bar belongs to the playing track,
+        # and position is only meaningful for that one.
+        if state.current is track:
+            position = self._current_playback_position(state)
+            if track.duration > 0:
+                position = min(position, track.duration)
+            paused = bool(state.voice_client and state.voice_client.is_paused())
+            desc += render_progress_bar(position, track.duration, paused) + "\n\n"
+
+        # Append queue
         queued_tracks = ([state.crossfade_next] if state.crossfade_next else []) + list(state.queue)
         if queued_tracks:
             desc += "**🎶 คิวถัดไป:**\n"
@@ -1127,6 +1378,142 @@ class PlayerCog(commands.Cog):
             state.playback_started_at += self.bot.loop.time() - state.playback_paused_at
             state.playback_paused_at = None
 
+    @staticmethod
+    def _seek_ffmpeg_options(position: float) -> dict:
+        """Input-seek to `position`. `-ss` has to land before `-i`, and py-cord
+        builds its command line as `before_options` then `-i url`."""
+        options = dict(ffmpeg_options)
+        options["before_options"] = f"-ss {position:.3f} {options['before_options']}"
+        return options
+
+    def _can_seek(self, state: AudioState) -> bool:
+        return bool(
+            state.current
+            and state.current.duration > 0
+            and state.voice_client
+            and state.voice_client.is_connected()
+            and state.active_audio_source is not None
+            and not state.active_audio_source.is_crossfade_active()
+        )
+
+    async def _seek_async(self, state: AudioState, target: float) -> bool:
+        """Restart the decoder at `target` without ending the track.
+
+        FFmpeg cannot seek a pipe that is already being drained, so this opens a
+        second decoder at the new offset and hands it to the live mixer.
+        Stopping the voice client to replay would fire `after_playing` and
+        advance the queue, so the deck is swapped underneath it instead.
+        """
+        track = state.current
+        mixer = state.active_audio_source
+        if not track or not mixer or not track.stream_url:
+            return False
+
+        # An armed fade counts frames from the old position and the preload task
+        # sleeps on the old remaining time; both are wrong the moment we jump.
+        self._cancel_prepared_crossfade(state)
+
+        new_source = BufferedAudioSource(
+            discord.FFmpegPCMAudio(track.stream_url, **self._seek_ffmpeg_options(target))
+        )
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(self._executor, new_source.wait_ready)
+
+        # A stream URL that expired mid-session yields a decoder that dies
+        # immediately. Swapping it in would read as end-of-track and skip the
+        # song, so leave the deck that is playing fine exactly where it is.
+        if not new_source.started_ok():
+            new_source.cleanup()
+            logger.warning(
+                f"[Seek] guild {state.guild_id}: decoder produced no audio for "
+                f"'{track.title}'; keeping the current stream"
+            )
+            self._request_crossfade_prepare(state)
+            return False
+
+        # Opening a decoder takes long enough for a skip, stop or disconnect to
+        # have landed in the meantime.
+        if (
+            state.current is not track
+            or state.active_audio_source is not mixer
+            or not state.voice_client
+            or not state.voice_client.is_connected()
+        ):
+            new_source.cleanup()
+            return False
+
+        displaced = mixer.swap_current(new_source)
+        now = self.bot.loop.time()
+        state.playback_offset_seconds = target
+        state.playback_started_at = now
+        # Seeking while paused stays paused, and reads back as `target` because
+        # the position math stops the clock at `playback_paused_at`.
+        state.playback_paused_at = now if state.voice_client.is_paused() else None
+
+        if displaced:
+            # Tearing down an FFmpeg process blocks; keep it off the event loop.
+            await loop.run_in_executor(self._executor, displaced.cleanup)
+
+        logger.debug(
+            f"[Seek] guild {state.guild_id}: '{track.title}' -> "
+            f"{format_duration(int(target))}"
+        )
+        self._request_crossfade_prepare(state)
+        return True
+
+    def _request_crossfade_prepare(self, state: AudioState):
+        """Prepare the next stream after the newly started source is stable."""
+        if (
+            not state.crossfade_enabled
+            or not state.current
+            or not state.voice_client
+            or not state.voice_client.is_playing()
+            or (state.crossfade_prepare_task and not state.crossfade_prepare_task.done())
+        ):
+            return
+        track = state.current
+        state.crossfade_prepare_task = self.bot.loop.create_task(
+            self._prepare_crossfade_after_startup(state, track)
+        )
+
+    async def _prepare_crossfade_after_startup(self, state: AudioState, track: Track):
+        """Hold off preparing the next track until this one's own buffer can
+        spare the CPU/network budget.
+
+        Preparing the next track means a yt-dlp extraction (pure-Python,
+        occasionally running a JS interpreter for signature decryption) that
+        can hold the GIL long enough to starve this track's buffer thread.
+        Right after a track starts, that thread is racing from a 1s prefill up
+        to its full cushion and has no slack to give - competing with it here
+        is exactly when it stutters. Waiting for the buffer to actually reach
+        full depth (rather than guessing a fixed delay) adapts to whatever the
+        network is doing instead of assuming a delay that fit one test run.
+        """
+        task = asyncio.current_task()
+        try:
+            deadline = self.bot.loop.time() + CROSSFADE_STARTUP_MAX_WAIT_SECONDS
+            while self.bot.loop.time() < deadline:
+                if (
+                    not state.crossfade_enabled
+                    or state.current is not track
+                    or not state.voice_client
+                    or not state.voice_client.is_playing()
+                ):
+                    return
+                if state.active_audio_source and state.active_audio_source.current_buffer_full():
+                    break
+                await asyncio.sleep(CROSSFADE_STARTUP_POLL_SECONDS)
+            if (
+                state.crossfade_enabled
+                and state.current is track
+                and state.voice_client
+                and state.voice_client.is_playing()
+            ):
+                await self._prepare_current_crossfade(state)
+        finally:
+            if state.crossfade_prepare_task is task:
+                state.crossfade_prepare_task = None
+
     async def _prepare_current_crossfade(self, state: AudioState):
         """Preload the queued successor without replacing the active source."""
         if (
@@ -1137,13 +1524,14 @@ class PlayerCog(commands.Cog):
             or state.crossfade_next
             or not state.active_audio_source
             or state.active_audio_source.has_pending_crossfade()
-            or not state.queue
             or state.current.duration <= 0
         ):
             return
 
         current_track = state.current
-        candidate = state.queue[0]
+        candidate = self._peek_next_track(state)
+        if candidate is None:
+            return
         logger.debug(
             f"[Crossfade] guild {state.guild_id}: preloading next stream "
             f"'{candidate.title}' for active '{current_track.title}'"
@@ -1156,17 +1544,7 @@ class PlayerCog(commands.Cog):
                 )
                 return
 
-            if (
-                not state.crossfade_enabled
-                or state.current is not current_track
-                or not state.voice_client
-                or not state.voice_client.is_playing()
-                or state.crossfade_next
-                or not state.active_audio_source
-                or state.active_audio_source.has_pending_crossfade()
-                or not state.queue
-                or state.queue[0] is not candidate
-            ):
+            if not self._crossfade_still_valid(state, current_track, candidate):
                 logger.debug(
                     f"[Crossfade] guild {state.guild_id}: preload discarded; "
                     "playback changed while resolving the next stream"
@@ -1183,6 +1561,19 @@ class PlayerCog(commands.Cog):
                 )
                 return
 
+            # Resolving metadata is cheap, but starting another FFmpeg decoder
+            # during most of the current song can starve the active stream.
+            # Open it only shortly before its buffered frames are needed.
+            preload_delay = max(
+                0.0,
+                remaining - duration - CROSSFADE_PRELOAD_LEAD_SECONDS,
+            )
+            if preload_delay:
+                await asyncio.sleep(preload_delay)
+
+            if not self._crossfade_still_valid(state, current_track, candidate):
+                return
+
             next_audio = BufferedAudioSource(
                 discord.FFmpegPCMAudio(candidate.stream_url, **ffmpeg_options),
                 buffer_seconds=CROSSFADE_BUFFER_SECONDS,
@@ -1190,13 +1581,7 @@ class PlayerCog(commands.Cog):
             await asyncio.get_event_loop().run_in_executor(
                 self._executor, next_audio.wait_ready
             )
-            if (
-                not state.crossfade_enabled
-                or state.current is not current_track
-                or not state.queue
-                or state.queue[0] is not candidate
-                or not state.active_audio_source
-            ):
+            if not self._crossfade_still_valid(state, current_track, candidate):
                 next_audio.cleanup()
                 return
 
@@ -1207,7 +1592,11 @@ class PlayerCog(commands.Cog):
                 next_audio.cleanup()
                 return
 
-            state.crossfade_next = state.queue.popleft()
+            # Under a loop mode the successor can be the current track itself,
+            # in which case it was never in the queue to begin with.
+            if state.queue and state.queue[0] is candidate:
+                state.queue.popleft()
+            state.crossfade_next = candidate
             state.crossfade_audio_source = next_audio
             logger.debug(
                 f"[Crossfade] guild {state.guild_id}: preload complete for "
@@ -1223,6 +1612,9 @@ class PlayerCog(commands.Cog):
                         self._activate_crossfade(state, current_track, candidate, duration)
                     )
                 ),
+                lambda: self.bot.loop.call_soon_threadsafe(
+                    self._request_crossfade_prepare, state
+                ),
             )
         except Exception as e:
             logger.warning(
@@ -1237,6 +1629,7 @@ class PlayerCog(commands.Cog):
             await state.voice_client.disconnect()
             state.voice_client = None
             self._clear_crossfade(state)
+            state.active_audio_source = None
             state.queue.clear()
             state.current = None
             state.history.clear()
@@ -1289,6 +1682,12 @@ class PlayerCog(commands.Cog):
         state.crossfade_task = None
         if previous and state.current_played:
             state.history.append(previous)
+        # `_play_next_async` sends the outgoing track back to the tail under
+        # queue loop; a faded transition has to do the same or the song drops
+        # out of the rotation one lap at a time. A self-crossfade (track loop,
+        # or queue loop with nothing else queued) never left the rotation.
+        if state.loop_mode == "queue" and previous is not next_track:
+            state.queue.append(previous)
         state.current = next_track
         state.current_played = True
         state.playback_started_at = self.bot.loop.time()
@@ -1319,21 +1718,30 @@ class PlayerCog(commands.Cog):
             state.history.clear()
             state.forward_history.clear()
             state.crossfade_next = None
+            state.active_audio_source = None
             return
+
+        # A previous track may still be waiting to open its delayed preload.
+        # It must not block preparation for the new current track.
+        if state.crossfade_prepare_task and not state.crossfade_prepare_task.done():
+            state.crossfade_prepare_task.cancel()
+        state.crossfade_prepare_task = None
 
         was_rewinding = state.is_rewinding
         state.is_rewinding = False
-        had_pending_crossfade = state.crossfade_next is not None
-        if had_pending_crossfade:
+        pending = state.crossfade_next
+        if pending is not None:
             # A preloaded successor was never mixed (skip/rewind/source end).
-            pending = state.crossfade_next
             self._clear_crossfade(state)
-            if was_rewinding:
-                state.queue.insert(1, pending)
-            else:
-                state.queue.appendleft(pending)
+            # A self-crossfade preloads the track that is already playing; the
+            # loop bookkeeping below re-queues it, so doing it here too would
+            # make a skip replay the song instead of advancing past it.
+            if pending is not state.current:
+                if was_rewinding:
+                    state.queue.insert(1, pending)
+                else:
+                    state.queue.appendleft(pending)
 
-        was_skipped = state.skip_request
         if state.skip_request:
             state.skip_request = False
         else:
@@ -1350,9 +1758,17 @@ class PlayerCog(commands.Cog):
         # Redo priority: forward history (from a previous rewind) before the normal queue.
         if state.forward_history and not was_rewinding:
             state.queue.appendleft(state.forward_history.pop())
+        elif state.forward_history and was_rewinding:
+            # The rewind itself is a hard transition to the previous track.
+            # Put the track we came from immediately after it so its later,
+            # natural ending can Crossfade back into the expected sequence.
+            state.queue.insert(1, state.forward_history.pop())
 
         if len(state.queue) == 0:
             state.current = None
+            # The source that just ended is finished; keeping the handle would
+            # leave `/volume` and the crossfade guards pointing at a dead mixer.
+            state.active_audio_source = None
             if state.last_controller_message:
                 try:
                     embeds = state.last_controller_message.embeds
@@ -1406,8 +1822,10 @@ class PlayerCog(commands.Cog):
             buffered_source = BufferedAudioSource(
                 discord.FFmpegPCMAudio(track.stream_url, **ffmpeg_options)
             )
-            persistent_source = SeamlessCrossfadeSource(buffered_source)
-            volume_source = discord.PCMVolumeTransformer(persistent_source, volume=state.volume)
+            # Volume lives inside the mixer rather than in a PCMVolumeTransformer
+            # wrapper, so a frame costs one vectorised pass instead of two
+            # per-sample Python loops on the voice send thread.
+            persistent_source = SeamlessCrossfadeSource(buffered_source, volume=state.volume)
 
             # Wait for the buffer to actually pre-fill (rather than a blind fixed sleep)
             # before Discord starts pulling frames on its strict 20ms clock.
@@ -1432,14 +1850,16 @@ class PlayerCog(commands.Cog):
                     )
                 )
 
-            state.voice_client.play(volume_source, after=after_playing)
+            state.voice_client.play(persistent_source, after=after_playing)
             state.active_audio_source = persistent_source
             state.current_played = True
             state.playback_started_at = self.bot.loop.time()
             state.playback_paused_at = None
             state.playback_offset_seconds = 0.0
-            if state.crossfade_enabled and not was_skipped and not was_rewinding:
-                self.bot.loop.create_task(self._prepare_current_crossfade(state))
+            # Skip/rewind only disable the transition that just happened. Once
+            # this track is playing, its own natural ending is eligible again.
+            if state.crossfade_enabled:
+                self._request_crossfade_prepare(state)
             logger.info(f"Playing track in guild {guild_id}: {track.title}")
             
             # Auto-update controller if this was an automatic track progression
@@ -1461,6 +1881,7 @@ class PlayerCog(commands.Cog):
 
         state = self.get_state(ctx.guild.id)
         self._clear_crossfade(state)
+        state.active_audio_source = None
         state.queue.clear()
         state.current = None
         state.history.clear()
@@ -1570,7 +1991,7 @@ class PlayerCog(commands.Cog):
             embed = self._build_player_embed(display_track, state)
             await self._update_controller(state, embed)
             if state.crossfade_enabled:
-                self.bot.loop.create_task(self._prepare_current_crossfade(state))
+                self._request_crossfade_prepare(state)
 
     @music.command(name="play", description="▶️ เปิดเพลงจาก YouTube (รองรับ Playlist)")
     @discord.option("query", description="ชื่อเพลงหรือ URL ของวิดีโอ/เพลย์ลิสต์ค่ะ")
@@ -1676,7 +2097,7 @@ class PlayerCog(commands.Cog):
             # if playing is stopped, start it
             self.bot.loop.create_task(self._play_next_async(ctx.guild.id, auto_send=True))
         elif state.crossfade_enabled:
-            self.bot.loop.create_task(self._prepare_current_crossfade(state))
+            self._request_crossfade_prepare(state)
 
     @music.command(name="pause", description="⏸️ หยุดเพลงชั่วคราว")
     async def pause(self, ctx: discord.ApplicationContext):
@@ -1702,10 +2123,13 @@ class PlayerCog(commands.Cog):
         
         state = self.get_state(ctx.guild.id)
         self._mark_playback_resumed(state)
+        # Arming is refused while paused, so a crossfade toggled on during the
+        # pause would silently miss this track. Retry now.
+        self._request_crossfade_prepare(state)
         if state.current:
             embed = self._build_player_embed(state.current, state)
             await self._update_controller(state, embed)
-            
+
         await ctx.respond(embed=info_embed("▶️ เล่นเพลงต่อ", "หนูเล่นเพลงต่อแล้วนะคะ! (๑>◡<๑)"))
 
     @music.command(name="stop", description="⏹️ หยุดเพลงและล้างคิวทั้งหมด")
@@ -1744,8 +2168,11 @@ class PlayerCog(commands.Cog):
         if state.crossfade_next:
             pending = state.crossfade_next
             self._clear_crossfade(state)
-            state.queue.appendleft(pending)
-        
+            # A self-crossfade preloaded the playing track; re-queueing it here
+            # would make the skip replay it instead of advancing.
+            if pending is not state.current:
+                state.queue.appendleft(pending)
+
         if position:
             if position > len(state.queue):
                 raise UserError("ไม่มีเพลงในคิวนั้นค่ะ", f"คิวมีแค่ {len(state.queue)} เพลงนะคะ (´-ω-`)")
@@ -1782,6 +2209,56 @@ class PlayerCog(commands.Cog):
                 color=discord.Color(0x5865F2)
             )
         await ctx.respond(embed=embed)
+
+    @music.command(name="seek", description="⏩ เลื่อนไปยังเวลาที่ต้องการ")
+    @discord.option("timestamp", description="เช่น 90, 1:30 หรือ 1:02:03")
+    async def seek(self, ctx: discord.ApplicationContext, timestamp: str):
+        state = self.get_state(ctx.guild.id)
+        track = state.current
+        if not track or not self._can_seek(state):
+            return await ctx.respond(
+                embed=error_embed("เลื่อนเวลาไม่ได้ค่ะ", "ตอนนี้ไม่มีเพลงที่เลื่อนเวลาได้อยู่เลยค่ะ (´・ω・)"),
+                ephemeral=True
+            )
+
+        target = parse_timestamp(timestamp)
+        if target is None:
+            return await ctx.respond(
+                embed=error_embed("รูปแบบเวลาไม่ถูกต้องค่ะ", "ลองพิมพ์แบบ `90`, `1:30` หรือ `1:02:03` ดูนะคะ (´・ω・)"),
+                ephemeral=True
+            )
+
+        duration = track.duration
+        if target >= duration:
+            return await ctx.respond(
+                embed=error_embed(
+                    "เวลาเกินความยาวเพลงค่ะ",
+                    f"เพลงนี้ยาว {format_duration(duration)} เท่านั้นนะคะ (´-ω-`)",
+                ),
+                ephemeral=True
+            )
+        if state.seek_lock.locked():
+            return await ctx.respond(
+                embed=error_embed("รอสักครู่นะคะ", "หนูกำลังเลื่อนเพลงอยู่ค่ะ (´・ω・)"),
+                ephemeral=True
+            )
+
+        await ctx.defer()
+        async with state.seek_lock:
+            ok = await self._seek_async(state, target)
+
+        if not ok:
+            return await ctx.respond(
+                embed=error_embed("เลื่อนเวลาไม่สำเร็จค่ะ", "เพลงเปลี่ยนไปก่อนที่หนูจะเลื่อนเสร็จค่ะ (´-ω-`)"),
+                ephemeral=True
+            )
+
+        if state.current:
+            await self._update_controller(state, self._build_player_embed(state.current, state))
+
+        await ctx.respond(
+            embed=success_embed("⏩ เลื่อนเวลาแล้ว", f"เลื่อนไปที่ {format_duration(int(target))} ให้แล้วนะคะ! (๑>◡<๑)")
+        )
 
     @music.command(name="previous", description="⏮️ ย้อนกลับไปเพลงก่อนหน้า")
     async def previous(self, ctx: discord.ApplicationContext):
@@ -1912,10 +2389,9 @@ class PlayerCog(commands.Cog):
         state = self.get_state(ctx.guild.id)
         state.volume = level / 100.0
         
-        if ctx.voice_client and ctx.voice_client.source:
-            if isinstance(ctx.voice_client.source, discord.PCMVolumeTransformer):
-                ctx.voice_client.source.volume = state.volume
-                
+        if state.active_audio_source:
+            state.active_audio_source.volume = state.volume
+
         if state.current:
             embed = self._build_player_embed(state.current, state)
             await self._update_controller(state, embed)

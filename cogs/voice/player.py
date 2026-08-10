@@ -5,6 +5,7 @@ import math
 import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlparse
 
 import discord
 import numpy as np
@@ -996,9 +997,16 @@ class PlaylistNumberModal(discord.ui.Modal):
 
 
 class PlaylistListPaginator(discord.ui.View):
-    def __init__(self, cog: "PlayerCog", playlists: list[SavedPlaylist], items_per_page: int = 10):
+    def __init__(
+        self,
+        cog: "PlayerCog",
+        guild_id: int,
+        playlists: list[SavedPlaylist],
+        items_per_page: int = 10,
+    ):
         super().__init__(timeout=180)
         self.cog = cog
+        self.guild_id = guild_id
         self.playlists = playlists
         self.items_per_page = items_per_page
         self.current_page = 1
@@ -1065,7 +1073,7 @@ class PlaylistListPaginator(discord.ui.View):
     @discord.ui.button(label="🔄", style=discord.ButtonStyle.secondary, row=0)
     async def reload_button(self, button: discord.ui.Button, interaction: discord.Interaction):
         try:
-            self.playlists = self.cog.playlist_store.list_playlists()
+            self.playlists = self.cog.playlist_store.list_playlists(self.guild_id)
         except PlaylistStoreError:
             await interaction.response.send_message(
                 embed=error_embed("โหลดรายการไม่ได้ค่ะ", "ระบบจัดเก็บเพลย์ลิสต์มีปัญหาชั่วคราว ลองใหม่อีกครั้งนะคะ"),
@@ -1137,7 +1145,7 @@ class PlayerCog(commands.Cog):
                 await interaction.edit_original_response(embed=embed)
 
         try:
-            playlist = self.playlist_store.delete_playlist(code)
+            playlist = self.playlist_store.delete_playlist(code, interaction.guild.id)
         except PlaylistNotFoundError:
             logger.warning(f"Playlist delete rejected in guild {interaction.guild.id}: unavailable playlist")
             await respond(
@@ -1174,7 +1182,7 @@ class PlayerCog(commands.Cog):
         self, interaction: discord.Interaction, code: str
     ) -> None:
         try:
-            playlist = self.playlist_store.details(code)
+            playlist = self.playlist_store.details(code, interaction.guild.id)
         except PlaylistNotFoundError:
             await interaction.response.send_message(
                 embed=error_embed("ไม่พบรหัสเพลย์ลิสต์ค่ะ", "ตรวจสอบรหัสแล้วลองใหม่อีกครั้งนะคะ"),
@@ -1206,7 +1214,7 @@ class PlayerCog(commands.Cog):
     async def _show_saved_playlists(self, ctx: discord.ApplicationContext) -> None:
         await ctx.defer()
         try:
-            playlists = self.playlist_store.list_playlists()
+            playlists = self.playlist_store.list_playlists(ctx.guild.id)
         except PlaylistStoreError:
             logger.error(f"Playlist list failed in guild {ctx.guild.id}")
             await ctx.interaction.edit_original_response(
@@ -1226,7 +1234,7 @@ class PlayerCog(commands.Cog):
             )
             return
 
-        paginator = PlaylistListPaginator(self, playlists)
+        paginator = PlaylistListPaginator(self, ctx.guild.id, playlists)
         message = await ctx.interaction.edit_original_response(
             embed=paginator.get_embed(), view=paginator
         )
@@ -1240,8 +1248,14 @@ class PlayerCog(commands.Cog):
         tracks.extend(state.queue)
         return tracks
 
+    @staticmethod
+    def _is_youtube_track(track: Track) -> bool:
+        host = (urlparse(track.original_url).hostname or "").lower()
+        return host == "youtu.be" or host == "youtube.com" or host.endswith(".youtube.com")
+
     def save_playlist(self, state: AudioState, owner_id: int) -> tuple[str, int]:
-        tracks = self._playlist_tracks(state)
+        all_tracks = self._playlist_tracks(state)
+        tracks = [track for track in all_tracks if self._is_youtube_track(track)]
         playlist_tracks = [
             {
                 "query": track.original_url or track.title,
@@ -1251,16 +1265,22 @@ class PlayerCog(commands.Cog):
             for track in tracks
         ]
         start_position = (
-            self._current_playback_position(state) if state.current else 0.0
+            self._current_playback_position(state)
+            if state.current and self._is_youtube_track(state.current)
+            else 0.0
         )
         logger.debug(
             f"Playlist save snapshot in guild {state.guild_id}: "
-            f"tracks={len(playlist_tracks)}, current={state.current is not None}, "
+            f"tracks={len(playlist_tracks)}, skipped_non_youtube={len(all_tracks) - len(tracks)}, "
+            f"current={state.current is not None}, "
             f"crossfade_pending={state.crossfade_next is not None}, "
             f"resume_offset={start_position:.1f}s"
         )
         code = self.playlist_store.save(
-            owner_id, playlist_tracks, start_position_seconds=start_position
+            state.guild_id,
+            owner_id,
+            playlist_tracks,
+            start_position_seconds=start_position,
         )
         logger.debug(
             f"Playlist save persisted in guild {state.guild_id}: tracks={len(playlist_tracks)}"
@@ -2609,7 +2629,7 @@ class PlayerCog(commands.Cog):
                 await interaction.edit_original_response(embed=embed)
 
         try:
-            playlist_tracks = self.playlist_store.load(code)
+            playlist_tracks = self.playlist_store.load(code, interaction.guild.id)
             logger.debug(
                 f"Playlist restore validated in guild {interaction.guild.id}: "
                 f"tracks={len(playlist_tracks)}"
@@ -2641,7 +2661,7 @@ class PlayerCog(commands.Cog):
 
         try:
             await self._ensure_voice_connection(interaction, state)
-            saved_playlist = self.playlist_store.consume_playlist(code)
+            saved_playlist = self.playlist_store.consume_playlist(code, interaction.guild.id)
             logger.debug(
                 f"Playlist restore consumed in guild {interaction.guild.id}: "
                 f"tracks={len(saved_playlist.tracks)}, "

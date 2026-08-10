@@ -24,6 +24,7 @@ class SavedPlaylist:
     """Validated metadata and tracks for one saved playlist."""
 
     code: str
+    guild_id: int
     owner_id: int
     created_at: datetime
     expires_at: datetime
@@ -74,11 +75,13 @@ class PlaylistStore:
 
     def save(
         self,
+        guild_id: int,
         owner_id: int,
         tracks: list[Mapping[str, object]],
         *,
         start_position_seconds: float = 0.0,
     ) -> str:
+        self._validate_guild_id(guild_id)
         clean_tracks = self._validate_tracks(tracks)
         start_position = self._validate_start_position(start_position_seconds)
         with self._lock:
@@ -86,6 +89,7 @@ class PlaylistStore:
             code = self._new_code(data["playlists"])
             now = self._now()
             data["playlists"][code] = {
+                "guild_id": guild_id,
                 "owner_id": owner_id,
                 "created_at": now.isoformat(),
                 "expires_at": (now + self.expiry).isoformat(),
@@ -95,52 +99,57 @@ class PlaylistStore:
             self._write(data)
         return code
 
-    def load(self, code: str) -> list[PlaylistTrack]:
+    def load(self, code: str, guild_id: int) -> list[PlaylistTrack]:
         normalized_code = self._normalize_code(code)
+        self._validate_guild_id(guild_id)
         with self._lock:
             data = self._read()
-            return self._playlist_info(data, normalized_code).tracks
+            return self._playlist_info(data, normalized_code, guild_id).tracks
 
-    def consume(self, code: str) -> list[PlaylistTrack]:
+    def consume(self, code: str, guild_id: int) -> list[PlaylistTrack]:
         """Return a valid playlist and permanently remove it in the same write."""
-        return self.consume_playlist(code).tracks
+        return self.consume_playlist(code, guild_id).tracks
 
-    def consume_playlist(self, code: str) -> SavedPlaylist:
+    def consume_playlist(self, code: str, guild_id: int) -> SavedPlaylist:
         """Return playlist metadata and permanently remove it in the same write."""
         normalized_code = self._normalize_code(code)
+        self._validate_guild_id(guild_id)
         with self._lock:
             data = self._read()
-            playlist = self._playlist_info(data, normalized_code)
+            playlist = self._playlist_info(data, normalized_code, guild_id)
             del data["playlists"][normalized_code]
             self._write(data)
         return playlist
 
-    def delete_playlist(self, code: str) -> SavedPlaylist:
+    def delete_playlist(self, code: str, guild_id: int) -> SavedPlaylist:
         """Validate and permanently remove a playlist in one locked write."""
         normalized_code = self._normalize_code(code)
+        self._validate_guild_id(guild_id)
         with self._lock:
             data = self._read()
-            playlist = self._playlist_info(data, normalized_code)
+            playlist = self._playlist_info(data, normalized_code, guild_id)
             del data["playlists"][normalized_code]
             self._write(data)
         return playlist
 
-    def details(self, code: str) -> SavedPlaylist:
+    def details(self, code: str, guild_id: int) -> SavedPlaylist:
         """Return display metadata without consuming a valid playlist."""
         normalized_code = self._normalize_code(code)
+        self._validate_guild_id(guild_id)
         with self._lock:
-            return self._playlist_info(self._read(), normalized_code)
+            return self._playlist_info(self._read(), normalized_code, guild_id)
 
-    def list_playlists(self) -> list[SavedPlaylist]:
-        """Return all valid, unexpired playlists ordered by most recent first."""
+    def list_playlists(self, guild_id: int) -> list[SavedPlaylist]:
+        """Return a guild's valid, unexpired playlists ordered by most recent first."""
+        self._validate_guild_id(guild_id)
         with self._lock:
             data = self._read()
             playlists: list[SavedPlaylist] = []
             for code in list(data["playlists"]):
                 try:
-                    playlists.append(self._playlist_info(data, code))
-                except (PlaylistDataError, PlaylistExpiredError):
-                    # One bad or expired record should not hide the usable list.
+                    playlists.append(self._playlist_info(data, code, guild_id))
+                except (PlaylistDataError, PlaylistExpiredError, PlaylistNotFoundError):
+                    # One bad, expired, or other-guild record should not hide the usable list.
                     continue
         return sorted(playlists, key=lambda playlist: playlist.created_at, reverse=True)
 
@@ -152,11 +161,17 @@ class PlaylistStore:
         return normalized_code
 
     def _playlist_info(
-        self, data: dict[str, dict[str, object]], code: str
+        self, data: dict[str, dict[str, object]], code: str, guild_id: int
     ) -> SavedPlaylist:
         playlist = data["playlists"].get(code)
         if not isinstance(playlist, dict):
             raise PlaylistNotFoundError("Playlist code does not exist")
+
+        saved_guild_id = playlist.get("guild_id")
+        if not isinstance(saved_guild_id, int) or isinstance(saved_guild_id, bool):
+            raise PlaylistDataError("Playlist guild is invalid")
+        if saved_guild_id != guild_id:
+            raise PlaylistNotFoundError("Playlist code is not available in this guild")
 
         owner_id = playlist.get("owner_id")
         if not isinstance(owner_id, int) or isinstance(owner_id, bool):
@@ -171,6 +186,7 @@ class PlaylistStore:
 
         return SavedPlaylist(
             code=code,
+            guild_id=saved_guild_id,
             owner_id=owner_id,
             created_at=created_at,
             expires_at=expires_at,
@@ -186,6 +202,11 @@ class PlaylistStore:
             if CODE_PATTERN.fullmatch(code) and code not in playlists:
                 return code
         raise PlaylistStoreError("Could not generate a unique playlist code")
+
+    @staticmethod
+    def _validate_guild_id(guild_id: object) -> None:
+        if not isinstance(guild_id, int) or isinstance(guild_id, bool) or guild_id <= 0:
+            raise PlaylistDataError("Playlist guild is invalid")
 
     def _read(self) -> dict[str, dict[str, object]]:
         if not self.path.exists():

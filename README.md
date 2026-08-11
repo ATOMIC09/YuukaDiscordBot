@@ -3,6 +3,9 @@
 
 <p align="center">
   <img alt="Version" src="https://img.shields.io/github/v/tag/ATOMIC09/YuukaDiscordBot?label=version&color=blue" />
+  <a href="https://github.com/ATOMIC09/YuukaDiscordBot/actions/workflows/docker-build.yml">
+    <img alt="Build" src="https://img.shields.io/github/actions/workflow/status/ATOMIC09/YuukaDiscordBot/docker-build.yml?label=build" />
+  </a>
   <a>
     <img alt="License" src="https://img.shields.io/github/license/ATOMIC09/YuukaDiscordBot">
   </a>

@@ -6,6 +6,21 @@ from bot.logger import logger
 from utils.embeds import success_embed, error_embed, info_embed, warning_embed
 from utils.errors import UserError, UserWarning
 
+def format_countdown(seconds: int) -> str:
+    """Spell a duration out in Thai units, largest first, skipping empty ones."""
+    years, rem = divmod(int(seconds), 31536000)
+    days, rem = divmod(rem, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, secs = divmod(rem, 60)
+
+    parts = []
+    if years > 0: parts.append(f"{years} ปี")
+    if days > 0: parts.append(f"{days} วัน")
+    if hours > 0: parts.append(f"{hours} ชม.")
+    if minutes > 0: parts.append(f"{minutes} นาที")
+    if secs > 0: parts.append(f"{secs} วิ")
+    return " ".join(parts) if parts else "0 วิ"
+
 class CountdisView(discord.ui.View):
     def __init__(self, target_time: int, channel: discord.VoiceChannel, author_id: int):
         super().__init__(timeout=None)
@@ -69,7 +84,7 @@ class CountdisCog(commands.Cog):
         
         view = CountdisView(target_timestamp, channel, ctx.author.id)
         
-        content = f"รับทราบค่ะ! เริ่มนับถอยหลังแล้วนะคะ ( • ̀ω•́ )\nเหลือเวลา: <t:{target_timestamp}:R> (ตัดการเชื่อมต่อตอน <t:{target_timestamp}:T>)\n\n*ถ้าเซนเซย์ไม่อยากถูกเตะออก กดปุ่ม `ยกเว้นฉัน` ไว้ได้เลยค่ะ!*"
+        content = f"รับทราบค่ะ! เริ่มนับถอยหลังแล้วนะคะ ( • ̀ω•́ )\nตั้งเวลาไว้: **{format_countdown(timer)}**\nเหลือเวลา: <t:{target_timestamp}:R> (ตัดการเชื่อมต่อตอน <t:{target_timestamp}:T>)\n\n*ถ้าเซนเซย์ไม่อยากถูกเตะออก กดปุ่ม `ยกเว้นฉัน` ไว้ได้เลยค่ะ!*"
         
         await ctx.respond(embed=success_embed("กำลังนับถอยหลัง...", content), view=view)
         original = await ctx.interaction.original_response()

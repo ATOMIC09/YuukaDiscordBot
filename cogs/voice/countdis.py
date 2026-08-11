@@ -80,9 +80,13 @@ class CountdisCog(commands.Cog):
 
         async def countdown_task():
             try:
-                # Sleep until the timer ends
-                await asyncio.sleep(timer)
-                
+                # Use wall clock instead of trusting the monotonic clock
+                while True:
+                    remaining = target_timestamp - time.time()
+                    if remaining <= 0:
+                        break
+                    await asyncio.sleep(min(remaining, 30))
+
                 # Time's up! Kick members
                 member_count = 0
                 for member in channel.members:

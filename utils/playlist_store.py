@@ -104,7 +104,7 @@ class PlaylistStore:
         self._validate_guild_id(guild_id)
         with self._lock:
             data = self._read()
-            return self._playlist_info(data, normalized_code, guild_id).tracks
+            return self._playlist_info(data, normalized_code, guild_id, claim_legacy=True).tracks
 
     def consume(self, code: str, guild_id: int) -> list[PlaylistTrack]:
         """Return a valid playlist and permanently remove it in the same write."""
@@ -116,7 +116,7 @@ class PlaylistStore:
         self._validate_guild_id(guild_id)
         with self._lock:
             data = self._read()
-            playlist = self._playlist_info(data, normalized_code, guild_id)
+            playlist = self._playlist_info(data, normalized_code, guild_id, claim_legacy=True)
             del data["playlists"][normalized_code]
             self._write(data)
         return playlist
@@ -127,7 +127,7 @@ class PlaylistStore:
         self._validate_guild_id(guild_id)
         with self._lock:
             data = self._read()
-            playlist = self._playlist_info(data, normalized_code, guild_id)
+            playlist = self._playlist_info(data, normalized_code, guild_id, claim_legacy=True)
             del data["playlists"][normalized_code]
             self._write(data)
         return playlist
@@ -137,7 +137,8 @@ class PlaylistStore:
         normalized_code = self._normalize_code(code)
         self._validate_guild_id(guild_id)
         with self._lock:
-            return self._playlist_info(self._read(), normalized_code, guild_id)
+            data = self._read()
+            return self._playlist_info(data, normalized_code, guild_id, claim_legacy=True)
 
     def list_playlists(self, guild_id: int) -> list[SavedPlaylist]:
         """Return a guild's valid, unexpired playlists ordered by most recent first."""
@@ -161,13 +162,24 @@ class PlaylistStore:
         return normalized_code
 
     def _playlist_info(
-        self, data: dict[str, dict[str, object]], code: str, guild_id: int
+        self,
+        data: dict[str, dict[str, object]],
+        code: str,
+        guild_id: int,
+        *,
+        claim_legacy: bool = False,
     ) -> SavedPlaylist:
         playlist = data["playlists"].get(code)
         if not isinstance(playlist, dict):
             raise PlaylistNotFoundError("Playlist code does not exist")
 
         saved_guild_id = playlist.get("guild_id")
+        legacy_claimed = saved_guild_id is None and claim_legacy
+        if legacy_claimed:
+            # Guild-private playlists were introduced after the first saved
+            # records existed. A direct code use safely claims one legacy
+            # record for this guild; listing never performs this migration.
+            saved_guild_id = guild_id
         if not isinstance(saved_guild_id, int) or isinstance(saved_guild_id, bool):
             raise PlaylistDataError("Playlist guild is invalid")
         if saved_guild_id != guild_id:
@@ -184,7 +196,7 @@ class PlaylistStore:
             self._write(data)
             raise PlaylistExpiredError("Playlist code has expired")
 
-        return SavedPlaylist(
+        saved_playlist = SavedPlaylist(
             code=code,
             guild_id=saved_guild_id,
             owner_id=owner_id,
@@ -195,6 +207,10 @@ class PlaylistStore:
             ),
             tracks=self._validate_tracks(playlist.get("tracks")),
         )
+        if legacy_claimed:
+            playlist["guild_id"] = saved_guild_id
+            self._write(data)
+        return saved_playlist
 
     def _new_code(self, playlists: Mapping[str, object]) -> str:
         for _ in range(100):

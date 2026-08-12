@@ -4,7 +4,7 @@ import dataclasses
 import math
 import queue
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from urllib.parse import urlparse
 
 import discord
@@ -92,7 +92,13 @@ class BufferedAudioSource(discord.AudioSource):
     audible gap - Discord's playback thread drains the queue instead of racing
     ffmpeg's pipe directly.
     """
-    def __init__(self, source: discord.AudioSource, buffer_seconds: float = BUFFER_SECONDS, prefill_seconds: float = PREFILL_SECONDS):
+    def __init__(
+        self,
+        source: discord.AudioSource,
+        buffer_seconds: float = BUFFER_SECONDS,
+        prefill_seconds: float = PREFILL_SECONDS,
+        on_underrun=None,
+    ):
         self._source = source
         self._buffer_chunks = max(1, int(buffer_seconds * 1000 / FRAME_MS))
         self._prefill_chunks = max(1, int(prefill_seconds * 1000 / FRAME_MS))
@@ -100,6 +106,8 @@ class BufferedAudioSource(discord.AudioSource):
         self._ready = threading.Event()
         self._finished = threading.Event()
         self._stopped = threading.Event()
+        self._on_underrun = on_underrun
+        self._consecutive_underruns = 0
         self._thread = threading.Thread(target=self._buffer_loop, daemon=True)
         self._thread.start()
 
@@ -147,12 +155,27 @@ class BufferedAudioSource(discord.AudioSource):
         return self._queue.full()
 
     def read(self) -> bytes:
-        while True:
-            try:
-                return self._queue.get(timeout=0.5)
-            except queue.Empty:
-                if self._finished.is_set() and self._queue.empty():
-                    return b''
+        try:
+            frame = self._queue.get_nowait()
+        except queue.Empty:
+            if self._finished.is_set():
+                return b''
+            # Discord requests a frame every 20 ms. Blocking this send thread
+            # for 500 ms on a slow decoder turns one buffer miss into a long,
+            # audible stutter. Keep the audio clock moving with silence while
+            # the background reader catches up instead.
+            self._consecutive_underruns += 1
+            if self._on_underrun and (
+                self._consecutive_underruns == 1
+                or self._consecutive_underruns % 250 == 0
+            ):
+                try:
+                    self._on_underrun(self._consecutive_underruns)
+                except Exception:
+                    pass
+            return SILENCE_FRAME
+        self._consecutive_underruns = 0
+        return frame
 
     def is_opus(self) -> bool:
         return False
@@ -1097,8 +1120,21 @@ class PlayerCog(commands.Cog):
     def __init__(self, bot: discord.Bot, playlist_store: PlaylistStore | None = None):
         self.bot = bot
         self.states: dict[int, AudioState] = {}
-        self._executor = ThreadPoolExecutor(max_workers=4)
+        # yt-dlp can be CPU-heavy and its work cannot be cancelled once it has
+        # started. Keep it away from decoder prefill/cleanup so metadata work
+        # never delays the path that supplies audio frames.
+        self._metadata_executor = ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="music-metadata"
+        )
+        self._decoder_executor = ThreadPoolExecutor(
+            max_workers=2, thread_name_prefix="music-decoder"
+        )
+        self._crossfade_metadata_job: Future[dict | None] | None = None
         self.playlist_store = playlist_store or PlaylistStore()
+
+    def cog_unload(self):
+        self._metadata_executor.shutdown(wait=False, cancel_futures=True)
+        self._decoder_executor.shutdown(wait=False, cancel_futures=True)
 
     def get_state(self, guild_id: int) -> AudioState:
         if guild_id not in self.states:
@@ -1603,18 +1639,66 @@ class PlayerCog(commands.Cog):
     async def _extract_info(self, query: str, download: bool = False) -> dict:
         loop = asyncio.get_event_loop()
         data = await loop.run_in_executor(
-            self._executor,
+            self._metadata_executor,
             lambda: ytdl.extract_info(query, download=download)
         )
         return data
 
-    async def _hydrate_track(self, track: Track) -> bool:
+    async def _extract_crossfade_info(self, query: str) -> dict | None:
+        """Resolve at most one crossfade candidate while a prior job runs.
+
+        Cancelling an asyncio task cannot stop yt-dlp already running in a
+        worker. Holding the concurrent future here prevents skips and track
+        changes from piling further stale crossfade jobs into the executor.
+        """
+        existing_job = self._crossfade_metadata_job
+        if existing_job and not existing_job.done():
+            logger.debug("[Crossfade] metadata preload skipped; another job is still running")
+            return None
+        if existing_job and existing_job.done():
+            self._crossfade_metadata_job = None
+
+        job = self._metadata_executor.submit(ytdl.extract_info, query, download=False)
+        self._crossfade_metadata_job = job
+        try:
+            return await asyncio.shield(asyncio.wrap_future(job))
+        finally:
+            if job.done() and self._crossfade_metadata_job is job:
+                self._crossfade_metadata_job = None
+
+    @staticmethod
+    def _on_buffer_underrun(guild_id: int, consecutive_frames: int) -> None:
+        logger.debug(
+            f"[Audio buffer] guild {guild_id}: underrun for "
+            f"{consecutive_frames * FRAME_MS}ms; sending silence while refilling"
+        )
+
+    def _buffered_audio_source(
+        self,
+        guild_id: int,
+        source: discord.AudioSource,
+        *,
+        buffer_seconds: float = BUFFER_SECONDS,
+    ) -> BufferedAudioSource:
+        return BufferedAudioSource(
+            source,
+            buffer_seconds=buffer_seconds,
+            on_underrun=lambda frames: self._on_buffer_underrun(guild_id, frames),
+        )
+
+    async def _hydrate_track(self, track: Track, *, crossfade_preload: bool = False) -> bool:
         """Resolve a flat-playlist track into a playable stream."""
         if track.stream_url:
             return True
 
-        data = await self._extract_info(track.original_url, download=False)
+        data = (
+            await self._extract_crossfade_info(track.original_url)
+            if crossfade_preload
+            else await self._extract_info(track.original_url, download=False)
+        )
         if not data:
+            if crossfade_preload:
+                return False
             raise RuntimeError("No data returned by yt-dlp (video might be unavailable).")
 
         track.stream_url = data.get("url")
@@ -1682,11 +1766,12 @@ class PlayerCog(commands.Cog):
         # sleeps on the old remaining time; both are wrong the moment we jump.
         self._cancel_prepared_crossfade(state)
 
-        new_source = BufferedAudioSource(
-            discord.FFmpegPCMAudio(track.stream_url, **self._seek_ffmpeg_options(target))
+        new_source = self._buffered_audio_source(
+            state.guild_id,
+            discord.FFmpegPCMAudio(track.stream_url, **self._seek_ffmpeg_options(target)),
         )
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(self._executor, new_source.wait_ready)
+        await loop.run_in_executor(self._decoder_executor, new_source.wait_ready)
 
         # A stream URL that expired mid-session yields a decoder that dies
         # immediately. Swapping it in would read as end-of-track and skip the
@@ -1721,7 +1806,7 @@ class PlayerCog(commands.Cog):
 
         if displaced:
             # Tearing down an FFmpeg process blocks; keep it off the event loop.
-            await loop.run_in_executor(self._executor, displaced.cleanup)
+            await loop.run_in_executor(self._decoder_executor, displaced.cleanup)
 
         logger.debug(
             f"[Seek] guild {state.guild_id}: '{track.title}' -> "
@@ -1806,7 +1891,7 @@ class PlayerCog(commands.Cog):
             f"'{candidate.title}' for active '{current_track.title}'"
         )
         try:
-            if not await self._hydrate_track(candidate) or candidate.duration <= 0:
+            if not await self._hydrate_track(candidate, crossfade_preload=True) or candidate.duration <= 0:
                 logger.debug(
                     f"[Crossfade] guild {state.guild_id}: preload skipped; "
                     "next track has an unknown duration or no stream"
@@ -1843,12 +1928,13 @@ class PlayerCog(commands.Cog):
             if not self._crossfade_still_valid(state, current_track, candidate):
                 return
 
-            next_audio = BufferedAudioSource(
+            next_audio = self._buffered_audio_source(
+                state.guild_id,
                 discord.FFmpegPCMAudio(candidate.stream_url, **ffmpeg_options),
                 buffer_seconds=CROSSFADE_BUFFER_SECONDS,
             )
             await asyncio.get_event_loop().run_in_executor(
-                self._executor, next_audio.wait_ready
+                self._decoder_executor, next_audio.wait_ready
             )
             if not self._crossfade_still_valid(state, current_track, candidate):
                 next_audio.cleanup()
@@ -2101,7 +2187,8 @@ class PlayerCog(commands.Cog):
             )
 
         try:
-            buffered_source = BufferedAudioSource(
+            buffered_source = self._buffered_audio_source(
+                guild_id,
                 discord.FFmpegPCMAudio(
                     track.stream_url,
                     **(
@@ -2118,7 +2205,9 @@ class PlayerCog(commands.Cog):
 
             # Wait for the buffer to actually pre-fill (rather than a blind fixed sleep)
             # before Discord starts pulling frames on its strict 20ms clock.
-            await asyncio.get_event_loop().run_in_executor(self._executor, buffered_source.wait_ready)
+            await asyncio.get_event_loop().run_in_executor(
+                self._decoder_executor, buffered_source.wait_ready
+            )
             if playback_generation != state.playback_generation:
                 buffered_source.cleanup()
                 return

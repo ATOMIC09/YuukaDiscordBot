@@ -607,7 +607,8 @@ class PlayerControls(discord.ui.View):
             self.state.loop_mode = "track"
         else:
             self.state.loop_mode = "off"
-            
+
+        self.cog._refresh_crossfade_for_loop_change(self.state)
         self.update_buttons()
         
         embed = self.cog._build_player_embed(self.state.current, self.state)
@@ -1422,6 +1423,21 @@ class PlayerCog(commands.Cog):
             return state.current
         return None
 
+    def _refresh_crossfade_for_loop_change(self, state: AudioState):
+        """Recalculate a prepared successor after the loop mode changes."""
+        if not state.crossfade_enabled:
+            return
+
+        # A scheduled deck was selected under the old mode.  It is safe to
+        # discard until mixing starts; once mixing starts, the active transition
+        # must finish and the completion hook will prepare the next successor.
+        self._cancel_prepared_crossfade(state)
+        logger.debug(
+            f"[Crossfade] guild {state.guild_id}: loop mode changed to "
+            f"{state.loop_mode}; recalculating successor"
+        )
+        self._request_crossfade_prepare(state)
+
     def _crossfade_still_valid(
         self, state: AudioState, current_track: Track, candidate: Track
     ) -> bool:
@@ -1740,11 +1756,18 @@ class PlayerCog(commands.Cog):
         return options
 
     def _can_seek(self, state: AudioState) -> bool:
+        voice_client = state.voice_client
+        voice_active = bool(
+            voice_client
+            and (voice_client.is_playing() or voice_client.is_paused())
+        )
         return bool(
             state.current
             and state.current.duration > 0
-            and state.voice_client
-            and state.voice_client.is_connected()
+            and state.current_played
+            and voice_client
+            and voice_client.is_connected()
+            and voice_active
             and state.active_audio_source is not None
             and not state.active_audio_source.is_crossfade_active()
         )
@@ -1968,7 +1991,9 @@ class PlayerCog(commands.Cog):
                     )
                 ),
                 lambda: self.bot.loop.call_soon_threadsafe(
-                    self._request_crossfade_prepare, state
+                    lambda: self.bot.loop.create_task(
+                        self._finish_crossfade(state, candidate)
+                    )
                 ),
             )
         except Exception as e:
@@ -2052,6 +2077,26 @@ class PlayerCog(commands.Cog):
 
         if state.text_channel:
             await self._update_controller(state, self._build_player_embed(next_track, state))
+
+    async def _finish_crossfade(self, state: AudioState, track: Track):
+        """Refresh controls once a crossfade has returned to one active deck."""
+        if (
+            state.current is not track
+            or not state.current_played
+            or not state.voice_client
+            or not (state.voice_client.is_playing() or state.voice_client.is_paused())
+            or not state.active_audio_source
+            or state.active_audio_source.is_crossfade_active()
+        ):
+            return
+
+        logger.debug(
+            f"[Crossfade] guild {state.guild_id}: mix complete for "
+            f"'{track.title}'; refreshing seek controls"
+        )
+        if state.text_channel:
+            await self._update_controller(state, self._build_player_embed(track, state))
+        self._request_crossfade_prepare(state)
 
     async def _play_next_async(
         self,
@@ -2660,6 +2705,7 @@ class PlayerCog(commands.Cog):
     async def loop(self, ctx: discord.ApplicationContext, mode: discord.Option(str, choices=["off", "track", "queue"])):
         state = self.get_state(ctx.guild.id)
         state.loop_mode = mode
+        self._refresh_crossfade_for_loop_change(state)
         
         if mode == "off":
             msg = "ปิดการวนลูปแล้วนะคะ (・`ω´・)"

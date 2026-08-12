@@ -6,6 +6,21 @@ from bot.logger import logger
 from utils.embeds import success_embed, error_embed, info_embed, warning_embed
 from utils.errors import UserError, UserWarning
 
+def format_countdown(seconds: int) -> str:
+    """Spell a duration out in Thai units, largest first, skipping empty ones."""
+    years, rem = divmod(int(seconds), 31536000)
+    days, rem = divmod(rem, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, secs = divmod(rem, 60)
+
+    parts = []
+    if years > 0: parts.append(f"{years} ปี")
+    if days > 0: parts.append(f"{days} วัน")
+    if hours > 0: parts.append(f"{hours} ชม.")
+    if minutes > 0: parts.append(f"{minutes} นาที")
+    if secs > 0: parts.append(f"{secs} วิ")
+    return " ".join(parts) if parts else "0 วิ"
+
 class CountdisView(discord.ui.View):
     def __init__(self, target_time: int, channel: discord.VoiceChannel, author_id: int):
         super().__init__(timeout=None)
@@ -25,21 +40,23 @@ class CountdisView(discord.ui.View):
             self.excepted_users.add(interaction.user.id)
             await interaction.response.send_message(f"รับทราบค่ะ! หนูจะเว้น {interaction.user.mention} ไว้นะคะ (๑>◡<๑)", ephemeral=True)
 
+    # NOTE: do not name this `stop` — that would shadow View.stop()
     @discord.ui.button(label="หยุด", style=discord.ButtonStyle.danger)
-    async def stop(self, button: discord.ui.Button, interaction: discord.Interaction):
+    async def stop_countdown(self, button: discord.ui.Button, interaction: discord.Interaction):
         if self.stopped:
             await interaction.response.send_message("เซนเซย์คะ หนูก็หยุดนับไปแล้วไงคะ! (；￣Д￣)", ephemeral=True)
             return
-        
+
         self.stopped = True
         if self.task and not self.task.done():
             self.task.cancel()
-        
+
         # Disable buttons
         for child in self.children:
             child.disabled = True
-        
+
         await interaction.response.edit_message(content=None, embed=warning_embed("ยกเลิกการนับถอยหลัง", "หยุดนับถอยหลังแล้วค่ะ! เซนเซย์เปลี่ยนใจสินะคะ (´-ω-`)"), view=self)
+        self.stop()
 
 class CountdisCog(commands.Cog):
     def __init__(self, bot: discord.Bot):
@@ -67,16 +84,24 @@ class CountdisCog(commands.Cog):
         
         view = CountdisView(target_timestamp, channel, ctx.author.id)
         
-        content = f"รับทราบค่ะ! เริ่มนับถอยหลังแล้วนะคะ ( • ̀ω•́ )\nเหลือเวลา: <t:{target_timestamp}:R> (ตัดการเชื่อมต่อตอน <t:{target_timestamp}:T>)\n\n*ถ้าเซนเซย์ไม่อยากถูกเตะออก กดปุ่ม `ยกเว้นฉัน` ไว้ได้เลยค่ะ!*"
+        content = f"รับทราบค่ะ! เริ่มนับถอยหลังแล้วนะคะ ( • ̀ω•́ )\nตั้งเวลาไว้: **{format_countdown(timer)}**\nเหลือเวลา: <t:{target_timestamp}:R> (ตัดการเชื่อมต่อตอน <t:{target_timestamp}:T>)\n\n*ถ้าเซนเซย์ไม่อยากถูกเตะออก กดปุ่ม `ยกเว้นฉัน` ไว้ได้เลยค่ะ!*"
         
         await ctx.respond(embed=success_embed("กำลังนับถอยหลัง...", content), view=view)
-        message = await ctx.interaction.original_response()
+        original = await ctx.interaction.original_response()
+
+        reply_channel = ctx.channel if isinstance(ctx.channel, discord.abc.Messageable) else None
+        get_partial = getattr(reply_channel, "get_partial_message", None)
+        message = get_partial(original.id) if get_partial else original
 
         async def countdown_task():
             try:
-                # Sleep until the timer ends
-                await asyncio.sleep(timer)
-                
+                # Use wall clock instead of trusting the monotonic clock
+                while True:
+                    remaining = target_timestamp - time.time()
+                    if remaining <= 0:
+                        break
+                    await asyncio.sleep(min(remaining, 30))
+
                 # Time's up! Kick members
                 member_count = 0
                 for member in channel.members:
@@ -89,21 +114,32 @@ class CountdisCog(commands.Cog):
                         except Exception as e:
                             logger.error(f"Error moving {member}: {e}")
                 
-                # Disable buttons
+                view.stopped = True
                 for child in view.children:
                     child.disabled = True
-                    
-                await message.edit(content=None, embed=success_embed("หมดเวลา!", "เตะทุกคนออกเรียบร้อยแล้วนะคะ~ ( ≧Д≦)"), view=view)
+
+                try:
+                    await message.edit(content=None, embed=success_embed("หมดเวลา!", "เตะทุกคนออกเรียบร้อยแล้วนะคะ~ ( ≧Д≦)"), view=view)
+                    view.stop()
+                except discord.HTTPException as e:
+                    logger.error(f"Failed to deactivate countdown embed in {channel.id}: {e}")
+
                 if member_count > 0:
-                    await ctx.send(embed=success_embed("ดำเนินการสำเร็จ ✅", f"ตัดการเชื่อมต่อ {member_count} คน จาก <#{channel.id}> เรียบร้อยแล้วค่ะเซนเซย์! (๑•̀ㅂ•́)و✧"))
+                    summary = success_embed("ดำเนินการสำเร็จ ✅", f"ตัดการเชื่อมต่อ {member_count} คน จาก <#{channel.id}> เรียบร้อยแล้วค่ะเซนเซย์! (๑•̀ㅂ•́)و✧")
                 else:
-                    await ctx.send(embed=warning_embed("ว่างเปล่า...", "ไม่เห็นมีใครให้เตะออกเลยนี่คะ เซนเซย์หลอกหนูเหรอ! (,,#ﾟДﾟ)"))
-                
+                    summary = warning_embed("ว่างเปล่า...", "ไม่เห็นมีใครให้เตะออกเลยนี่คะ เซนเซย์หลอกหนูเหรอ! (,,#ﾟДﾟ)")
+
+                try:
+                    await (reply_channel.send(embed=summary) if reply_channel else ctx.send(embed=summary))
+                except discord.HTTPException as e:
+                    logger.error(f"Failed to send countdown summary for {channel.id}: {e}")
+
             except asyncio.CancelledError:
                 logger.info(f"Countdown in {channel.id} was cancelled.")
+            except Exception as e:
+                logger.exception(f"Countdown in {channel.id} failed: {e}")
             finally:
-                if channel.id in self.active_countdowns:
-                    self.active_countdowns.remove(channel.id)
+                self.active_countdowns.discard(channel.id)
 
         # Start the background task and attach it to the view
         task = self.bot.loop.create_task(countdown_task())

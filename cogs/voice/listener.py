@@ -5,14 +5,13 @@ Voice receive cog — listens to users speaking and saves audio.
 How it works
 ------------
 1. Bot joins a voice channel (or reuses an existing VoiceClient)
-2. `voice_client.start_recording(sink, callback)` begins capturing audio.
-   We use a custom TimeAlignedSink rather than WaveSink: pycord's base
-   Sink.write() just appends whatever PCM arrives with no regard for real
-   elapsed time, so pauses between sentences vanish and nothing lines up
-   across speakers. TimeAlignedSink pads each speaker's buffer with
-   silence based on each packet's RTP timestamp (see its docstring for
-   why wall-clock timing alone isn't reliable here).
-3. When `voice_client.stop_recording()` is called, the callback fires.
+2. We subscribe to `utils.voice_hub` with `want_timeline=True`. The hub owns
+   the one sink a VoiceClient allows and lays every speaker's PCM onto a
+   shared timeline — see SegmentingSink's docstring for why RTP timestamps
+   rather than wall-clock time are used to measure gaps.
+3. `/record stop` reads `sink.audio_data` and unsubscribes. The capture only
+   actually stops if no other feature (`/transcribe`, `/ai voice`) is still
+   listening.
 4. sink.audio_data contains raw PCM bytearrays per user (keyed by user_id
    int), each aligned to the same timeline. We encode each one to Ogg
    Opus via FFmpeg, and also down-mix all speakers together into one
@@ -42,111 +41,19 @@ import io
 import os
 import pathlib
 import tempfile
-import threading
 import time
 
 import discord
 from discord.ext import commands
 
 from bot.logger import logger
-from utils.embeds import error_embed, info_embed, success_embed, warning_embed
+from utils.audio import OPUS_CHANNELS as _OPUS_CHANNELS
+from utils.audio import OPUS_SAMPLE_RATE as _OPUS_SAMPLE_RATE
+from utils.embeds import info_embed, success_embed, warning_embed
 from utils.errors import UserError, UserWarning
+from utils.voice_hub import voice_hub
 
-# Opus decoder output constants (pycord hardcoded values)
-_OPUS_CHANNELS = 2
-_OPUS_SAMPLE_RATE = 48_000  # Hz
-_BYTES_PER_FRAME = _OPUS_CHANNELS * 2  # 16-bit samples, stereo
-
-
-class TimeAlignedSink(discord.sinks.Sink):
-    """
-    Recording sink that lays each speaker's PCM onto a shared timeline
-    instead of just concatenating packets back-to-back.
-
-    pycord's base Sink.write() (discord/sinks/core.py) appends whatever PCM
-    arrives with zero regard for real elapsed time, so pauses between
-    sentences vanish and there's no way to line multiple speakers up against
-    each other afterward.
-
-    Gaps within a single speaker's own stream are measured using each
-    packet's RTP timestamp — a 48kHz sample clock stamped by Discord's
-    client at encode time — rather than wall-clock time at the moment we
-    process it. This was confirmed necessary by testing: our own packet
-    processing can stall for seconds at a time (thread scheduling, not
-    network loss — sequence numbers stayed contiguous throughout), which
-    wall-clock timing mistook for real silence, corrupting playback. RTP
-    timestamps are immune to that since they reflect when the audio was
-    actually captured, not when we got around to handling it.
-
-    RTP clocks aren't comparable across different speakers' streams (each
-    starts at an arbitrary per-session offset), so there's no source of
-    truth for cross-speaker alignment. We fall back to wall-clock only
-    once, to anchor each speaker's very first packet onto the shared
-    session timeline (used by `_mix_and_encode`) — a one-time offset
-    rather than a per-gap error, so it doesn't compound the way measuring
-    every gap by wall-clock did.
-    """
-
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self._start_time: float | None = None
-        self._lock = threading.Lock()
-        self._last_seq: dict[int, int] = {}
-        self._last_rtp_ts: dict[int, int] = {}
-        self._last_pcm_len: dict[int, int] = {}
-
-    def write(self, data, user) -> None:
-        from discord.voice.packets import VoiceData
-
-        is_voice_data = isinstance(data, VoiceData)
-        pcm = data.pcm if is_voice_data else data
-        if not pcm:
-            return
-
-        user_id = getattr(user, "id", None) or 0
-        seq = data.packet.sequence if is_voice_data else None
-        rtp_ts = data.packet.timestamp if is_voice_data else None
-
-        with self._lock:
-            now = time.perf_counter()
-            if self._start_time is None:
-                self._start_time = now
-
-            buf = self.audio_data.setdefault(user_id, bytearray())
-            last_rtp_ts = self._last_rtp_ts.get(user_id)
-            last_pcm_len = self._last_pcm_len.get(user_id)
-
-            if rtp_ts is not None and last_rtp_ts is not None and last_pcm_len is not None:
-                delta_samples = (rtp_ts - last_rtp_ts) & 0xFFFFFFFF
-                gap = delta_samples * _BYTES_PER_FRAME - last_pcm_len
-            else:
-                # First packet from this user this session: no prior RTP timestamp
-                # to diff against, so anchor them onto the shared timeline via
-                # wall-clock — a one-time offset, not compounded on every gap.
-                gap = int((now - self._start_time) * _OPUS_SAMPLE_RATE) * _BYTES_PER_FRAME - len(buf)
-
-            if gap > 0:
-                buf.extend(b"\x00" * gap)
-
-            if abs(gap) > _BYTES_PER_FRAME:
-                last_seq = self._last_seq.get(user_id)
-                seq_jump = (seq - last_seq) & 0xFFFF if seq is not None and last_seq is not None else None
-                logger.debug(
-                    f"[TimeAlignedSink] user={user_id} gap={gap / _BYTES_PER_FRAME / _OPUS_SAMPLE_RATE * 1000:.0f}ms "
-                    f"seq_jump={seq_jump} pcm_len={len(pcm)} buf_len_before={len(buf)} "
-                    f"elapsed={now - self._start_time:.3f}s"
-                )
-
-            buf.extend(pcm)
-
-            if seq is not None:
-                self._last_seq[user_id] = seq
-            if rtp_ts is not None:
-                self._last_rtp_ts[user_id] = rtp_ts
-            self._last_pcm_len[user_id] = len(pcm)
-
-    def cleanup(self) -> None:
-        self.finished = True
+_HUB_KEY = "record"
 
 
 async def _pcm_to_opus(raw_pcm: bytes, bitrate: str = "32k") -> bytes:
@@ -188,7 +95,7 @@ async def _pcm_to_opus(raw_pcm: bytes, bitrate: str = "32k") -> bytes:
 async def _mix_and_encode(streams: list[bytes], bitrate: str = "32k") -> bytes:
     """
     Down-mix multiple time-aligned 48kHz stereo PCM streams (one per
-    speaker, all sharing the same timeline courtesy of TimeAlignedSink)
+    speaker, all sharing the same timeline courtesy of SegmentingSink)
     into a single mono Ogg Opus file via FFmpeg's `amix` filter — a
     "meeting recording" of everyone talking, rather than separate
     per-speaker files.
@@ -242,40 +149,23 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
 
     def __init__(self, bot: discord.Bot) -> None:
         self.bot = bot
-        self._active_sinks: dict[int, TimeAlignedSink] = {}
+        # guild_id → text channel that /record start was invoked in
+        self._sessions: dict[int, discord.TextChannel] = {}
 
-    async def _on_recording_done(self, exception: Exception | None, /) -> None:
-        active_sink: TimeAlignedSink | None = None
-        channel: discord.TextChannel | None = None
-        found_guild_id: int | None = None
-
-        for guild_id, sink in list(self._active_sinks.items()):
-            ch = getattr(sink, "_text_channel", None)
-            if ch is not None:
-                active_sink = sink
-                channel = ch
-                found_guild_id = guild_id
-                break
-
-        if active_sink is None or channel is None or found_guild_id is None:
-            logger.debug("_on_recording_done fired but no active sink found")
-            return
-
-        guild_id = found_guild_id
-        
-        # Pop early to prevent duplicate executions from py-cord thread race conditions
-        self._active_sinks.pop(guild_id, None)
+    async def _deliver_recording(
+        self,
+        guild_id: int,
+        channel: discord.TextChannel,
+        audio_data: dict[int, bytearray],
+    ) -> None:
+        """Encode the captured timeline and post it to *channel*."""
         logger.info(f"Recording finished in guild {guild_id}. Processing audio...")
-
-        if exception:
-            logger.error(f"Recording error in guild {guild_id}: {exception!r}")
-
         logger.debug(
-            f"audio_data keys: {list(active_sink.audio_data.keys())} "
-            f"({len(active_sink.audio_data)} speaker(s))"
+            f"audio_data keys: {list(audio_data.keys())} "
+            f"({len(audio_data)} speaker(s))"
         )
 
-        if not active_sink.audio_data:
+        if not audio_data:
             await channel.send(embed=warning_embed(
                 "ไม่ได้ยินเสียงเลยค่ะ",
                 "หนูไม่เห็นได้ยินใครพูดอะไรเลยค่ะ... ไม่แน่ใจว่าไมค์ช็อตรึเปล่าน้า (´-ω-`)\n"
@@ -290,7 +180,7 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
         upload_limit = channel.guild.filesize_limit if channel.guild else 10 * 1024 * 1024
         timestamp = int(time.time())
 
-        for user_id, buf in active_sink.audio_data.items():
+        for user_id, buf in audio_data.items():
             user = self.bot.get_user(user_id)
             display = str(user) if user else f"Unknown ({user_id})"
 
@@ -342,7 +232,7 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
         # Post summary embed to Discord with the audio files attached
         embed = success_embed(
             "บันทึกเสียงเรียบร้อยค่ะ",
-            f"เย้! หนูรวบรวมเสียงของ **{len(active_sink.audio_data)}** คนมาให้แล้วน้า 🎵\n\n" + "\n".join(summary_lines),
+            f"เย้! หนูรวบรวมเสียงของ **{len(audio_data)}** คนมาให้แล้วน้า 🎵\n\n" + "\n".join(summary_lines),
         )
 
         try:
@@ -379,7 +269,7 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
 
         guild_id = ctx.guild.id
 
-        if guild_id in self._active_sinks:
+        if guild_id in self._sessions:
             raise UserWarning(
                 "หนูทำงานอยู่นะคะ",
                 "หนูกำลังอัดเสียงอยู่ที่ห้องอื่นนะคะ ต้องให้หนูหยุดอัดก่อนน้า ลองใช้คำสั่ง `/record stop` ดูนะคะ (｡>﹏<)",
@@ -400,30 +290,10 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
         elif voice_client.channel != voice_channel:
             await voice_client.move_to(voice_channel)
 
-        # PR 3159 provides native sink and DAVE support!
-        sink = TimeAlignedSink()
-        sink._text_channel = ctx.channel  # type: ignore[attr-defined]
-
-        self._active_sinks[guild_id] = sink
-
-        # The AudioReader calls `after(exception)` synchronously from a background
-        # thread. An `async def` callback just creates a coroutine that is never
-        # awaited. We wrap it in a sync shim that schedules the coroutine on the
-        # bot's event loop via run_coroutine_threadsafe().
-        loop = asyncio.get_event_loop()
-
-        def _callback_shim(sink: discord.sinks.Sink, *args) -> None:
-            # In Pycord 2.8+, the callback receives (sink, *args).
-            # The exception is no longer passed as a parameter.
-            asyncio.run_coroutine_threadsafe(
-                self._on_recording_done(None), loop
-            )
-
-        # PYCORD 2.8.0 / PR 3159 BUG WORKAROUND:
-        # AudioReader.run() checks `if self.after and self.args:`.
-        # If no *args are provided, self.args is `()` which evaluates to False,
-        # silently dropping the callback! We pass a dummy `True` to prevent this.
-        voice_client.start_recording(sink, _callback_shim, True)
+        # The hub owns the sink — /transcribe and /ai voice can be listening to
+        # the same VoiceClient, which only supports one sink between them.
+        voice_hub.subscribe(voice_client, _HUB_KEY, want_timeline=True)
+        self._sessions[guild_id] = ctx.channel
 
         logger.info(f"Started recording in guild {guild_id}, channel '{voice_channel.name}'")
         await ctx.respond(embed=info_embed(
@@ -434,34 +304,56 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
 
     @record.command(name="stop", description="⏹️ หยุดบันทึกเสียงและส่งไฟล์เสียงที่บันทึกไว้")
     async def record_stop(self, ctx: discord.ApplicationContext) -> None:
-        """Stop recording and trigger the transcription pipeline."""
+        """Stop recording and post the captured audio."""
         await ctx.defer()
 
         guild_id = ctx.guild.id
-        voice_client: discord.VoiceClient | None = ctx.guild.voice_client
 
-        if guild_id not in self._active_sinks or voice_client is None:
+        if guild_id not in self._sessions:
             raise UserWarning(
                 "ยังไม่ได้อัดเสียงค่ะ",
                 "เอ๊ะ... หนูยังไม่ได้อัดเสียงเลยนะคะ ถ้าอยากให้หนูอัด ใช้คำสั่ง `/record start` ก่อนน้า (・_・;)",
             )
 
-        # stop_recording() raises ClientException if the recording already
-        # auto-stopped internally (e.g. PacketRouter died). Handle gracefully.
-        try:
-            voice_client.stop_recording()
-        except discord.ClientException as exc:
-            logger.warning(
-                f"stop_recording() raised '{exc}' — recording may have already "
-                "auto-stopped. Cleaning up active sink."
-            )
-            self._active_sinks.pop(guild_id, None)
+        channel = self._sessions.pop(guild_id)
+
+        # Snapshot the timeline *before* unsubscribing: the hub may stop the
+        # capture and drop the sink on the way out.
+        sink = voice_hub.sink_for(guild_id)
+        audio_data = dict(sink.audio_data) if sink else {}
+        voice_hub.unsubscribe(guild_id, _HUB_KEY)
 
         logger.info(f"Stopped recording in guild {guild_id}")
         await ctx.respond(embed=info_embed(
             "⏹️ หยุดอัดเสียงแล้วค่ะ",
             "หนูหยุดอัดเสียงแล้วค่ะ! ขอเวลาประมวลผลแป๊บนึงนะคะ เดี๋ยวหนูส่งไฟล์ให้ค่า (´• ω •`) ♡",
         ))
+
+        await self._deliver_recording(guild_id, channel, audio_data)
+
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
+
+    @commands.Cog.listener()
+    async def on_voice_state_update(
+        self,
+        member: discord.Member,
+        before: discord.VoiceState,
+        after: discord.VoiceState,
+    ) -> None:
+        """Drop the subscription if the bot gets disconnected mid-recording."""
+        if member != self.bot.user:
+            return
+        if before.channel is None or after.channel is not None:
+            return
+
+        guild_id = member.guild.id
+        if self._sessions.pop(guild_id, None) is None:
+            return
+
+        logger.info(f"Bot left voice in guild {guild_id} — dropping /record session")
+        voice_hub.unsubscribe(guild_id, _HUB_KEY)
 
 
 def setup(bot: discord.Bot) -> None:

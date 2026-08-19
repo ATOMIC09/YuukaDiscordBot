@@ -50,7 +50,11 @@ class Config:
     stt_model: str = "auto"
     stt_device: str = "auto"           # auto | cpu | cuda
     stt_compute_type: str = "auto"     # auto | int8 | int8_float16 | float16 | float32
-    stt_language: str = ""             # "" = auto-detect per utterance (Thai/English mix)
+    # Which languages Whisper is allowed to decide on, e.g. "en,th,ja".
+    # Empty = any of the ~100 it knows. One entry = hard lock, no detection.
+    # Several = detection restricted to that shortlist, which stops a short
+    # utterance from being read as an unrelated language.
+    stt_languages: list[str] = field(default_factory=list)
     stt_beam_size: int = 5
     stt_cpu_threads: int = 0           # 0 = let CTranslate2 decide
 
@@ -116,6 +120,9 @@ class Config:
         raw_wake = os.getenv("STT_WAKE_WORDS", "ยูกะ,ยูคะ,ยุกะ,ยูกา,yuuka,yuka,yuuca")
         stt_wake_words = [w.strip() for w in raw_wake.split(",") if w.strip()]
 
+        raw_langs = os.getenv("STT_LANGUAGE", "")
+        stt_languages = [c.strip().lower() for c in raw_langs.split(",") if c.strip()]
+
         return cls(
             bot_token=token,
             guild_ids=guild_ids,
@@ -136,7 +143,7 @@ class Config:
             stt_model=os.getenv("STT_MODEL", "auto"),
             stt_device=os.getenv("STT_DEVICE", "auto"),
             stt_compute_type=os.getenv("STT_COMPUTE_TYPE", "auto"),
-            stt_language=os.getenv("STT_LANGUAGE", "").strip(),
+            stt_languages=stt_languages,
             stt_beam_size=int(os.getenv("STT_BEAM_SIZE", "5")),
             stt_cpu_threads=int(os.getenv("STT_CPU_THREADS", "0")),
             stt_silence_ms=int(os.getenv("STT_SILENCE_MS", "800")),

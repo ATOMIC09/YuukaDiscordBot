@@ -346,26 +346,105 @@ async def ensure_loaded() -> bool:
     return await ensure_local_loaded()
 
 
+# Groq's verbose_json reports a language *name* where faster-whisper reports a
+# code. Only the languages plausibly spoken (or mis-detected) in this server
+# need an entry; anything else falls through unchanged.
+_LANGUAGE_NAMES = {
+    "english": "en", "thai": "th", "japanese": "ja", "chinese": "zh",
+    "korean": "ko", "vietnamese": "vi", "indonesian": "id", "malay": "ms",
+    "lao": "lo", "khmer": "km", "burmese": "my", "tagalog": "tl",
+    "hindi": "hi", "arabic": "ar", "russian": "ru", "spanish": "es",
+    "french": "fr", "german": "de", "portuguese": "pt", "italian": "it",
+}
+
+_allowed_languages_cache: list[str] | None = None
+
+
+def _normalize_language(value: str) -> str:
+    """Turn whatever a backend reports into a Whisper language code."""
+    value = value.strip().lower()
+    return _LANGUAGE_NAMES.get(value, value)
+
+
+def _allowed_languages() -> list[str]:
+    """
+    The configured language shortlist, minus codes Whisper does not know.
+
+    Config is loaded once, so this is resolved once and cached — including the
+    warning, which should not repeat on every utterance.
+    """
+    global _allowed_languages_cache
+    if _allowed_languages_cache is not None:
+        return _allowed_languages_cache
+
+    codes = [_normalize_language(c) for c in config.stt_languages]
+    try:
+        from faster_whisper.tokenizer import _LANGUAGE_CODES
+    except ImportError:
+        _allowed_languages_cache = codes
+        return codes
+
+    unknown = [c for c in codes if c not in _LANGUAGE_CODES]
+    if unknown:
+        logger.warning(
+            f"[STT] Ignoring unknown STT_LANGUAGE entries: {unknown} — "
+            "use ISO codes such as en, th, ja."
+        )
+    _allowed_languages_cache = [c for c in codes if c in _LANGUAGE_CODES]
+    return _allowed_languages_cache
+
+
+def _best_allowed(all_probs, allowed: list[str]) -> str:
+    """Pick the shortlisted language the model considered most likely."""
+    if all_probs:
+        ranked = dict(all_probs)
+        return max(allowed, key=lambda code: ranked.get(code, 0.0))
+    return allowed[0]
+
+
+def _transcribe_options() -> dict:
+    """Decoding options shared by the first pass and any language retry."""
+    return {
+        "task": "transcribe",
+        "beam_size": config.stt_beam_size,
+        # Each utterance is independent — carrying context between them is
+        # what makes Whisper fall into repetition loops on short clips.
+        "condition_on_previous_text": False,
+        "vad_filter": True,
+        "vad_parameters": {"min_silence_duration_ms": 300},
+        "no_speech_threshold": 0.6,
+        "log_prob_threshold": -1.0,
+        "temperature": [0.0, 0.2, 0.4],
+    }
+
+
 def _run_transcribe(audio: np.ndarray, retry: bool = True) -> Transcript:
     """Blocking inference call. Runs on the single STT worker thread."""
     if _model is None:
         return Transcript("")
 
     try:
-        segments, info = _model.transcribe(
-            audio,
-            language=config.stt_language or None,
-            task="transcribe",
-            beam_size=config.stt_beam_size,
-            # Each utterance is independent — carrying context between them is
-            # what makes Whisper fall into repetition loops on short clips.
-            condition_on_previous_text=False,
-            vad_filter=True,
-            vad_parameters={"min_silence_duration_ms": 300},
-            no_speech_threshold=0.6,
-            log_prob_threshold=-1.0,
-            temperature=[0.0, 0.2, 0.4],
-        )
+        allowed = _allowed_languages()
+        # One configured language is a hard lock: skip detection entirely.
+        forced = allowed[0] if len(allowed) == 1 else None
+        options = _transcribe_options()
+
+        segments, info = _model.transcribe(audio, language=forced, **options)
+
+        # faster-whisper detects eagerly but decodes lazily, so an off-list
+        # detection can be caught here, before the generator is consumed: the
+        # wasted work is one encoder pass, not a whole transcript. A short
+        # utterance is exactly where detection drifts to an unrelated
+        # language, and the text that follows is then transliterated noise.
+        if forced is None and allowed and info.language not in allowed:
+            pick = _best_allowed(info.all_language_probs, allowed)
+            logger.debug(
+                f"[STT] Detected '{info.language}' "
+                f"({info.language_probability:.2f}) is outside {allowed} — "
+                f"re-running as '{pick}'"
+            )
+            segments, info = _model.transcribe(audio, language=pick, **options)
+
         text = "".join(seg.text for seg in segments).strip()
 
         if text.lower() in _HALLUCINATIONS:
@@ -391,13 +470,19 @@ def _run_transcribe(audio: np.ndarray, retry: bool = True) -> Transcript:
         return Transcript("")
 
 
-async def _transcribe_groq(audio: np.ndarray) -> Transcript | None:
+async def _transcribe_groq(audio: np.ndarray, force: str = "") -> Transcript | None:
     """
     Transcribe via Groq's OpenAI-compatible endpoint.
 
     Returns None — not an empty Transcript — when the request could not be
     completed, so the caller can tell "the API said there was no speech" apart
     from "the API was unreachable" and fall back only in the latter case.
+
+    The endpoint takes a single language, not a shortlist, so a multi-language
+    STT_LANGUAGE cannot be enforced up front the way it can locally. Instead
+    the answer is checked afterwards, and an off-list one is re-requested with
+    `force` set to the first configured language — the shortlist doubles as a
+    priority order for exactly this case.
     """
     import aiohttp
 
@@ -406,8 +491,10 @@ async def _transcribe_groq(audio: np.ndarray) -> Transcript | None:
                    filename="utterance.wav", content_type="audio/wav")
     form.add_field("model", config.groq_model)
     form.add_field("response_format", "verbose_json")
-    if config.stt_language:
-        form.add_field("language", config.stt_language)
+    allowed = _allowed_languages()
+    language_hint = force or (allowed[0] if len(allowed) == 1 else "")
+    if language_hint:
+        form.add_field("language", language_hint)
 
     try:
         timeout = aiohttp.ClientTimeout(total=config.groq_timeout_s)
@@ -436,7 +523,15 @@ async def _transcribe_groq(audio: np.ndarray) -> Transcript | None:
         return None
 
     text = (payload.get("text") or "").strip()
-    language = payload.get("language") or ""
+    language = _normalize_language(payload.get("language") or "")
+
+    if not force and allowed and language and language not in allowed:
+        logger.debug(
+            f"[STT] Groq answered in '{language}', outside {allowed} — "
+            f"retrying as '{allowed[0]}'"
+        )
+        return await _transcribe_groq(audio, force=allowed[0])
+
     if text.lower() in _HALLUCINATIONS:
         logger.debug(f"[STT] Dropped likely hallucination: {text!r}")
         return Transcript("", language, 1.0)

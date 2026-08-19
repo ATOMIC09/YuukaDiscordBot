@@ -227,9 +227,12 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             prompt = "(เรียกชื่อเฉย ๆ ยังไม่ได้ถามอะไร)"
 
         # Show what she heard — invaluable when a wake word or a Thai/English
-        # phrase gets misheard and the reply looks like a non-sequitur.
+        # phrase gets misheard and the reply looks like a non-sequitur. The 💬
+        # marks it as voice *chat*: /transcribe posts live captions in the same
+        # format under 🎙️, and two identical-looking streams are impossible to
+        # tell apart when one session ends and the other begins.
         try:
-            await session.text_channel.send(f"🎙️ **{display}**: {prompt}")
+            await session.text_channel.send(f"💬 **{display}**: {prompt}")
         except discord.HTTPException:
             pass
 

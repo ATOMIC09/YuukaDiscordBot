@@ -112,7 +112,9 @@ class Config:
         owner_id_str = os.getenv("OWNER_ID")
         owner_id = int(owner_id_str) if owner_id_str and owner_id_str.isdigit() else None
 
-        raw_wake = os.getenv("STT_WAKE_WORDS", "ยูกะ,ยูคะ,ยุกะ,ยูกา,yuuka,yuka,yuuca")
+        raw_wake = os.getenv(
+            "STT_WAKE_WORDS", "ยูกะ,ยูคะ,ยุกะ,ยูกา,yuuka,yuka,yuuca,ゆうか,ゆか"
+        )
         stt_wake_words = [w.strip() for w in raw_wake.split(",") if w.strip()]
 
         raw_langs = os.getenv("STT_LANGUAGE", "")

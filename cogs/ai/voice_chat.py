@@ -433,13 +433,16 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             except asyncio.CancelledError:
                 pass
 
-        # Stop playback and disconnect
+        # Stop her own speech, then leave only if nobody else is using the
+        # connection. This used to disconnect unconditionally, which killed
+        # music playback and any live capture that happened to share the client.
         vc = session.voice_client
-        if vc:
-            if vc.is_playing():
-                vc.stop()
-            if vc.is_connected():
-                await vc.disconnect()
+        if vc and vc.is_playing():
+            vc.stop()
+
+        guild = self.bot.get_guild(guild_id)
+        if guild:
+            await voice_hub.release_voice(guild)
 
         logger.info(f"[AI Voice] Session stopped in guild {guild_id}")
         return True

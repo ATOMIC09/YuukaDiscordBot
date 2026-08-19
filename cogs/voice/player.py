@@ -19,6 +19,7 @@ from discord.ext import commands
 from bot.logger import logger
 from utils.embeds import success_embed, error_embed, info_embed
 from utils.errors import UserError
+from utils.voice_hub import voice_hub
 
 yt_dlp.utils.bug_reports_message = lambda: ''
 
@@ -758,6 +759,14 @@ class PlayerCog(commands.Cog):
         self.bot = bot
         self.states: dict[int, AudioState] = {}
         self._executor = ThreadPoolExecutor(max_workers=4)
+        # Tell the voice hub not to hang up on us when /transcribe, /record or
+        # /ai voice finishes. `is_playing()` is false in the gap between two
+        # tracks, so a queue with something left in it counts as playing.
+        voice_hub.add_hold("music", self._holds_voice)
+
+    def _holds_voice(self, guild_id: int) -> bool:
+        state = self.states.get(guild_id)
+        return bool(state and (state.current or state.queue))
 
     def get_state(self, guild_id: int) -> AudioState:
         if guild_id not in self.states:

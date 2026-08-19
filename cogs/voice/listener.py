@@ -322,6 +322,9 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
         sink = voice_hub.sink_for(guild_id)
         audio_data = dict(sink.audio_data) if sink else {}
         voice_hub.unsubscribe(guild_id, _HUB_KEY)
+        # Safe before the file is delivered — the audio is already snapshotted,
+        # and rendering it has nothing to do with being in the channel.
+        await voice_hub.release_voice(ctx.guild)
 
         logger.info(f"Stopped recording in guild {guild_id}")
         await ctx.respond(embed=info_embed(

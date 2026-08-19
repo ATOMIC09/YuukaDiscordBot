@@ -25,6 +25,14 @@ end-of-utterance signal. This replaces the previous approach of polling
 ``WaveSink``'s file position from the event loop, which raced with the reader
 thread writing to that same file and clipped segments.
 
+Who decides when to leave
+-------------------------
+Stopping a feature is not the same as leaving the channel: ``/transcribe``,
+``/record``, ``/ai voice`` and the music player all share one ``VoiceClient``,
+and the one shutting down cannot see the others. ``release_voice()`` makes that
+call centrally — it hangs up only when no capture is running, nothing is
+playing, and no registered hold (see ``add_hold``) still claims the connection.
+
 Threading
 ---------
 ``write()`` runs on pycord's ``AudioReader`` thread; the monitor runs on the
@@ -47,6 +55,8 @@ from bot.logger import logger
 from utils.audio import BYTES_PER_FRAME, BYTES_PER_SECOND, OPUS_SAMPLE_RATE
 
 SegmentCallback = Callable[["SpeechSegment"], Awaitable[None]]
+# "Does guild N still need the voice connection for your feature?"
+VoiceHold = Callable[[int], bool]
 
 
 @dataclass(frozen=True)
@@ -276,8 +286,58 @@ class VoiceHub:
 
     def __init__(self) -> None:
         self._recorders: dict[int, _Recorder] = {}
+        self._holds: dict[str, VoiceHold] = {}
 
     # ── public API ────────────────────────────────────────────────────────
+
+    def add_hold(self, name: str, predicate: VoiceHold) -> None:
+        """
+        Register a reason the bot may need to stay in a voice channel.
+
+        Voice receive is not the only thing using the connection — the music
+        player owns the same client — and a feature that stops has no way of
+        knowing whether anybody else still needs it. Rather than teach the hub
+        about every cog, each one declares its own claim here and the hub only
+        disconnects when none of them answer True.
+        """
+        self._holds[name] = predicate
+
+    async def release_voice(self, guild: discord.Guild) -> bool:
+        """
+        Disconnect from voice if nothing is using the connection any more.
+
+        Call this wherever a voice feature stops. Returns True if the bot
+        actually left. Playback counts as a hold on its own: a client that is
+        playing or paused is mid-track for somebody.
+        """
+        voice_client = guild.voice_client
+        if voice_client is None or not voice_client.is_connected():
+            return False
+
+        if guild.id in self._recorders:
+            logger.debug(f"[VoiceHub] Staying in guild {guild.id} — capture still running")
+            return False
+
+        if voice_client.is_playing() or voice_client.is_paused():
+            logger.debug(f"[VoiceHub] Staying in guild {guild.id} — audio still playing")
+            return False
+
+        for name, predicate in self._holds.items():
+            try:
+                held = predicate(guild.id)
+            except Exception as exc:
+                # A broken predicate must not strand the bot in the channel
+                # forever, but it must not evict a live feature either — treat
+                # the answer as "no claim" and say so loudly.
+                logger.error(f"[VoiceHub] Hold '{name}' raised in guild {guild.id}: {exc}")
+                continue
+            if held:
+                logger.debug(f"[VoiceHub] Staying in guild {guild.id} — '{name}' still needs voice")
+                return False
+
+        await voice_client.disconnect()
+        logger.info(f"[VoiceHub] Left voice in guild {guild.id} — nothing left using it")
+        return True
 
     def subscribe(
         self,

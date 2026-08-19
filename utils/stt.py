@@ -43,9 +43,12 @@ bot startup on it. With Groq configured there is nothing to download.
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -65,7 +68,13 @@ _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="stt")
 _load_lock = threading.Lock()
 _model = None
 _model_info: str = ""
+_model_name: str = ""
+_model_device: str = ""
 _load_failed = False
+
+# Kept alive for the process: dropping an os.add_dll_directory() handle is how
+# you *un*register the directory again.
+_cuda_dll_dirs: list = []
 
 # At most this many segments may be waiting on the single inference worker.
 # Voice is realtime — a transcript that arrives 30 seconds late is worse than
@@ -188,14 +197,89 @@ def _resolve_settings() -> tuple[str, str, str]:
     return model, device, "int8"
 
 
+def _register_cuda_dlls() -> None:
+    """
+    Put the pip-installed CUDA libraries on Windows' DLL search path.
+
+    CTranslate2 bundles no CUDA runtime. It dlopens cublas64_12.dll and
+    cudnn*64_9.dll the first time a GPU model actually *runs*, which is why a
+    missing library shows up as a per-utterance transcription error long after
+    the model reported itself loaded. The nvidia-* wheels drop those DLLs in
+    site-packages/nvidia/<lib>/bin — a directory Windows never searches on its
+    own — so register it here. Without this the only other fix is a
+    system-wide CUDA toolkit install.
+    """
+    if _cuda_dll_dirs or sys.platform != "win32":
+        return
+
+    try:
+        import nvidia  # namespace package created by the nvidia-*-cu12 wheels
+    except ImportError:
+        return
+
+    for root in nvidia.__path__:
+        for bin_dir in sorted(Path(root).glob("*/bin")):
+            if not any(bin_dir.glob("*.dll")):
+                continue
+            _cuda_dll_dirs.append(os.add_dll_directory(str(bin_dir)))
+            # add_dll_directory only covers loads that opt into the altered
+            # search path; PATH covers the plain LoadLibrary calls that do not.
+            os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ['PATH']}"
+
+    if _cuda_dll_dirs:
+        logger.debug(f"[STT] Registered {len(_cuda_dll_dirs)} CUDA library directories")
+
+
+def _load_cpu_fallback(model_name: str, reason: str) -> bool:
+    """
+    Rebuild the model on the CPU after CUDA turned out to be unusable.
+
+    Returns True once the CPU model is live. Callers must hold `_load_lock`.
+    """
+    global _model, _model_info, _model_name, _model_device
+
+    logger.warning(
+        f"[STT] CUDA unusable ({reason}) — falling back to CPU. "
+        "Set STT_DEVICE=cpu to skip this next time."
+    )
+    try:
+        from faster_whisper import WhisperModel
+
+        cpu_model = "small" if config.stt_model == "auto" else model_name
+        _model = WhisperModel(
+            cpu_model,
+            device="cpu",
+            compute_type="int8",
+            cpu_threads=config.stt_cpu_threads,
+        )
+        _model_name = cpu_model
+        _model_device = "cpu"
+        _model_info = f"{cpu_model} / cpu / int8 (CUDA fallback)"
+        logger.info(f"[STT] Ready — {_model_info}")
+        return True
+    except Exception as exc:
+        logger.error(f"[STT] CPU fallback failed: {exc}")
+        return False
+
+
+def _is_cuda_failure(exc: Exception) -> bool:
+    """Whether an inference error means "this GPU path will never work"."""
+    text = str(exc).lower()
+    return any(
+        marker in text
+        for marker in ("cublas", "cudnn", "cuda", "is not found or cannot be loaded")
+    )
+
+
 def _load_model_blocking() -> None:
     """Load the Whisper model once. Safe to call from multiple threads."""
-    global _model, _model_info, _load_failed
+    global _model, _model_info, _model_name, _model_device, _load_failed
 
     with _load_lock:
         if _model is not None or _load_failed:
             return
 
+        _register_cuda_dlls()
         model_name, device, compute_type = _resolve_settings()
         logger.info(
             f"[STT] Loading faster-whisper '{model_name}' on {device.upper()} "
@@ -211,6 +295,8 @@ def _load_model_blocking() -> None:
                 compute_type=compute_type,
                 cpu_threads=config.stt_cpu_threads,
             )
+            _model_name = model_name
+            _model_device = device
             _model_info = f"{model_name} / {device} / {compute_type}"
             logger.info(f"[STT] Ready — {_model_info}")
         except ImportError:
@@ -224,26 +310,8 @@ def _load_model_blocking() -> None:
             # missing cuBLAS/cuDNN libraries, a driver mismatch, no free VRAM.
             # Falling back to CPU keeps voice working (slower) instead of
             # disabling STT for the whole session.
-            if device == "cuda":
-                logger.warning(
-                    f"[STT] CUDA load failed ({exc}) — retrying on CPU. "
-                    "Set STT_DEVICE=cpu to skip this next time."
-                )
-                try:
-                    from faster_whisper import WhisperModel
-
-                    cpu_model = "small" if config.stt_model == "auto" else model_name
-                    _model = WhisperModel(
-                        cpu_model,
-                        device="cpu",
-                        compute_type="int8",
-                        cpu_threads=config.stt_cpu_threads,
-                    )
-                    _model_info = f"{cpu_model} / cpu / int8 (CUDA fallback)"
-                    logger.info(f"[STT] Ready — {_model_info}")
-                    return
-                except Exception as cpu_exc:
-                    exc = cpu_exc
+            if device == "cuda" and _load_cpu_fallback(model_name, str(exc)):
+                return
 
             _load_failed = True
             logger.error(f"[STT] Failed to load model: {exc}")
@@ -278,7 +346,7 @@ async def ensure_loaded() -> bool:
     return await ensure_local_loaded()
 
 
-def _run_transcribe(audio: np.ndarray) -> Transcript:
+def _run_transcribe(audio: np.ndarray, retry: bool = True) -> Transcript:
     """Blocking inference call. Runs on the single STT worker thread."""
     if _model is None:
         return Transcript("")
@@ -306,6 +374,19 @@ def _run_transcribe(audio: np.ndarray) -> Transcript:
 
         return Transcript(text, info.language, info.language_probability)
     except Exception as exc:
+        # A GPU model only touches cuBLAS/cuDNN on its first inference, so a
+        # broken CUDA install lands here instead of at load time — where the
+        # old code turned it into an empty transcript, once per utterance,
+        # forever. Rebuild on the CPU and retry so the session recovers.
+        if retry and _model_device == "cuda" and _is_cuda_failure(exc):
+            with _load_lock:
+                recovered = (
+                    _model_device != "cuda"
+                    or _load_cpu_fallback(_model_name, str(exc))
+                )
+            if recovered:
+                return _run_transcribe(audio, retry=False)
+
         logger.error(f"[STT] Transcription error: {exc}")
         return Transcript("")
 

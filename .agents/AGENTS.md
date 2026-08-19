@@ -340,7 +340,8 @@ STT_MODEL=auto                      # auto | tiny | base | small | large-v3-turb
 STT_DEVICE=auto                     # auto | cpu | cuda
 STT_COMPUTE_TYPE=auto               # auto | int8 | int8_float32 | float16 | float32
 STT_CPU_THREADS=0                   # 0 = let CTranslate2 decide
-STT_LANGUAGE=                       # empty = auto-detect (needed for Thai/English mixing)
+STT_LANGUAGE=en,th,ja               # shortlist detection is restricted to;
+                                    # empty = any of Whisper's ~100, one = hard lock
 STT_BEAM_SIZE=5
 
 # Utterance segmentation

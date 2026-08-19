@@ -34,6 +34,40 @@ class Config:
     guild_ids: list[int] = field(default_factory=list)
     log_level: str = "INFO"
 
+    # ── Speech-to-text ────────────────────────────────────────────────────
+    # Backend: "auto" uses Groq when GROQ_API_KEY is set and falls back to the
+    # local model otherwise (and whenever a Groq call fails). Groq's free tier
+    # runs whisper-large-v3-turbo, which is far better at Thai than anything
+    # this CPU can host — see .agents/AGENTS.md.
+    stt_backend: str = "auto"          # auto | groq | local
+    groq_api_key: str = ""
+    groq_model: str = "whisper-large-v3-turbo"
+    groq_timeout_s: float = 20.0
+
+    # Local fallback (faster-whisper). "auto" picks small on CPU and
+    # large-v3-turbo on CUDA. Any faster-whisper model name or a local
+    # CTranslate2 model directory also works.
+    stt_model: str = "auto"
+    stt_device: str = "auto"           # auto | cpu | cuda
+    stt_compute_type: str = "auto"     # auto | int8 | int8_float16 | float16 | float32
+    stt_language: str = ""             # "" = auto-detect per utterance (Thai/English mix)
+    stt_beam_size: int = 5
+    stt_cpu_threads: int = 0           # 0 = let CTranslate2 decide
+
+    # ── Utterance segmentation ────────────────────────────────────────────
+    # Discord clients run their own VAD and stop sending RTP packets when a
+    # user is quiet, so "no packets for N ms" ends an utterance.
+    stt_silence_ms: int = 800
+    stt_min_segment_ms: int = 400
+    stt_max_segment_s: int = 20
+    stt_min_peak: float = 0.02         # reject segments quieter than this
+
+    # ── Wake word gating (/ai voice only) ─────────────────────────────────
+    stt_wake_words: list[str] = field(default_factory=list)
+    stt_wake_threshold: int = 80       # rapidfuzz partial_ratio, 0-100
+    stt_wake_head_chars: int = 16      # only look this far into the utterance
+    stt_followup_window_s: int = 30    # keep listening to that speaker afterwards
+
     @classmethod
     def from_env(cls) -> "Config":
         """Build a Config instance from environment variables. Raises if required values are missing."""
@@ -74,6 +108,14 @@ class Config:
         owner_id_str = os.getenv("OWNER_ID")
         owner_id = int(owner_id_str) if owner_id_str and owner_id_str.isdigit() else None
 
+        # Wake-word variants. Thai ASR spells the name inconsistently — ยูกะ,
+        # ยูก้า, ยูคะ and ยุกะ are all plausible outputs for the same sound —
+        # so we list variants and fuzzy-match rather than hoping for one
+        # canonical spelling. Tone marks are stripped before matching, so
+        # ยูก้า/ยูก๊ะ do not need their own entries.
+        raw_wake = os.getenv("STT_WAKE_WORDS", "ยูกะ,ยูคะ,ยุกะ,ยูกา,yuuka,yuka,yuuca")
+        stt_wake_words = [w.strip() for w in raw_wake.split(",") if w.strip()]
+
         return cls(
             bot_token=token,
             guild_ids=guild_ids,
@@ -87,6 +129,24 @@ class Config:
             owner_id=owner_id,
             log_channel_id=log_channel_id,
             feedback_channel_id=feedback_channel_id,
+            stt_backend=os.getenv("STT_BACKEND", "auto").strip().lower(),
+            groq_api_key=os.getenv("GROQ_API_KEY", "").strip(),
+            groq_model=os.getenv("GROQ_MODEL", "whisper-large-v3-turbo"),
+            groq_timeout_s=float(os.getenv("GROQ_TIMEOUT_S", "20")),
+            stt_model=os.getenv("STT_MODEL", "auto"),
+            stt_device=os.getenv("STT_DEVICE", "auto"),
+            stt_compute_type=os.getenv("STT_COMPUTE_TYPE", "auto"),
+            stt_language=os.getenv("STT_LANGUAGE", "").strip(),
+            stt_beam_size=int(os.getenv("STT_BEAM_SIZE", "5")),
+            stt_cpu_threads=int(os.getenv("STT_CPU_THREADS", "0")),
+            stt_silence_ms=int(os.getenv("STT_SILENCE_MS", "800")),
+            stt_min_segment_ms=int(os.getenv("STT_MIN_SEGMENT_MS", "400")),
+            stt_max_segment_s=int(os.getenv("STT_MAX_SEGMENT_S", "20")),
+            stt_min_peak=float(os.getenv("STT_MIN_PEAK", "0.02")),
+            stt_wake_words=stt_wake_words,
+            stt_wake_threshold=int(os.getenv("STT_WAKE_THRESHOLD", "80")),
+            stt_wake_head_chars=int(os.getenv("STT_WAKE_HEAD_CHARS", "16")),
+            stt_followup_window_s=int(os.getenv("STT_FOLLOWUP_WINDOW_S", "30")),
         )
 
 

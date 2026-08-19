@@ -255,8 +255,19 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
   `STT_WAKE_HEAD_CHARS` can still restrict the search for a room noisy enough to need it.
 - Returns the utterance with the wake word **cut out wherever it sat**, so both
   "ยูกะ ช่วยบอกเวลาหน่อย" and "ช่วยบอกเวลาหน่อยยูกะ" reach the LLM as "ช่วยบอกเวลาหน่อย".
+- **Japanese folds two ways.** Katakana maps onto hiragana by a fixed offset, and the 長音符 `ー`
+  is spelled out as the vowel it lengthens, so ユーカ / ユウカ / ゆーか / ゆうか all normalise to
+  ゆうか and one listed variant covers every spelling Whisper might choose. Without this a
+  katakana line scores **0** against a hiragana variant — different characters, not "close".
+  Kanji (優花) folds to nothing and still needs its own list entry.
+- **Needles of ≤3 characters must score ≥90**, not `STT_WAKE_THRESHOLD`. `partial_ratio` is coarse
+  at that length — against three characters the only reachable scores are 100, 80 and 67 — so the
+  default 80 means "one character in three is wrong", which in Japanese is a different word: ゆうか
+  hits exactly 80 on ユーザー, ユーチューブ and every other ユー… word, while a genuine summons
+  scores 100. Thai and romaji variants are 4+ characters and keep the configured threshold.
 - Non-matches are logged at DEBUG **with their score** — tune `STT_WAKE_THRESHOLD` against what
-  your speakers' mics actually produce rather than guessing.
+  your speakers' mics actually produce rather than guessing. The score reported on a miss is the
+  best *raw* score, even if it was rejected by the short-needle floor.
 
 ### TTS — (not yet implemented)
 - **Planned slash commands**: `/tts speak <text>`, `/tts voice <name>`

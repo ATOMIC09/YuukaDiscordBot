@@ -311,8 +311,22 @@ dependencies = [
 
 - **Add a dependency**: `uv add <package>`
 - **Install / sync**: `uv sync`
+- **Install / sync on a GPU box**: `uv sync --extra cuda`
 - **Run the bot**: `uv run main.py`
 - **Never** use `pip install` directly in this project.
+
+### The `cuda` extra
+
+CTranslate2 ships no CUDA runtime, so a GPU needs cuBLAS and cuDNN 9 from the
+`nvidia-*-cu12` wheels. They live in an extra rather than the base dependencies
+because they are ~700MB and the CPU deployment box cannot use them.
+
+**A plain `uv sync` uninstalls them**, since it prunes everything outside the
+lock's default set. Nothing appears to break when it does: the model still
+loads on CUDA and only fails on the first inference, and `utils/stt.py` catches
+that and silently falls back to CPU. The symptom is that transcription simply
+got slower. On a GPU machine always sync with `--extra cuda`, and check the
+startup line — `[STT] Ready — large-v3-turbo / cuda / float16` — if speed drops.
 
 ---
 

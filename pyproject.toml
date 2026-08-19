@@ -21,6 +21,17 @@ dependencies = [
     "setuptools>=83.0.0",
     "pytz>=2026.2",
     "tinytag>=2.2.1",
+    "psutil>=7.2.2",
+]
+
+[project.optional-dependencies]
+# faster-whisper on a GPU needs cuBLAS and cuDNN 9, which CTranslate2 does not
+# bundle and only dlopens on the first inference. Kept out of the base deps:
+# it is ~700MB, and the CPU deployment box has no use for it.
+# GPU machines: `uv sync --extra cuda`.
+cuda = [
+    "nvidia-cublas-cu12>=12.4",
+    "nvidia-cudnn-cu12>=9,<10",
 ]
 
 [dependency-groups]

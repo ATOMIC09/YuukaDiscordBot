@@ -143,6 +143,7 @@ class STTCog(commands.Cog, name="Realtime STT"):
 
         self._sessions.pop(guild_id, None)
         voice_hub.unsubscribe(guild_id, _HUB_KEY)
+        await voice_hub.release_voice(ctx.guild)
 
         logger.info(f"Stopped live captions in guild {guild_id}")
         await ctx.respond(embed=success_embed(

@@ -3,13 +3,13 @@ FROM python:3.12-slim-bookworm
 # Install required system packages
 # - ffmpeg: needed for audio/voice features
 # - git: needed because pyproject.toml installs py-cord from a git PR branch
-# - libsndfile1: needed by soundfile (used by Typhoon ASR)
+# - libgomp1: OpenMP runtime required by CTranslate2 (faster-whisper)
 # - intel-media-va-driver-non-free & libva-drm2: needed for Intel QuickSync (QSV) hardware encoding
 RUN sed -i 's/Components: main/Components: main contrib non-free non-free-firmware/g' /etc/apt/sources.list.d/debian.sources && \
     apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     git \
-    libsndfile1 \
+    libgomp1 \
     intel-media-va-driver-non-free \
     libva-drm2 \
     && rm -rf /var/lib/apt/lists/*

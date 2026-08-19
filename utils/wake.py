@@ -9,11 +9,22 @@ that worse: "Yuuka" plausibly comes back as ยูกะ, ยูก้า, ย�
 depending on how the sentence was said. An exact string check fails constantly.
 So we normalise away the noise that carries no sound (tone marks, spacing,
 punctuation, case), then fuzzy-match a list of spelling variants against the
-*head* of the utterance only — a wake word buried in the middle of a sentence
-is almost always a false positive.
+utterance.
 
-On a hit we return the rest of the sentence with the wake word removed, so
-"ยูกะ ช่วยบอกเวลาหน่อย" reaches the LLM as "ช่วยบอกเวลาหน่อย".
+Why the whole utterance, not just its head
+------------------------------------------
+Thai puts the vocative at the end at least as often as the front — "แล้วอีก
+แบบคืออะไรล่ะยูกะ" is a perfectly normal way to address her — so matching only
+the first few characters misses half of real summons (that example scores 29
+on the head, 100 on the whole line). Scanning everything costs less precision
+than it looks: the phrase this collides with, "อยู่กับ", scores 75 either way,
+because it is a near-miss of the *name*, not an artefact of where we looked.
+The default threshold of 80 sits in that gap. `head_chars` is still there for
+a room noisy enough to need it.
+
+On a hit we return the sentence with the wake word cut out, wherever it was,
+so "ยูกะ ช่วยบอกเวลาหน่อย" and "ช่วยบอกเวลาหน่อยยูกะ" both reach the LLM as
+"ช่วยบอกเวลาหน่อย".
 """
 
 from __future__ import annotations
@@ -33,8 +44,10 @@ _THAI_MARKS = re.compile(r"[็-๎]")
 # Everything that is not a letter, digit, or Thai character.
 _NOISE = re.compile(r"[^\w฀-๿]+", re.UNICODE)
 
-# Leading filler left behind after the wake word is cut off.
-_LEADING_JUNK = re.compile(r"^[\s,\.!?ๆฯ:;\-—…]+")
+# Filler left behind on either side once the wake word is cut out.
+_EDGE_JUNK = re.compile(r"^[\s,\.!?ๆฯ:;\-—…]+|[\s,:;\-—]+$")
+# Cutting a name out of the middle leaves a double space behind.
+_GAP = re.compile(r"\s{2,}")
 
 
 @dataclass(frozen=True)
@@ -81,10 +94,14 @@ def detect(
     wake_words: list[str],
     *,
     threshold: int = 80,
-    head_chars: int = 16,
+    head_chars: int = 0,
 ) -> WakeMatch:
     """
-    Test whether *text* opens with one of *wake_words*.
+    Test whether *text* contains one of *wake_words*.
+
+    *head_chars* limits the search to the first N characters; 0 — the default —
+    searches the whole utterance, which is what catches a name spoken at the
+    end of a sentence.
 
     Returns a :class:`WakeMatch` whose ``score`` is the best match found even
     when nothing cleared *threshold* — log it to tune the threshold against
@@ -99,10 +116,11 @@ def detect(
     if not normalized:
         return WakeMatch(False, 0.0)
 
-    head = normalized[:head_chars]
+    haystack = normalized[:head_chars] if head_chars > 0 else normalized
 
     best_score = 0.0
     best_word = ""
+    best_start = 0
     best_end = 0
 
     for word in wake_words:
@@ -110,7 +128,7 @@ def detect(
         if not needle:
             continue
 
-        alignment = partial_ratio_alignment(needle, head)
+        alignment = partial_ratio_alignment(needle, haystack)
         if alignment is None:
             continue
 
@@ -120,18 +138,22 @@ def detect(
         best_score = alignment.score
         best_word = word
         # partial_ratio_alignment swaps its arguments when the first is the
-        # longer one, which would make dest_end refer to the needle instead.
-        # Wake words are short and head_chars is generous, so that only
-        # happens on a near-empty utterance — consume the whole head there.
-        best_end = alignment.dest_end if len(needle) <= len(head) else len(head)
+        # longer one, which would make dest_start/dest_end refer to the needle
+        # instead. Wake words are short, so that only happens on a near-empty
+        # utterance — treat the whole thing as the name there.
+        if len(needle) <= len(haystack):
+            best_start, best_end = alignment.dest_start, alignment.dest_end
+        else:
+            best_start, best_end = 0, len(haystack)
 
     if best_score < threshold:
         return WakeMatch(False, best_score, best_word)
 
-    # Translate the match end back into the original string.
-    if best_end >= len(index_map):
-        remainder = ""
-    else:
-        remainder = text[index_map[best_end] :]
+    # Translate the matched span back into the original string and cut it out,
+    # keeping whatever was said on either side of the name.
+    cut_from = index_map[best_start] if best_start < len(index_map) else len(text)
+    cut_to = index_map[best_end] if best_end < len(index_map) else len(text)
+    remainder = f"{text[:cut_from]} {text[cut_to:]}"
 
-    return WakeMatch(True, best_score, best_word, _LEADING_JUNK.sub("", remainder).strip())
+    remainder = _GAP.sub(" ", remainder)
+    return WakeMatch(True, best_score, best_word, _EDGE_JUNK.sub("", remainder).strip())

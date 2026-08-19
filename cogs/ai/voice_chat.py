@@ -393,7 +393,8 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         wake_list = " / ".join(f"**{w}**" for w in config.stt_wake_words[:4])
         if stt_ready:
             how = (
-                f"พูดชื่อหนู ({wake_list}) นำหน้าได้เลยค่ะ เช่น *«ยูกะ ตอนนี้กี่โมงแล้ว»*\n"
+                f"พูดชื่อหนู ({wake_list}) ตรงไหนของประโยคก็ได้ค่ะ "
+                "เช่น *«ยูกะ ตอนนี้กี่โมงแล้ว»* หรือ *«แล้วอีกแบบคืออะไรล่ะยูกะ»*\n"
                 f"หลังหนูตอบแล้ว คุยต่อได้เลยภายใน **{config.stt_followup_window_s} วินาที** "
                 "ไม่ต้องเรียกชื่อซ้ำน้า\n"
                 f"หรือจะ `@mention` ในช่อง **{ctx.channel.name}** ก็ได้ค่ะ!"

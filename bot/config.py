@@ -69,7 +69,7 @@ class Config:
     # ── Wake word gating (/ai voice only) ─────────────────────────────────
     stt_wake_words: list[str] = field(default_factory=list)
     stt_wake_threshold: int = 80       # rapidfuzz partial_ratio, 0-100
-    stt_wake_head_chars: int = 16      # only look this far into the utterance
+    stt_wake_head_chars: int = 0       # 0 = match the name anywhere; N = first N chars only
     stt_followup_window_s: int = 30    # keep listening to that speaker afterwards
 
     @classmethod
@@ -112,11 +112,6 @@ class Config:
         owner_id_str = os.getenv("OWNER_ID")
         owner_id = int(owner_id_str) if owner_id_str and owner_id_str.isdigit() else None
 
-        # Wake-word variants. Thai ASR spells the name inconsistently — ยูกะ,
-        # ยูก้า, ยูคะ and ยุกะ are all plausible outputs for the same sound —
-        # so we list variants and fuzzy-match rather than hoping for one
-        # canonical spelling. Tone marks are stripped before matching, so
-        # ยูก้า/ยูก๊ะ do not need their own entries.
         raw_wake = os.getenv("STT_WAKE_WORDS", "ยูกะ,ยูคะ,ยุกะ,ยูกา,yuuka,yuka,yuuca")
         stt_wake_words = [w.strip() for w in raw_wake.split(",") if w.strip()]
 
@@ -152,7 +147,7 @@ class Config:
             stt_min_peak=float(os.getenv("STT_MIN_PEAK", "0.02")),
             stt_wake_words=stt_wake_words,
             stt_wake_threshold=int(os.getenv("STT_WAKE_THRESHOLD", "80")),
-            stt_wake_head_chars=int(os.getenv("STT_WAKE_HEAD_CHARS", "16")),
+            stt_wake_head_chars=int(os.getenv("STT_WAKE_HEAD_CHARS", "0")),
             stt_followup_window_s=int(os.getenv("STT_FOLLOWUP_WINDOW_S", "30")),
         )
 

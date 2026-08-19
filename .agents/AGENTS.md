@@ -247,10 +247,14 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 - ASR never spells a name the same way twice, and Thai makes it worse: "Yuuka" comes back as
   ยูกะ / ยูก้า / ยูคะ / ยุกะ / ยูก๊ะ. Exact matching fails constantly.
 - Normalises away tone marks, spacing, punctuation and case, then fuzzy-matches (rapidfuzz
-  `partial_ratio`) against the **head** of the utterance only — a name mid-sentence is almost
-  always a false positive.
-- Returns the remainder with the wake word stripped, so "ยูกะ ช่วยบอกเวลาหน่อย" reaches the LLM
-  as "ช่วยบอกเวลาหน่อย".
+  `partial_ratio`) against the **whole utterance**. Thai puts the vocative at the end as often as
+  the front — "แล้วอีกแบบคืออะไรล่ะยูกะ" scores 29 on the first 16 chars and 100 on the whole line —
+  so a head-only match misses half of real summons. It costs less precision than it looks: the
+  phrase it collides with, "อยู่กับ", scores 75 either way, because it is a near-miss of the *name*
+  rather than an artefact of where we searched. The default threshold of 80 sits in that gap.
+  `STT_WAKE_HEAD_CHARS` can still restrict the search for a room noisy enough to need it.
+- Returns the utterance with the wake word **cut out wherever it sat**, so both
+  "ยูกะ ช่วยบอกเวลาหน่อย" and "ช่วยบอกเวลาหน่อยยูกะ" reach the LLM as "ช่วยบอกเวลาหน่อย".
 - Non-matches are logged at DEBUG **with their score** — tune `STT_WAKE_THRESHOLD` against what
   your speakers' mics actually produce rather than guessing.
 
@@ -353,7 +357,7 @@ STT_MIN_PEAK=0.02                   # reject segments quieter than this
 # Wake word (/ai voice only — /transcribe is deliberately ungated)
 STT_WAKE_WORDS=ยูกะ,ยูคะ,ยุกะ,ยูกา,yuuka,yuka,yuuca
 STT_WAKE_THRESHOLD=80               # rapidfuzz partial_ratio 0-100
-STT_WAKE_HEAD_CHARS=16              # only look this far into the utterance
+STT_WAKE_HEAD_CHARS=0               # 0 = name anywhere in the sentence; N = first N chars
 STT_FOLLOWUP_WINDOW_S=30            # keep listening to that speaker afterwards
 ```
 

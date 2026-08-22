@@ -282,13 +282,38 @@ not a sign of a broken pipeline.
 2. Re-run `generate → augment → train → export → eval` with the new config/model_name.
 3. Check `eval`'s FPPH against the `target_fp_per_hour: 0.1` target and per-phrase recall
    before considering the model usable.
-4. **Bot integration is not done and not covered here.** When ready: the acoustic detector
-   should run ahead of `voice_hub.subscribe`'s segment callback in `cogs/ai/voice_chat.py`,
-   consuming the same 16kHz mono audio `utils/audio.py:pcm_to_mono16k()` already produces for
-   Whisper. Recommend keeping `utils/wake.py`'s text matcher as a confirmation layer after an
-   acoustic trigger (rather than fully replacing it), since an acoustic false-accept would
-   otherwise go straight to the LLM. Remember the live-inference CPU fixes noted above
-   (thread-capped ONNX sessions, sensible poll interval) before deploying this continuously.
+4. **Bot integration is done.** `utils/wake_acoustic.py` loads an `.onnx` file (path is
+   `STT_WAKE_ACOUSTIC_MODEL_PATH` / `Config.stt_wake_acoustic_model_path`) and runs it once per
+   closed segment, ahead of `transcribe_pcm` in `cogs/ai/voice_chat.py:_on_segment`.
+   `utils/wake.py`'s text matcher still runs afterward as a confirmation layer — the acoustic
+   gate only decides whether a segment is worth transcribing, never whether to answer, so this
+   POC's high FPPH costs wasted STT calls, not bad replies. Inference is once-per-segment rather
+   than continuous per-frame, so the CPU-pinning cost noted above did not turn out to apply;
+   revisit thread-capping only if that changes.
+
+   **Promoting a model to run**: the bot does *not* load straight out of
+   `wakeword_training/output/` — that directory is gitignored and gets regenerated/overwritten by
+   the training pipeline, so it is not something a fresh clone or a production deploy has. Once
+   `eval` says a model is good, copy its exported classifier into the git-tracked runtime location
+   **under its own `model_name`** — never collapse every run down to one fixed filename, or the
+   only copy of a superseded model is whatever git blob is buried in history for it:
+   ```powershell
+   cp wakeword_training/output/<model_name>/<model_name>.onnx models/wake_word/<model_name>.onnx
+   ```
+   e.g. `models/wake_word/yuuka_wakeword_v1.onnx` for the config's `model_name: yuuka_wakeword_v1`
+   from step 1. Every promoted version stays in `models/wake_word/` permanently (a handful of
+   ~1MB ONNX files costs nothing to keep) — nothing here is ever overwritten, so rolling back is
+   just pointing at an older filename, not a git revert.
+
+   Then point `Config.stt_wake_acoustic_model_path` at the new file — either bump the
+   `stt_wake_acoustic_model_path` default in `bot/config.py` (commit it alongside the new model
+   file so the repo's default always means "the current best version"), or set
+   `STT_WAKE_ACOUSTIC_MODEL_PATH` in `.env` for a per-deployment override without touching code
+   (e.g. to test a candidate version before promoting it).
+
+   The current file, `models/wake_word/yuuka_wakeword.onnx`, is this proof-of-concept run (its
+   `model_name` has no version suffix because it predates this convention) — the FPPH/recall
+   caveats above hold until it's replaced with one trained per steps 1-3.
 5. Add `.gitignore` coverage was already done for the raw source assets at repo root — verify
    nothing under `wakeword_training/data/` or `wakeword_training/output/` (if ever pointed
    back at a path inside the repo) gets accidentally committed.

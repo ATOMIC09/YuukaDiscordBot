@@ -12,13 +12,18 @@ How speech reaches the LLM
 1. `utils.voice_hub` owns voice receive and closes an utterance after a short
    run of packet silence (Discord clients stop sending RTP packets when a user
    is quiet, so that is a free and accurate end-of-speech signal).
-2. `utils.stt` transcribes the segment with faster-whisper, which handles the
+2. `utils.wake_acoustic` scores the raw segment against a trained wake-word
+   model *before* anything gets transcribed. This is a cheap pre-filter, not
+   the trigger — a miss means "not worth transcribing", not "definitely not
+   Yuuka", so it only runs on the initial summon (an already-awake speaker
+   skips straight to step 3).
+3. `utils.stt` transcribes the segment with faster-whisper, which handles the
    Thai/English code-switching this server actually speaks.
-3. `utils.wake` decides whether Yuuka was addressed. **This gate is the whole
+4. `utils.wake` decides whether Yuuka was addressed. **This gate is the whole
    point**: without it she replies to every sentence anyone says in the room.
    A hit also opens a follow-up window for that speaker, so a back-and-forth
    does not require repeating her name every single turn.
-4. The accepted text goes through the same LLM → TTS → playback path as a
+5. The accepted text goes through the same LLM → TTS → playback path as a
    typed message.
 
 Both a typed message and a spoken one land in `_respond()`, so the two entry
@@ -48,6 +53,7 @@ from utils.llm import generate_chat_stream_response
 from utils.stt import ensure_loaded, model_description, transcribe_pcm
 from utils.tts import synthesize_speech
 from utils.voice_hub import SpeechSegment, voice_hub
+from utils.wake_acoustic import acoustic_wake
 
 _HUB_KEY = "ai_voice"
 
@@ -189,12 +195,24 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         user = self.bot.get_user(segment.user_id)
         display = user.display_name if user else f"Unknown ({segment.user_id})"
 
+        now = time.perf_counter()
+        in_followup = session.awake_until.get(segment.user_id, 0.0) > now
+
+        # Cheap pre-filter: is this worth transcribing at all? Only gates the
+        # initial summon — an already-awake speaker never needs to say the
+        # wake word again, acoustically or otherwise.
+        if not in_followup:
+            heard, acoustic_score = await acoustic_wake.detect(segment.pcm)
+            if not heard:
+                logger.debug(
+                    f"[AI Voice] No acoustic wake hit from {display} "
+                    f"(score {acoustic_score:.3f}), skipping STT"
+                )
+                return
+
         result = await transcribe_pcm(segment.pcm, display)
         if not result.text:
             return
-
-        now = time.perf_counter()
-        in_followup = session.awake_until.get(segment.user_id, 0.0) > now
 
         if in_followup:
             prompt = result.text

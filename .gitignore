@@ -25,3 +25,14 @@ logs/
 *.njsproj
 *.sln
 *.sw?
+
+# Wake-word training assets — large audio/data, kept out of version control.
+# Generated data/output itself lives on E: (see wakeword_training/configs/),
+# but these patterns also cover the raw source recordings at repo root.
+wake_multilang/
+*.opus
+*.ogg
+wake_chirp3_th.zip
+wake_multilang_colab.zip
+wakeword_training/data/
+wakeword_training/output/

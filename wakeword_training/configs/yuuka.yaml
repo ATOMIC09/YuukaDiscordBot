@@ -1,0 +1,136 @@
+# =============================================================================
+# Yuuka wake-word config — VoxCPM2 TTS, one unified multilingual/accent model
+#
+# "Yuuka" is one name, not three different wake words — the en/ja/th script
+# spellings below just let VoxCPM2 phonemize it correctly per language, and
+# voice_design_prompts covers the accent diversity a real Discord server's
+# speakers actually have (native + non-native pronunciations of each spelling).
+# =============================================================================
+
+model_name: yuuka_wakeword
+
+target_phrases:
+  - "yuuka"
+  - "yuka"
+  - "ゆうか"
+  - "ユーカ"
+  - "ยูกะ"
+  - "ยูคะ"
+
+tts_backend: voxcpm
+
+# Cut way down for a first proof-of-concept pass — just prove the pipeline
+# (VoxCPM2 on Thai/Japanese/English, augment, train, export, eval) works
+# end-to-end. Scale back up toward the shipped example's 25000/5000 once
+# this is confirmed working and it's time to fine-tune for real quality.
+n_samples: 300
+n_samples_val: 60
+n_background_samples: 100
+n_background_samples_val: 20
+
+# Curated Thai confusable-phrase list, pulled from wake_chirp3_th.zip's
+# metadata.csv (the negative-labeled rows' canonical_text, deduplicated) —
+# reusing the text of that hand-curated hard-negative set even though the
+# pre-rendered WAV files themselves aren't fed into this pipeline.
+custom_negative_phrases:
+  - "ขอบคุณนะ"
+  - "ช่วยด้วย"
+  - "ช่วยตั้งเวลาให้หน่อย"
+  - "ดูกัน"
+  - "ดูค่ะ"
+  - "ตอนนี้กี่โมงแล้ว"
+  - "ปิดไฟให้หน่อย"
+  - "พรุ่งนี้ฝนจะตกไหม"
+  - "มานี่หน่อย"
+  - "มีอะไรในปฏิทินวันนี้"
+  - "ยุนะ"
+  - "ยุ่งค่ะ"
+  - "ยูกัน"
+  - "ยูกิ"
+  - "ยูทูบ"
+  - "ยูนะ"
+  - "ยูฟ่า"
+  - "ยูริ"
+  - "รู้กัน"
+  - "รู้ค่ะ"
+  - "ลดเสียงลงหน่อย"
+  - "ลูกค้า"
+  - "วันนี้อากาศเป็นยังไง"
+  - "หยุดเพลง"
+  - "อยู่กัน"
+  - "อยู่ค่ะ"
+  - "เดี๋ยวก่อน"
+  - "เปิดเพลงหน่อย"
+  - "เปิดไฟห้องนอน"
+  - "เพิ่มเสียงอีกนิด"
+  - "เล่นเพลงต่อ"
+  - "โทรหาเพื่อนให้หน่อย"
+  - "โอเค"
+  - "ได้ยินไหม"
+  - "ไปกันเถอะ"
+
+noise_scales: [0.98]
+noise_scale_ws: [0.98]
+length_scales: [0.75, 1.0, 1.25]
+slerp_weights: [0.2, 0.35, 0.5, 0.65, 0.8]
+
+voxcpm_tts:
+  model_id: openbmb/VoxCPM2
+  model_cache_relpath: voxcpm/VoxCPM2
+  local_model_path: null
+  load_denoiser: false
+  cfg_values: [1.5, 2.0, 2.5, 3.0]
+  inference_timesteps_list: [8, 10, 12]
+  # Accent-diverse voice personas — mirrors the many-locale Edge-TTS-voice
+  # trick already used by hand in wake_multilang/, so the model sees both
+  # native and non-native pronunciations of every target-phrase spelling.
+  voice_design_prompts:
+    - "A Thai-accented English speaker, clear pace, mid pitch"
+    - "A Japanese-accented English speaker, measured pace"
+    - "A Korean-accented English speaker, moderate pace"
+    - "A German-accented English speaker, steady pace"
+    - "A native Thai speaker, natural pace, clear articulation"
+    - "A native Japanese speaker, natural pace, clear articulation"
+    - "A native English speaker, American accent, natural conversational pace"
+    - "A native English speaker, British accent, natural conversational pace"
+    - "A young adult woman, clear mid-pitch voice, moderate pace, calm"
+    - "A young adult man, warm baritone, steady pace, friendly"
+    - "A middle-aged woman, slightly low pitch, measured pace"
+    - "A middle-aged man, deep resonant voice, slow deliberate pace"
+
+# Absolute paths — relative paths would resolve against whatever directory
+# the CLI is invoked from, which varies (repo root vs. wakeword_training/).
+# Relative to repo root, not this machine's absolute path — run commands
+# from repo root (see TRAINING.md).
+data_dir: ./wakeword_training/data
+output_dir: ./wakeword_training/output
+
+augmentation:
+  clip_duration: 2.0
+  batch_size: 16
+  rounds: 3
+  # A real recorded background-noise source (local-only, gitignored) —
+  # genuine room/mic noise + cross-talk the TTS pipeline can't synthesize
+  # itself.
+  background_paths: [./wakeword_training/data/backgrounds]
+  rir_paths: [./wakeword_training/data/rirs]
+
+model:
+  model_type: conv_attention
+  model_size: medium
+
+# Reduced from 100000 for the same reason as n_samples — prove the pipeline
+# works end-to-end first. Total training = steps + steps/10 + steps/10 (3 phases),
+# so this is ~3600 steps total. Scale back up once this run is validated.
+steps: 3000
+learning_rate: 0.0001
+weight_decay: 0.01
+label_smoothing: 0.05
+max_negative_weight: 3000
+target_fp_per_hour: 0.1
+
+batch_n_per_class:
+  positive: 50
+  adversarial_negative: 50
+  ACAV100M_sample: 1024
+  background_noise: 50

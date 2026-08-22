@@ -22,6 +22,7 @@ dependencies = [
     "pytz>=2026.2",
     "tinytag>=2.2.1",
     "psutil>=7.2.2",
+    "livekit-wakeword>=0.2.1",
 ]
 
 [project.optional-dependencies]

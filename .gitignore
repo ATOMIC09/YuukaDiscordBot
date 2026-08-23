@@ -36,3 +36,5 @@ wake_chirp3_th.zip
 wake_multilang_colab.zip
 wakeword_training/data/
 wakeword_training/output/
+wakeword_training/logs/
+wakeword_training/.venv/

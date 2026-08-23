@@ -1,0 +1,163 @@
+# =============================================================================
+# Yuuka wake-word config — first production-scale run (v1)
+#
+# Same wake word, same script/accent/negative-phrase design as
+# wakeword_training/configs/yuuka.yaml (the proof-of-concept run that
+# validated the pipeline) — only the data/training scale changed, up from a
+# deliberately tiny POC to WakeWordConfig's own class defaults (verified
+# directly from livekit/wakeword/config.py, not a claimed "shipped example").
+# See TRAINING.md's "Next steps" and "The config file" sections for context.
+# =============================================================================
+
+model_name: yuuka_wakeword_v1
+
+target_phrases:
+  - "yuuka"
+  - "yuka"
+  - "ゆうか"
+  - "ユーカ"
+  - "ยูกะ"
+  - "ยูคะ"
+
+tts_backend: voxcpm
+
+# Scaled up from the POC's 300/60/100/20 to WakeWordConfig's own class
+# defaults (livekit/wakeword/config.py) — verified directly from the
+# installed package's source, not a claimed "shipped example" number. This
+# is a ~33x jump in data over the POC, not the library's absolute ceiling.
+#
+# Time budget (RTX 3070, per TRAINING.md's measured table): ~4.5h for
+# 10,000 positive clips alone; negatives/val/backgrounds add more on top.
+# Realistically spans one long night, maybe two. Resumes cleanly if
+# interrupted (counts existing clip_NNNNNN.wav files and continues).
+n_samples: 10000
+n_samples_val: 2000
+n_background_samples: 200
+n_background_samples_val: 40
+
+# Same curated Thai confusable-phrase list as the POC config — unrelated to
+# the scale-up above, still pulled from wake_chirp3_th.zip's metadata.csv.
+custom_negative_phrases:
+  - "ขอบคุณนะ"
+  - "ช่วยด้วย"
+  - "ช่วยตั้งเวลาให้หน่อย"
+  - "ดูกัน"
+  - "ดูค่ะ"
+  - "ตอนนี้กี่โมงแล้ว"
+  - "ปิดไฟให้หน่อย"
+  - "พรุ่งนี้ฝนจะตกไหม"
+  - "มานี่หน่อย"
+  - "มีอะไรในปฏิทินวันนี้"
+  - "ยุนะ"
+  - "ยุ่งค่ะ"
+  - "ยูกัน"
+  - "ยูกิ"
+  - "ยูทูบ"
+  - "ยูนะ"
+  - "ยูฟ่า"
+  - "ยูริ"
+  - "รู้กัน"
+  - "รู้ค่ะ"
+  - "ลดเสียงลงหน่อย"
+  - "ลูกค้า"
+  - "วันนี้อากาศเป็นยังไง"
+  - "หยุดเพลง"
+  - "อยู่กัน"
+  - "อยู่ค่ะ"
+  - "เดี๋ยวก่อน"
+  - "เปิดเพลงหน่อย"
+  - "เปิดไฟห้องนอน"
+  - "เพิ่มเสียงอีกนิด"
+  - "เล่นเพลงต่อ"
+  - "โทรหาเพื่อนให้หน่อย"
+  - "โอเค"
+  - "ได้ยินไหม"
+  - "ไปกันเถอะ"
+
+noise_scales: [0.98]
+noise_scale_ws: [0.98]
+length_scales: [0.75, 1.0, 1.25]
+slerp_weights: [0.2, 0.35, 0.5, 0.65, 0.8]
+
+voxcpm_tts:
+  model_id: openbmb/VoxCPM2
+  model_cache_relpath: voxcpm/VoxCPM2
+  local_model_path: null
+  load_denoiser: false
+  cfg_values: [1.5, 2.0, 2.5, 3.0]
+  inference_timesteps_list: [8, 10, 12]
+  voice_design_prompts:
+    - "A Thai-accented English speaker, clear pace, mid pitch"
+    - "A Japanese-accented English speaker, measured pace"
+    - "A Korean-accented English speaker, moderate pace"
+    - "A German-accented English speaker, steady pace"
+    - "A native Thai speaker, natural pace, clear articulation"
+    - "A native Japanese speaker, natural pace, clear articulation"
+    - "A native English speaker, American accent, natural conversational pace"
+    - "A native English speaker, British accent, natural conversational pace"
+    - "A young adult woman, clear mid-pitch voice, moderate pace, calm"
+    - "A young adult man, warm baritone, steady pace, friendly"
+    - "A middle-aged woman, slightly low pitch, measured pace"
+    - "A middle-aged man, deep resonant voice, slow deliberate pace"
+
+# Same shared data_dir as the POC config — setup's ~22GB download (VoxCPM
+# weights, ACAV100M bank, RIRs) is reused, not re-downloaded. output_dir is
+# also shared; model_output_dir = output_dir/model_name keeps this run in
+# its own wakeword_training/output/yuuka_wakeword_v1/ subfolder, so it
+# cannot collide with or overwrite the POC run's output.
+# Relative to repo root — NOT this machine's absolute path. Correct as long as
+# commands are run from the repo root (run_v1_overnight.ps1 enforces this via
+# Set-Location; do the same for any manual invocation: cd to repo root first,
+# not into wakeword_training/ itself — relative paths resolve against the
+# invoking shell's CWD, not the config file's location).
+data_dir: ./wakeword_training/data
+output_dir: ./wakeword_training/output
+
+augmentation:
+  clip_duration: 2.0
+  batch_size: 16
+  rounds: 3
+  # Chunked into ~591 small (~8s) files, not the original single 147MB
+  # background_noise_source.wav — with parallel workers (n_workers below),
+  # everyone reading the same one giant file causes severe disk contention (verified:
+  # stalled entirely with ~20 workers on the single-file version). Chunking
+  # lets random.choice() spread workers across different files instead.
+  background_paths: [./wakeword_training/data/backgrounds_chunked]
+  rir_paths: [./wakeword_training/data/rirs]
+  # From github.com/livekit/livekit-wakeword/pull/71 (unmerged as of writing,
+  # see TRAINING.md). 0 = os.cpu_count(). Verified: ~90x augment speedup.
+  n_workers: 0
+  mp_context: auto
+
+# Also from PR #71. onnxruntime-gpu is installed but CUDA isn't actually
+# reachable here (missing cublasLt64_13.dll — torch's bundled CUDA libs
+# aren't on onnxruntime's DLL search path); falls back to CPU automatically.
+# Not worth chasing — CPU + n_workers already verified at ~394 clips/sec.
+feature_extraction:
+  n_workers: 0
+  execution_providers: ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+eval:
+  execution_providers: ["CUDAExecutionProvider", "CPUExecutionProvider"]
+  batch_size: 64
+
+model:
+  model_type: conv_attention
+  model_size: medium   # unchanged from the POC config; not part of this scale-up
+
+# Scaled up from the POC's 3000 (~3600 total across 3 phases) to
+# WakeWordConfig's own class default of 50000 (steps + steps/10 + steps/10 =
+# ~60000 total). Everything below is unchanged from the POC config — these
+# were already deliberate choices there, not POC shortcuts.
+steps: 50000
+learning_rate: 0.0001
+weight_decay: 0.01
+label_smoothing: 0.05
+max_negative_weight: 3000
+target_fp_per_hour: 0.1
+
+batch_n_per_class:
+  positive: 50
+  adversarial_negative: 50
+  ACAV100M_sample: 1024
+  background_noise: 50

@@ -2,16 +2,16 @@
 
 ## Goal
 
-Replace (or gate ahead of) the current text-based wake-word matcher (`utils/wake.py`) with an
-acoustic model that listens to raw audio and decides whether "Yuuka" was said, **before**
-paying for a full STT call. Today, every utterance spoken in a voice channel gets fully
-transcribed (local `faster-whisper` or the Groq API) via `utils/stt.py`, then `utils/wake.py`
-fuzzy-matches the transcript — expensive and wasteful, since most utterances aren't addressed
-to the bot at all. A cheap always-on acoustic classifier can gate that: only call STT after
-the classifier fires.
+Gate the current text-based wake-word matcher (`utils/wake.py`) behind an acoustic model that
+listens to raw audio and decides whether a closed speech segment is worth transcribing at all,
+**before** paying for a full STT call. Previously, every utterance spoken in a voice channel got
+fully transcribed (local `faster-whisper` or the Groq API) via `utils/stt.py`, then
+`utils/wake.py` fuzzy-matched the transcript — expensive and wasteful, since most utterances
+aren't addressed to the bot at all.
 
-**This document covers training only.** No bot integration has been done — see "Next steps"
-at the bottom for that.
+**Bot integration is done** (`utils/wake_acoustic.py`, wired into `cogs/ai/voice_chat.py` ahead
+of `transcribe_pcm`) — see "Promoting a model to run" near the bottom. This document covers the
+training side: how the model gets built, and how to build a better one.
 
 ## Why livekit-wakeword, not openWakeWord
 
@@ -22,11 +22,9 @@ feature-extractor models ship as **TFLite**, which has poor/no Windows wheel sup
 [livekit/livekit-wakeword](https://github.com/livekit/livekit-wakeword) fixes this directly:
 same underlying approach (frozen mel-spectrogram + Google `speech_embedding` feature
 extractors, openWakeWord's own pretrained models) but re-exported as **ONNX** instead of
-TFLite, a Conv-Attention classifier head instead of a flat DNN, and a merged PR specifically
-fixing Windows installation (`webrtcvad` → `webrtcvad-wheels`, fixed espeak UTF-8 decoding).
-Deploy-time footprint is just `numpy` + `onnxruntime`.
-
-Confirmed working on this Windows machine — see "Verified working" below.
+TFLite, a Conv-Attention classifier head instead of a flat DNN, and a merged Windows-install fix
+(`webrtcvad` → `webrtcvad-wheels`, fixed espeak UTF-8 decoding). Deploy-time footprint is just
+`numpy` + `onnxruntime`.
 
 ## One name, multiple accents, not multiple words
 
@@ -35,79 +33,125 @@ Confirmed working on this Windows machine — see "Verified working" below.
 script to phonemize correctly — not because these are different words. Accent diversity
 (a Thai speaker's English pronunciation vs. a native English speaker's) is handled instead by
 `voxcpm_tts.voice_design_prompts` — natural-language persona descriptions VoxCPM2 uses to vary
-the voice, including explicit non-native-accent prompts. This mirrors what the original
-hand-built `wake_multilang/` dataset did by using dozens of different-locale Edge-TTS voices
-to read the same phrase.
+the voice, including explicit non-native-accent prompts.
 
-## Prerequisites
+## Setup — one consolidated venv (CUDA + multiprocessing, both verified working)
 
-- `uv` (already used by this repo)
-- Windows: set `PYTHONUTF8=1` before every `livekit-wakeword` command — the CLI's `rich`-based
-  console output crashes on Windows' legacy codepage otherwise (a `→` character in help text,
-  or similar, throws `UnicodeEncodeError`).
-- Optional but strongly recommended: an NVIDIA GPU. `generate` calls a full neural TTS model
-  (VoxCPM2) per clip — **~20-30s/clip on CPU vs ~1.6s/clip on GPU** (RTX 3070 tested). CPU-only
-  generation for a real-sized dataset (thousands of clips) is impractical (17+ hours).
-- Disk space: the `setup` step downloads ~22GB (VoxCPM2 weights ~5GB + ACAV100M generic-negative
-  feature bank ~17GB + RIRs). Point `data_dir`/`output_dir` at a drive with room — see config below.
+Everything needed lives in a single project-local venv, `wakeword_training/.venv`, built from
+the **stable `livekit-wakeword` release plus an unmerged upstream PR patched in**:
+[github.com/livekit/livekit-wakeword/pull/71](https://github.com/livekit/livekit-wakeword/pull/71)
+adds optional multiprocessing to `augment`/feature-extraction and configurable ONNX execution
+providers — measured **~90x** faster `augment` (2.3 → 178 clips/sec on a 32-core box; on this
+machine, augment for the full v1 dataset went from an estimated 15-20+ hours to a few minutes)
+and **~100x** faster feature extraction (3.5 → 394 clips/sec, verified). The PR is open,
+unmerged, and stale (last touched 2026-04-23, currently shows `CONFLICTING` against `main`) —
+exploratory, not an official release, but empirically proven on this project's real dataset.
 
-## Installation
-
+**Build it with `wakeword_training/setup_env.ps1`** — a real, idempotent script, not manual
+copy-paste instructions:
 ```powershell
-uv tool install "livekit-wakeword[train,eval,export,voxcpm]"
+powershell -File wakeword_training\setup_env.ps1
+```
+It creates the venv, installs the PR71 branch with torch resolved straight to CUDA, applies the
+one remaining mandatory fix below, verifies everything independently, and stops with a `FATAL`
+message + exit code on the first thing that fails — it does not silently continue past a broken
+step. It uses only repo-relative paths (via `$PSScriptRoot`), so it works after a fresh clone on
+any machine without editing anything in it first.
+
+What it does, spelled out (for understanding what's happening — you don't need to run these by
+hand, the script does it):
+```powershell
+uv venv wakeword_training/.venv --python 3.12
+uv pip install --python wakeword_training/.venv/Scripts/python.exe --torch-backend=auto "livekit-wakeword[train,eval,export,voxcpm,listener] @ git+https://github.com/livekit/livekit-wakeword@refs/pull/71/head"
+```
+`--torch-backend=auto` on this **initial** install (verified, not assumed — tested in an
+isolated venv) resolves `torch`/`torchaudio` straight to the CUDA build matching your driver, no
+separate reinstall needed. `uv pip install` resolves the plain CPU build by default even with an
+NVIDIA GPU present otherwise — a per-environment default; the flag needs to be present, but
+doesn't need to be a follow-up step. `generate` calls a full neural TTS model (VoxCPM2) per clip
+— **~20-30s/clip on CPU vs ~1.6s/clip on GPU** (RTX 3070 measured); CPU-only generation for a
+real dataset is impractical (17+ hours for 4,000 clips alone).
+
+**One fix that genuinely can't be folded into the install above**: PR71's branch point predates
+a later Windows-compat fix on `main` that swapped `webrtcvad` → `webrtcvad-wheels`. Installing
+the PR as-is pulls plain `webrtcvad`, which is broken in this environment
+(`AttributeError: module 'pkg_resources' has no attribute 'get_distribution'` on import — the
+old package is incompatible with modern `setuptools`). Tested whether listing
+`webrtcvad-wheels` alongside the initial install avoids the extra step (the same trick that
+works for `torch`) — it does not: `uv` installs **both** packages side by side, since they're
+different package names with no way for the resolver to know one substitutes the other, and
+whichever's file write lands last wins the same import path non-deterministically (verified: the
+broken one won in testing). An explicit uninstall-then-install is the only reliable fix:
+```powershell
+uv pip uninstall --python wakeword_training/.venv/Scripts/python.exe webrtcvad
+uv pip install --python wakeword_training/.venv/Scripts/python.exe webrtcvad-wheels
 ```
 
-**Don't forget `voxcpm`** — installing without it (`[train,eval,export]` alone) installs fine
-but fails at `generate` time with `ImportError: VoxCPM is not installed`.
-
-### GPU: torch installs CPU-only by default, needs a manual swap
-
-`uv tool install` resolves the plain CPU build of `torch`/`torchaudio` even when a CUDA GPU is
-present. Check:
+Verify before trusting the environment:
 ```powershell
-& "$env:APPDATA\uv\tools\livekit-wakeword\Scripts\python.exe" -c "import torch; print(torch.cuda.is_available())"
+wakeword_training/.venv/Scripts/python.exe -c "import webrtcvad; print('webrtcvad OK')"
+wakeword_training/.venv/Scripts/python.exe -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+wakeword_training/.venv/Scripts/python.exe -m livekit.wakeword --help
 ```
-If `False` but you have an NVIDIA GPU, force the CUDA build into the same tool environment:
-```powershell
-uv pip install --python "$env:APPDATA\uv\tools\livekit-wakeword\Scripts\python.exe" --torch-backend=auto --reinstall-package torch --reinstall-package torchaudio torch torchaudio
-```
-`--torch-backend=auto` auto-detects the right CUDA tag for your driver. Verify again after —
-should print `True` and your GPU name.
 
-Note: the frozen mel-spectrogram/speech-embedding feature extractors (used in `augment` and at
-inference time) are hardcoded to `CPUExecutionProvider` in the library's source regardless of
-what's installed — only VoxCPM2's `generate` step benefits from GPU. This is by design (those
-models are tiny; CPU is fast enough for them) and isn't worth fighting.
+`onnxruntime-gpu` was also tried (for feature-extraction/eval GPU acceleration) but does **not**
+work here — it needs `cublasLt64_13.dll`, which isn't on `onnxruntime`'s DLL search path even
+though `torch`'s own bundled CUDA libraries exist elsewhere on disk. Not worth chasing: CPU +
+multiprocessing already measured 394 clips/sec, well past the point of being a bottleneck.
 
-### For live mic testing (optional)
-```powershell
-uv pip install --python "$env:APPDATA\uv\tools\livekit-wakeword\Scripts\python.exe" "livekit-wakeword[listener]"
-```
-Adds `pyaudio` for microphone capture — see `test_mic.py` below.
+Set `PYTHONUTF8=1` before every command below — the CLI's `rich`-based console output crashes on
+Windows' legacy codepage otherwise (`UnicodeEncodeError` on a stray unicode character in help
+text or log output).
 
 ## Folder layout
 
-- **Config lives in the repo**: `wakeword_training/configs/yuuka.yaml` (tiny text file, tracked
-  in git as reference — though the large generated data below is gitignored).
+- **Config and code live in the repo**: `wakeword_training/configs/*.yaml`, `*.py`, `*.ps1` —
+  tiny text files, tracked in git.
+- **`wakeword_training/.venv/`** — the consolidated environment above. Gitignored (never commit
+  a venv).
 - **Heavy data lives in `wakeword_training/data/` and `wakeword_training/output/`**, set via
-  the config's `data_dir`/`output_dir` fields as **absolute paths** — a relative path like
-  `./data` would resolve against whatever directory the CLI happens to be invoked from
-  (repo root vs. inside `wakeword_training/`), which varies, so don't use relative paths here.
-  Both folders are gitignored (large binary data has no business in version control). If disk
-  space is ever tight again, these can point at another drive instead — `data_dir` holds the
-  ~22GB shared `setup` downloads (VoxCPM weights, ACAV100M, RIRs) — **shared across every
-  experiment, never duplicated**. `output_dir` holds the per-experiment stuff.
+  each config's `data_dir`/`output_dir` fields as `./wakeword_training/...` — relative to
+  **repo root**, not this (or any) machine's absolute path, so the config stays portable across
+  clones/users. This means **every command below must be run with the repo root as the current
+  directory** — `./wakeword_training/data` resolves against whatever directory the CLI is
+  invoked from, not the config file's own location, so running from inside `wakeword_training/`
+  itself would resolve wrong. `run_v1_overnight.ps1` enforces this itself
+  (`Set-Location` to repo root at the top); do the same manually (`cd` to repo root) before any
+  ad-hoc command. Both `data/` and `output/` are gitignored regardless. `data_dir` holds the ~22GB shared `setup` downloads (VoxCPM weights, ACAV100M,
+  RIRs) plus `backgrounds_chunked/` (591 ~8s files split from a real background-noise
+  recording, see below) — **shared across every experiment, never duplicated**. `output_dir` holds the
+  per-experiment stuff.
 - **Per-experiment folder is `output_dir / model_name`** (see `config.py`: `model_output_dir
   = Path(output_dir) / model_name`). Every split's clips, extracted `.npy` features, the
-  trained `.pt`/`.onnx`, metrics JSON, and DET curve PNG all live there.
-  **Give each meaningfully different experiment its own `model_name`** (e.g.
-  `yuuka_wakeword_poc`, `yuuka_wakeword_v1`) so runs don't overwrite each other. Reusing the
-  same `model_name` across runs is how you *intentionally* resume/top-up a dataset (see below)
-  — the shared `data_dir` downloads are never affected either way.
+  trained `.pt`/`.onnx`, metrics JSON, and DET curve PNG all live there. **Give each
+  meaningfully different experiment its own `model_name`** (e.g. `yuuka_wakeword_poc`,
+  `yuuka_wakeword_v1`) so runs don't overwrite each other. Reusing the same `model_name` across
+  `generate` runs is how you *intentionally* resume/top-up a dataset — but note `augment` is
+  **not** resumable (see Gotchas) — rerunning it deletes and rebuilds all augmented output from
+  scratch for that `model_name`, regardless of `generate`'s own resumability.
+
+## Why the background audio is chunked into 591 files, not one
+
+`augmentation.background_paths` points at `wakeword_training/data/backgrounds_chunked/` — 591
+~8-second files, not the original single 147MB `background_noise_source.wav` (a real recorded
+noise source, still the ultimate origin — kept local-only, gitignored, never committed). This matters specifically *because* of
+multiprocessing: `mix_with_background()` does `random.choice(self.background_files)` then a
+full `sf.read()` of whatever it picked. With one background file, every worker's every clip
+reads that same 147MB file — with ~20 parallel workers, this was verified to cause severe I/O
+contention (all workers observed stuck on the exact same low-level file-read call, no clip
+completing). Splitting into many files gives `random.choice()` more to pick from, so parallel
+workers mostly land on different, much smaller files instead of colliding — same code, no
+logic changes, just a different-shaped input directory. Single-threaded runs don't need this
+(no collision possible with one worker), but there's no downside to it either.
+
+To regenerate (only needed if the source recording changes):
+```powershell
+ffmpeg -y -i wakeword_training/data/backgrounds/background_noise_source.wav -f segment -segment_time 8 -c copy wakeword_training/data/backgrounds_chunked/chunk_%04d.wav
+```
 
 ## The config file
 
-See `wakeword_training/configs/yuuka.yaml` for the full file. Key fields:
+See `wakeword_training/configs/yuuka_v1.yaml` for the full file. Key fields:
 
 - `target_phrases` — script spellings of "Yuuka" (see accent note above)
 - `tts_backend: voxcpm` — required for Thai/Japanese (Piper is English-only, single locale)
@@ -116,37 +160,39 @@ See `wakeword_training/configs/yuuka.yaml` for the full file. Key fields:
   ยูทูบ, command-like phrases, etc.), sourced from an earlier abandoned openWakeWord attempt's
   `wake_chirp3_th.zip/metadata.csv` (negative-labeled rows' `canonical_text`, deduplicated) —
   reusing that curation effort as text even though the pre-rendered WAV files aren't used
-- `n_samples` / `n_samples_val` / `n_background_samples(_val)` — how many clips to generate
-  per split. **Currently set low (300/60/100/20) for a proof-of-concept run** — the library's
-  own shipped example config defaults to 25000/5000. Scale up for real quality (see below).
+- `n_samples` / `n_samples_val` / `n_background_samples(_val)` — clips per split. v1 used
+  10,000/2,000/200/40 (the library's own class defaults); a POC run before it used 300/60/100/20
+  purely to validate the pipeline
 - `steps` — training steps for phase 1; actual total is `steps + steps/10 + steps/10` (3
-  phases). **Currently 3000** (→ ~3600 total) for the same proof-of-concept reason; shipped
-  default is 100000.
-- `augmentation.background_paths` — point at real captured audio for realistic noise. This
-  project converted `vc_negative_audio.opus` (78 min of real Discord voice-channel audio) to
-  16kHz mono WAV and dropped it here — genuinely valuable, since it's real deployment-condition
-  noise the TTS pipeline can't synthesize itself.
+  phases). v1 used 50,000 (→ ~60,000 total)
+- `augmentation.background_paths` — see chunking note above
+- `augmentation.n_workers` / `mp_context` — PR #71 fields. `0` = `os.cpu_count()`, `auto` picks
+  `spawn` on Windows
+- `feature_extraction.execution_providers` / `eval.execution_providers` — PR #71 fields,
+  requested in preference order; falls back silently to CPU if the earlier ones aren't actually
+  loadable (see the `onnxruntime-gpu` note above)
 - `batch_n_per_class` — per-training-step batch composition; `ACAV100M_sample: 1024` dominates
   (draws from the large pre-downloaded generic-negative bank), `positive`/`adversarial_negative`/
-  `background_noise: 50` each draw from your own generated data.
+  `background_noise: 50` each draw from your own generated data
 
 ## Pipeline
 
-Run each step from the repo root, with `PYTHONUTF8=1` set:
+Run each step from the repo root, with `PYTHONUTF8=1` set, via the consolidated venv:
 
 ```powershell
 $env:PYTHONUTF8="1"
+$py = "wakeword_training\.venv\Scripts\python.exe"
 
-livekit-wakeword setup   wakeword_training/configs/yuuka.yaml   # one-time, ~22GB download
-livekit-wakeword generate wakeword_training/configs/yuuka.yaml  # synthesize clips (VoxCPM2)
-livekit-wakeword augment  wakeword_training/configs/yuuka.yaml  # noise/reverb + feature extraction
-livekit-wakeword train    wakeword_training/configs/yuuka.yaml  # train the classifier
-livekit-wakeword export   wakeword_training/configs/yuuka.yaml  # .pt -> .onnx
-livekit-wakeword eval     wakeword_training/configs/yuuka.yaml  # DET curve, FPPH, recall
+& $py -m livekit.wakeword setup    --config wakeword_training/configs/yuuka_v1.yaml  # one-time, ~22GB download
+& $py -m livekit.wakeword generate wakeword_training/configs/yuuka_v1.yaml           # synthesize clips (VoxCPM2)
+& $py -m livekit.wakeword augment  wakeword_training/configs/yuuka_v1.yaml           # noise/reverb + feature extraction
+& $py -m livekit.wakeword train    wakeword_training/configs/yuuka_v1.yaml           # train the classifier
+& $py -m livekit.wakeword export   wakeword_training/configs/yuuka_v1.yaml           # .pt -> .onnx
+& $py -m livekit.wakeword eval     wakeword_training/configs/yuuka_v1.yaml           # DET curve, FPPH, recall
 ```
 
-(`livekit-wakeword run <config>` chains generate→augment→train→export, but running stage-by-stage
-is worth it, at least the first time, to catch problems early — see gotchas below.)
+Note `setup` takes the config via `--config`; every other stage takes it positionally — not
+interchangeable, mixing them up is a common mistake (see Gotchas).
 
 ### `setup`
 Downloads VoxCPM2 weights, the ACAV100M generic-negative feature bank (~17GB), RIRs, and picks
@@ -154,39 +200,44 @@ up anything already in `augmentation.background_paths`. One-time per `data_dir`;
 (skips what's already there).
 
 ### `generate`
-The step most likely to need attention. For each clip index it deterministically cycles
-through `target_phrases` (`index % len(phrases)`) and, independently, through every
-`(voice_design_prompt, cfg_value, inference_timesteps)` combination (`itertools.product`
-order) — **not random selection**. The only randomness is VoxCPM2's own generation noise, so
-identical parameter combos still produce different-sounding clips each time. `n_samples` just
-sets how many times this loop runs before stopping.
+For each clip index it deterministically cycles through `target_phrases` (`index %
+len(phrases)`) and, independently, through every `(voice_design_prompt, cfg_value,
+inference_timesteps)` combination (`itertools.product` order) — **not random selection**. The
+only randomness is VoxCPM2's own generation noise, so identical parameter combos still produce
+different-sounding clips each time. `n_samples` just sets how many times this loop runs.
 
 **Resumable**: counts existing `clip_NNNNNN.wav` files in each split folder before starting,
-and continues/skips accordingly. Safe to kill and rerun — nothing is lost, and lowering
-`n_samples` after a partial run just means it may already be "done" (skips straight past).
+and continues/skips accordingly. Safe to kill and rerun.
 
-Time budget (GPU, ~1.6s/clip observed on an RTX 3070; ~20-30s/clip on CPU):
+Time budget (GPU, ~1.6s/clip measured on an RTX 3070; ~20-30s/clip on CPU if the torch fix above
+was skipped):
 | `n_samples` | ~generate time (positives only) |
 |---|---|
 | 300 (poc) | ~10 min |
 | 4,000 | ~1.8 hours |
-| 10,000 | ~4.5 hours |
-| 25,000 (library default) | ~11 hours |
+| 10,000 (v1) | ~4.5 hours |
+| 25,000 (library class default) | ~11 hours |
 Negatives/val/backgrounds add proportionally more.
 
 ### `augment`
 Applies noise/reverb augmentation, then extracts features through the frozen ONNX
-mel-spectrogram + speech-embedding models (openWakeWord's own pretrained models, re-exported).
-Runs on CPU by design (see GPU note above) — still fast (~2-3 min for a small dataset) since
-these are tiny models. Saves `*_features_{train,test}.npy` files, shape `(N, 16, 96)`.
+mel-spectrogram + speech-embedding models. With the consolidated venv's multiprocessing +
+chunked backgrounds: **verified fast** (v1's full ~72,700 augmentation passes across 3 rounds
+finished in minutes; feature extraction ran at 394 clips/sec). Saves `*_features_{train,test}.npy`
+files, shape `(N, 16, 96)`.
+
+**Not resumable** — every invocation deletes *all* existing `_rN.wav` augmented files first,
+then reprocesses everything from round 0, regardless of how much progress existed. Killing and
+rerunning `augment` throws away all prior augment progress (unlike `generate`/`train`).
 
 ### `train`
 3-phase adaptive training (phase 1 = `steps`, phase 2/3 = `steps/10` each). Checkpointing and
 validation are **proportional to `steps`**, not an absolute step count (`validation_interval =
 steps // 20`, checkpoints only save in each phase's last quarter) — lowering `steps` doesn't
 risk "zero checkpoints saved." Saves `{model_name}.pt` and `{model_name}_metrics.json` (a
-JSON array of validation snapshots — step/phase/fpph/recall/accuracy — useful for plotting a
-training-progress chart, since there's no built-in one; see "Charting" below).
+JSON array of validation snapshots — step/phase/fpph/recall/accuracy — see "Charting" below).
+Unaffected by PR #71 (the PR doesn't touch `train.py`) — behaves identically regardless of
+which environment runs it.
 
 ### `export`
 Converts the `.pt` to `.onnx` (with a torch/onnxruntime parity check baked into the
@@ -195,125 +246,125 @@ Converts the `.pt` to `.onnx` (with a torch/onnxruntime parity check baked into 
 ### `eval`
 Runs the exported `.onnx` against the held-out test set + the large ACAV100M validation pool,
 computes AUT/FPPH/recall, and saves **`{model_name}_det.png`** — a DET curve (False Positive
-Rate vs. False Negative Rate across thresholds) with metrics annotated. This is the one
-built-in chart. Also saves `{model_name}_eval.json`.
+Rate vs. False Negative Rate across thresholds) with metrics annotated. Also saves
+`{model_name}_eval.json`.
 
 ## Charting training progress
 
 No built-in "loss/accuracy over time" plot, but the data exists in `{model_name}_metrics.json`
-(written by `train`). Minimal script to plot validation accuracy per phase:
-
-```python
-import json, matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
-with open(r"<output_dir>/<model_name>/<model_name>_metrics.json") as f:
-    data = json.load(f)
-rows = [d for d in data if d["phase"] in (1, 2, 3)]  # exclude final summary rows
-
-fig, ax = plt.subplots(figsize=(9, 5.5))
-colors = {1: "#2563eb", 2: "#d97706", 3: "#16a34a"}
-for p in (1, 2, 3):
-    xs = [d["elapsed_s"] for d in rows if d["phase"] == p]
-    ys = [d["accuracy"] for d in rows if d["phase"] == p]
-    ax.plot(xs, ys, "o-", color=colors[p], label=f"Phase {p}")
-ax.axhline(0.5, color="gray", linestyle="--", alpha=0.5, label="Chance (50%)")
-ax.set_xlabel("Elapsed training time (s)"); ax.set_ylabel("Validation accuracy")
-ax.legend(); ax.grid(True, alpha=0.3)
-fig.savefig("training_curve.png", dpi=150)
+(written by `train`). Use `wakeword_training/plot_training_curve.py` (in this repo, reusable —
+not a one-off):
+```powershell
+wakeword_training\.venv\Scripts\python.exe wakeword_training\plot_training_curve.py wakeword_training\output\yuuka_wakeword_v1
 ```
-Run with the tool's own Python (has matplotlib via the `eval` extra).
+Pass either the metrics JSON file directly or the model's output directory (it'll find the
+`*_metrics.json` inside). Produces a two-panel accuracy + recall chart, saved next to the
+metrics file as `<model_name>_training_curve.png`.
 
 ## Testing the model
 
 **`eval`** (above) is the built-in quantitative test — run it, read FPPH/recall, look at the
 DET curve PNG.
 
-**Live mic test** — `wakeword_training/test_mic.py` (in this repo) loads the exported `.onnx`
-and prints a live confidence meter as you speak, using `WakeWordModel` from the library's
-inference API (`livekit.wakeword.WakeWordModel` — stateless, `.predict(audio_chunk)` returns
-`{model_name: score}` for a ~2-second 16kHz chunk). Run with the tool's Python (needs the
-`listener` extra installed for `pyaudio`):
+**Live mic test** — `wakeword_training/test_mic.py` loads the exported `.onnx` and prints a
+live confidence meter as you speak, using `WakeWordModel` from the library's inference API
+(`livekit.wakeword.WakeWordModel` — stateless, `.predict(audio_chunk)` returns `{model_name:
+score}` for a ~2-second 16kHz chunk):
 ```powershell
-& "$env:APPDATA\uv\tools\livekit-wakeword\Scripts\python.exe" wakeword_training\test_mic.py
+wakeword_training\.venv\Scripts\python.exe wakeword_training\test_mic.py
 ```
 **Note on live-inference CPU cost**: naive continuous prediction (recomputing the full
-2-second window on every new 80ms audio frame — which is what both `test_mic.py` and the
-library's own `WakeWordListener` reference implementation do) pins all CPU cores, because
-(a) it's ~25x redundant recomputation (96% window overlap between consecutive predictions),
-and (b) `onnxruntime` parallelizes every tiny inference call across all cores by default. Not
-a sign anything is broken — just not optimized for continuous deployment. Fixes for real
-integration: cap `onnxruntime` `SessionOptions.intra_op_num_threads` to 1 (these models are
-too small to benefit from multi-threading), and/or predict less often than every single frame.
+2-second window on every new 80ms audio frame — what both `test_mic.py` and the library's own
+`WakeWordListener` reference implementation do) pins all CPU cores: ~25x redundant
+recomputation (96% window overlap between consecutive predictions) plus `onnxruntime`
+parallelizing every tiny inference call across all cores by default. Not a bug — just not
+optimized for continuous polling. **Doesn't apply to the actual bot integration**, which calls
+the detector once per already-closed segment (see below), not continuously per-frame.
 
-## Gotchas hit during this session
+## Gotchas hit along the way
 
 - Console crashes without `PYTHONUTF8=1` (Windows codepage vs. `rich`'s unicode output).
-- `uv tool install` without the `voxcpm` extra installs fine but fails at `generate` time.
-- `uv tool install` resolves CPU-only `torch` even with a GPU present — needs the manual
-  `--torch-backend=auto --reinstall-package` swap (see above).
+- `uv pip install`/`uv tool install` resolves CPU-only `torch` by default even with a GPU
+  present — a **per-environment** default, needs the `--torch-backend=auto` fix applied to
+  *every* venv/tool install independently, not just once globally.
+- Console/log text renders as mojibake (e.g. `Γûê` instead of `█`) without `chcp 65001` first —
+  cosmetic (the underlying data is correct UTF-8), but persists into any log file the console
+  output gets piped to.
 - A non-raw Python docstring containing a Windows path like `...\uv\tools\...` breaks with
-  `SyntaxError: (unicode error) 'unicodeescape' codec can't decode... \uXXXX escape` — `\u`
-  gets parsed as a unicode escape. Use a raw string (`r"""..."""`) for any docstring/string
-  containing literal Windows paths.
-- Feature extraction (`augment`) is CPU-only by design (hardcoded `CPUExecutionProvider` in
-  the library source) — don't expect GPU to help there, only `generate` benefits.
+  `SyntaxError: (unicode error) 'unicodeescape' codec... \uXXXX escape` — `\u` gets parsed as a
+  unicode escape. Use a raw string (`r"""..."""`) for any docstring/string with literal Windows
+  paths.
+- Feature extraction is CPU-only by design in the base library (hardcoded
+  `CPUExecutionProvider`) — PR #71 makes this configurable, but `onnxruntime-gpu` still doesn't
+  actually reach CUDA in this environment (missing DLL, see above); CPU + multiprocessing is
+  fast enough regardless.
+- PR #71's branch predates a Windows fix that later landed on `main` (`webrtcvad` →
+  `webrtcvad-wheels`) — installing the PR pulls the broken old dependency back in. Must be
+  manually re-fixed in any environment built from this PR (see Setup above).
+- Parallel `augment` + a single background file = severe I/O contention, not a code bug — see
+  the chunking section above.
+- `augment` is not resumable (deletes all `_rN.wav` files every invocation); `generate` and
+  `train` are.
+- PowerShell + native commands: `$ErrorActionPreference = "Stop"` combined with `2>&1` makes
+  PowerShell 5.1 treat *any* stderr line from a native process (even a harmless warning) as a
+  terminating error, killing an otherwise-successful run. Use `"Continue"` and check
+  `$LASTEXITCODE` explicitly instead (see `run_v1_overnight.ps1`).
 
-## Current status (as of this proof-of-concept run)
+## Current status
 
-Ran the full pipeline end-to-end successfully — **the plumbing works**, including
-Thai/Japanese/English VoxCPM2 synthesis. Model quality is **not usable yet**, by design: this
-run deliberately used a fraction of the recommended data (367 positive clips vs. the library's
-tested 25,000) and steps (3,600 vs. 120,000) purely to validate the pipeline before spending
-GPU-hours on a real run.
+**v1** (`yuuka_wakeword_v1`, 30,000 augmented positive clips, 60,000 training steps): real
+signal, not production-ready. At the default threshold (0.5): FPPH ~0.05-0.35 (near the
+config's `target_fp_per_hour: 0.1` target) but only ~53% recall. At the trainer's own
+"optimal" threshold (0.02): 88% recall but FPPH=44 (44 false triggers/hour — unusable as a
+sole trigger, though tolerable as a pre-filter gate, see below). No single threshold yet gives
+both low false-accepts and reliable detection — the model needs more data/steps to sharpen
+that separation. Validation accuracy climbed from chance (~50%) to ~76%, confirming the
+pipeline and training loop both work correctly; v1 is a real improvement over the POC run
+below, just not yet good enough to promote.
 
-Result: `Optimal threshold: 0.02 (FPPH=91.06, Recall=0.800)` — ~91 false triggers/hour at 80%
-recall, far above the config's `target_fp_per_hour: 0.1` target. Validation accuracy stayed
-flat around 50% (chance level) throughout training. Expected outcome for this data/step count,
-not a sign of a broken pipeline.
+**POC** (`yuuka_wakeword`, 367 positive clips, 3,600 steps, deliberately starved to validate
+the pipeline before spending GPU-hours): FPPH=91 at 80% recall — essentially noise. This is
+still the model currently promoted to `models/wake_word/yuuka_wakeword.onnx` and live in the
+bot (see below) — acceptable there specifically because it's a pre-filter, not the sole
+trigger (a false accept just wastes one STT call).
 
 ## Next steps
 
-1. **Scale up for a real run.** Bump `n_samples`/`n_samples_val`/`n_background_samples(_val)`
-   and `steps` back toward the library's tested defaults (25000/5000/100000 steps), under a
-   **new `model_name`** (e.g. `yuuka_wakeword_v1`) so this proof-of-concept run isn't
-   overwritten. Budget GPU time accordingly (see the `generate` time table above).
-2. Re-run `generate → augment → train → export → eval` with the new config/model_name.
-3. Check `eval`'s FPPH against the `target_fp_per_hour: 0.1` target and per-phrase recall
-   before considering the model usable.
-4. **Bot integration is done.** `utils/wake_acoustic.py` loads an `.onnx` file (path is
-   `STT_WAKE_ACOUSTIC_MODEL_PATH` / `Config.stt_wake_acoustic_model_path`) and runs it once per
-   closed segment, ahead of `transcribe_pcm` in `cogs/ai/voice_chat.py:_on_segment`.
-   `utils/wake.py`'s text matcher still runs afterward as a confirmation layer — the acoustic
-   gate only decides whether a segment is worth transcribing, never whether to answer, so this
-   POC's high FPPH costs wasted STT calls, not bad replies. Inference is once-per-segment rather
-   than continuous per-frame, so the CPU-pinning cost noted above did not turn out to apply;
-   revisit thread-capping only if that changes.
+1. **Improve v1's data/scale for a v2 run**, in rough order of expected impact:
+   - More positive/negative data (v1 used 10,000/10,000; library class default is 25,000)
+   - More `background_noise` training samples (v1 used only 200/40 — tiny next to 30,000
+     positive/negative; likely under-representing "normal room audio" as a class)
+   - More training steps (v1 used 50,000; library default is even higher)
+   Use a **new `model_name`** (e.g. `yuuka_wakeword_v2`) so v1's output isn't overwritten.
+2. Re-run `generate → augment → train → export → eval` with the new config/model_name — the
+   consolidated venv above is fast enough now that this is a practical iteration loop, not an
+   overnight-only commitment.
+3. Check `eval`'s FPPH against `target_fp_per_hour: 0.1` *and* recall at that threshold before
+   considering a model good enough to promote — a model is only actually better than what's
+   live if it improves the FPPH/recall tradeoff at some usable threshold, not just accuracy.
 
-   **Promoting a model to run**: the bot does *not* load straight out of
-   `wakeword_training/output/` — that directory is gitignored and gets regenerated/overwritten by
-   the training pipeline, so it is not something a fresh clone or a production deploy has. Once
-   `eval` says a model is good, copy its exported classifier into the git-tracked runtime location
-   **under its own `model_name`** — never collapse every run down to one fixed filename, or the
-   only copy of a superseded model is whatever git blob is buried in history for it:
-   ```powershell
-   cp wakeword_training/output/<model_name>/<model_name>.onnx models/wake_word/<model_name>.onnx
-   ```
-   e.g. `models/wake_word/yuuka_wakeword_v1.onnx` for the config's `model_name: yuuka_wakeword_v1`
-   from step 1. Every promoted version stays in `models/wake_word/` permanently (a handful of
-   ~1MB ONNX files costs nothing to keep) — nothing here is ever overwritten, so rolling back is
-   just pointing at an older filename, not a git revert.
+### Promoting a model to run
 
-   Then point `Config.stt_wake_acoustic_model_path` at the new file — either bump the
-   `stt_wake_acoustic_model_path` default in `bot/config.py` (commit it alongside the new model
-   file so the repo's default always means "the current best version"), or set
-   `STT_WAKE_ACOUSTIC_MODEL_PATH` in `.env` for a per-deployment override without touching code
-   (e.g. to test a candidate version before promoting it).
+The bot does *not* load straight out of `wakeword_training/output/` — that directory is
+gitignored and gets regenerated/overwritten by the training pipeline, so a fresh clone or a
+production deploy has no way to get the file `utils/wake_acoustic.py` needs.
+`models/wake_word/` is a small, git-tracked home for promoted models, kept separate from the
+training scaffold. Each promoted version keeps its training run's `model_name` as its filename
+(`yuuka_wakeword.onnx` for the POC currently live, `yuuka_wakeword_v1.onnx` for v1, and so on)
+rather than overwriting one fixed name — every version stays available, and rolling back is
+just pointing at an older filename, not a git revert:
+```powershell
+cp wakeword_training/output/<model_name>/<model_name>.onnx models/wake_word/<model_name>.onnx
+```
+Then point `Config.stt_wake_acoustic_model_path` at the new file and set
+`Config.stt_wake_acoustic_threshold` to whatever threshold `eval` showed as the right operating
+point for that model (not necessarily its "optimal_threshold" — see v1's results above, where
+that pick trades away FPPH for recall) — either bump the defaults in `bot/config.py` (commit it
+alongside the new model file so the repo's default always means "the current best version"), or
+set `STT_WAKE_ACOUSTIC_MODEL_PATH`/`STT_WAKE_ACOUSTIC_THRESHOLD` in `.env` for a
+per-deployment override without touching code.
 
-   The current file, `models/wake_word/yuuka_wakeword.onnx`, is this proof-of-concept run (its
-   `model_name` has no version suffix because it predates this convention) — the FPPH/recall
-   caveats above hold until it's replaced with one trained per steps 1-3.
-5. Add `.gitignore` coverage was already done for the raw source assets at repo root — verify
-   nothing under `wakeword_training/data/` or `wakeword_training/output/` (if ever pointed
-   back at a path inside the repo) gets accidentally committed.
+**v1 is trained but not yet promoted** — its FPPH/recall tradeoff isn't clearly better than the
+POC's at any single threshold (see Current status above), so this is a judgment call, not
+automatic. Promoting it now would mean picking a threshold and accepting its specific tradeoff;
+waiting for a v2 run is the other option.

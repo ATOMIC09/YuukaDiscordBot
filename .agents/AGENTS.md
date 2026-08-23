@@ -411,7 +411,8 @@ git push origin main --tags
 - ❌ Do NOT use `discord.Color.from_str()` — py-cord uses `discord.Color(0xRRGGBB)` (hex int)
 - ❌ Do NOT remove the `aiohttp.TCPConnector(resolver=aiohttp.ThreadedResolver())` in `bot/bot.py` — `aiodns` (installed by `py-cord[speed]`) uses c-ares which fails DNS resolution on Windows; `ThreadedResolver` uses stdlib `getaddrinfo` as a reliable fallback
 - ❌ Do NOT use `commands.Bot` — use `discord.Bot` (we use app commands, not prefix commands)
-- ❌ Do NOT hardcode tokens or IDs
+- ❌ Do NOT hardcode tokens, IDs, absolute machine-specific paths (e.g. `C:/Users/<name>/...`), or any other personal/local info in tracked files — resolve paths relative to a known anchor (repo root, or a script's own location) instead. This extends to filenames/descriptions of gitignored local data files too — a committed doc/script describing a locally-captured file's origin (e.g. "real captured Discord audio") leaks that info even when the binary itself never leaves the machine; use a generic filename and describe its role, not its origin
+- ❌ Do NOT let environment/dependency changes (`uv pip install`/`uninstall`, venv creation) go unnarrated — these don't show up as a git diff, so summarize the cumulative state of an environment after a sequence of changes, not just each one in isolation
 - ❌ Do NOT use `print()` for logging — use `logger`
 - ❌ Do NOT manually add cog imports to `main.py` — the auto-loader handles it
 - ❌ Do NOT commit `.env`

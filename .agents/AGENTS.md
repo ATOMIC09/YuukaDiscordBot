@@ -205,6 +205,11 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
   transcribed and sent straight to the LLM with no acoustic/wake re-check. If nothing arrives, the
   bare name is dropped silently — far more often a stray acoustic hit than a deliberate "hi". One
   gap, one use — unlike the old follow-up window, it does not stay open after a reply.
+- **Acoustic confidence relaxes the text threshold**: Whisper sometimes hears "ยูกะ" as "อยู่กับ"
+  (a real, common word — scores 75, just under the default `STT_WAKE_THRESHOLD=80` on purpose, see
+  utils/wake.py). When the acoustic score clears `STT_WAKE_ACOUSTIC_CONFIDENT_SCORE` (0.5), the
+  text match uses `STT_WAKE_RELAXED_THRESHOLD` (70) instead — ordinary speech saying "อยู่กับ"
+  won't also score 0.5+ on the acoustic model, so this doesn't reopen that false-positive risk.
 - **Echo guard**: segments overlapping Yuuka's own playback are dropped — a speaker without
   headphones has her voice coming back through their mic.
 - Spoken and typed input both funnel into `_respond()`, so the two paths cannot drift apart.
@@ -392,6 +397,8 @@ STT_WAKE_WORDS=ยูกะ,ยูคะ,ยุกะ,ยูกา,yuuka,yuka,yu
 STT_WAKE_THRESHOLD=80               # rapidfuzz partial_ratio 0-100
 STT_WAKE_HEAD_CHARS=0               # 0 = name anywhere in the sentence; N = first N chars
 STT_WAKE_BRIDGE_WINDOW_S=2.5        # how long a bare-name segment waits for its continuation
+STT_WAKE_ACOUSTIC_CONFIDENT_SCORE=0.5  # acoustic score that trusts a near-miss text match
+STT_WAKE_RELAXED_THRESHOLD=70       # text threshold used once that confident
 ```
 
 ---

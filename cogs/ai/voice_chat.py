@@ -235,10 +235,14 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         if not result.text:
             return
 
+        text_threshold = config.stt_wake_threshold
+        if acoustic_score >= config.stt_wake_acoustic_confident_score:
+            text_threshold = min(text_threshold, config.stt_wake_relaxed_threshold)
+
         match = wake.detect(
             result.text,
             config.stt_wake_words,
-            threshold=config.stt_wake_threshold,
+            threshold=text_threshold,
             head_chars=config.stt_wake_head_chars,
         )
         if not match:
@@ -246,12 +250,13 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             # tuned against what these speakers' mics actually produce.
             logger.debug(
                 f"[AI Voice] No wake word from {display} "
-                f"(best {match.score:.0f} vs {match.word or '—'}): {result.text}"
+                f"(best {match.score:.0f} vs {match.word or '—'}, threshold {text_threshold}): {result.text}"
             )
             return
 
         logger.info(
-            f"[AI Voice] Wake word '{match.word}' matched at {match.score:.0f} from {display}"
+            f"[AI Voice] Wake word '{match.word}' matched at {match.score:.0f} "
+            f"(threshold {text_threshold}) from {display}"
         )
 
         if match.remainder:

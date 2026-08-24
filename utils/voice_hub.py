@@ -261,6 +261,19 @@ class SegmentingSink(discord.sinks.Sink):
         self._dispatch_tasks.add(task)
         task.add_done_callback(self._dispatch_tasks.discard)
 
+    def adopt_timeline_from(self, other: "SegmentingSink") -> None:
+        """Continue `other`'s recording instead of starting from zero.
+
+        Used when the reader has to be restarted underneath a live subscriber
+        (see `VoiceHub._rearm`) — without this, `/record` would silently lose
+        everything captured before an unrelated `/music skip`. Only the timeline
+        carries over; in-flight utterances belong to the reader that just died.
+        """
+        self.audio_data = other.audio_data
+        self._start_time = other._start_time
+        self._last_rtp_ts = dict(other._last_rtp_ts)
+        self._last_pcm_len = dict(other._last_pcm_len)
+
     def cleanup(self) -> None:
         self.finished = True
         if not self._monitor_task.done():
@@ -278,6 +291,8 @@ class _Subscriber:
 class _Recorder:
     voice_client: discord.VoiceClient
     sink: SegmentingSink
+    # Kept so the reader thread has something to hand work back to.
+    loop: asyncio.AbstractEventLoop
     subscribers: dict[str, _Subscriber] = field(default_factory=dict)
 
 
@@ -412,24 +427,30 @@ class VoiceHub:
 
     # ── internals ─────────────────────────────────────────────────────────
 
-    def _start(
-        self, voice_client: discord.VoiceClient, *, want_timeline: bool
-    ) -> _Recorder:
+    def _build_sink(self, guild_id: int, *, want_timeline: bool) -> SegmentingSink:
         from bot.config import config
 
-        guild_id = voice_client.guild.id
-        loop = asyncio.get_running_loop()
-
-        sink = SegmentingSink(
+        return SegmentingSink(
             guild_id=guild_id,
-            loop=loop,
+            loop=asyncio.get_running_loop(),
             on_segment=lambda seg: self._dispatch(seg),
             silence_s=config.stt_silence_ms / 1000,
             min_segment_s=config.stt_min_segment_ms / 1000,
             max_segment_s=config.stt_max_segment_s,
             collect_timeline=want_timeline,
         )
-        recorder = _Recorder(voice_client=voice_client, sink=sink)
+
+    def _start(
+        self, voice_client: discord.VoiceClient, *, want_timeline: bool
+    ) -> _Recorder:
+        guild_id = voice_client.guild.id
+
+        sink = self._build_sink(guild_id, want_timeline=want_timeline)
+        recorder = _Recorder(
+            voice_client=voice_client,
+            sink=sink,
+            loop=asyncio.get_running_loop(),
+        )
         self._recorders[guild_id] = recorder
 
         # PYCORD 2.8.0 / PR 3159 BUG WORKAROUND:
@@ -448,9 +469,11 @@ class VoiceHub:
         recorder.sink.cleanup()
         try:
             recorder.voice_client.stop_recording()
-        except (discord.ClientException, AttributeError) as exc:
+        except (discord.DiscordException, AttributeError) as exc:
             # Already auto-stopped internally (e.g. the reader died, or the
-            # client disconnected) — nothing left to stop.
+            # client disconnected) — nothing left to stop. RecordingException is
+            # a bare DiscordException, not a ClientException, so the net has to
+            # be that wide to catch "You are not recording".
             logger.debug(f"[VoiceHub] stop_recording() in guild {guild_id}: {exc}")
 
     def _sync_timeline(self, recorder: _Recorder) -> None:
@@ -483,11 +506,64 @@ class VoiceHub:
                     f"from user {segment.user_id}: {result}"
                 )
 
-    @staticmethod
-    def _on_recording_stopped(sink: discord.sinks.Sink, *args) -> None:
-        """Called from the reader thread when capture ends. Nothing to do —
-        subscribers read what they need before unsubscribing."""
-        logger.debug(f"[VoiceHub] Reader stopped for guild {getattr(sink, 'guild_id', '?')}")
+    def _on_recording_stopped(self, sink: discord.sinks.Sink, *args) -> None:
+        """Called from the reader thread when capture ends.
+
+        pycord's `VoiceClient.stop()` tears the *receive* reader down along with
+        playback (it calls `self._reader.stop()`), so anything that stops a
+        track — `/music stop`, `/music skip`, a seek, the AI silencing her own
+        speech — takes voice capture with it and the bot goes quietly deaf.
+
+        A teardown we asked for has already removed the recorder in `_stop()`.
+        So a recorder still registered here means nobody asked, and capture has
+        to be brought back.
+        """
+        guild_id = getattr(sink, "guild_id", None)
+        logger.debug(f"[VoiceHub] Reader stopped for guild {guild_id}")
+
+        recorder = self._recorders.get(guild_id) if guild_id is not None else None
+        if recorder is None or not recorder.subscribers:
+            return
+        if recorder.sink is not sink:
+            # A newer reader is already running; this is an old one winding down.
+            return
+
+        loop = recorder.loop
+        loop.call_soon_threadsafe(lambda: loop.create_task(self._rearm(guild_id)))
+
+    async def _rearm(self, guild_id: int) -> None:
+        """Restart a reader that was stopped without the hub being asked."""
+        recorder = self._recorders.get(guild_id)
+        if recorder is None or not recorder.subscribers:
+            return
+
+        voice_client = recorder.voice_client
+        if not voice_client.is_connected():
+            logger.debug(f"[VoiceHub] Not re-arming guild {guild_id} — voice client is gone")
+            return
+        if voice_client.is_recording():
+            return
+
+        want_timeline = any(sub.want_timeline for sub in recorder.subscribers.values())
+        previous = recorder.sink
+        sink = self._build_sink(guild_id, want_timeline=want_timeline)
+        # /record expects one continuous per-speaker timeline, so the new sink
+        # picks up where the old one left off rather than starting from zero.
+        sink.adopt_timeline_from(previous)
+        previous.cleanup()
+
+        try:
+            voice_client.start_recording(sink, self._on_recording_stopped, True)
+        except Exception as exc:
+            logger.error(f"[VoiceHub] Could not restart capture in guild {guild_id}: {exc}")
+            sink.cleanup()
+            return
+
+        recorder.sink = sink
+        logger.info(
+            f"[VoiceHub] Capture restarted in guild {guild_id} — VoiceClient.stop() "
+            f"had taken the reader down ({', '.join(recorder.subscribers)} still listening)"
+        )
 
 
 # Singleton — import this object everywhere

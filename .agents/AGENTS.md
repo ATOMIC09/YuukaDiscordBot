@@ -195,8 +195,9 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
 ### AI Voice Chat — `cogs/ai/voice_chat.py`
 - Segment → `utils.stt` → `utils.wake` gate → LLM → TTS → playback.
 - **The wake gate is load-bearing.** Without it Yuuka replies to every sentence spoken in the room.
-- A wake hit opens a **follow-up window** (`STT_FOLLOWUP_WINDOW_S`) for *that speaker*, so a
-  back-and-forth doesn't require repeating her name each turn. Other speakers still need it.
+- **No follow-up window** — every utterance needs the wake word, every time, so it's never
+  ambiguous whether she's listening. (An earlier version kept a speaker "awake" for a few seconds
+  after a hit; removed because it confused people about when they still needed to say her name.)
 - **Echo guard**: segments overlapping Yuuka's own playback are dropped — a speaker without
   headphones has her voice coming back through their mic.
 - Spoken and typed input both funnel into `_respond()`, so the two paths cannot drift apart.
@@ -383,7 +384,6 @@ STT_MIN_PEAK=0.02                   # reject segments quieter than this
 STT_WAKE_WORDS=ยูกะ,ยูคะ,ยุกะ,ยูกา,yuuka,yuka,yuuca
 STT_WAKE_THRESHOLD=80               # rapidfuzz partial_ratio 0-100
 STT_WAKE_HEAD_CHARS=0               # 0 = name anywhere in the sentence; N = first N chars
-STT_FOLLOWUP_WINDOW_S=30            # keep listening to that speaker afterwards
 ```
 
 ---

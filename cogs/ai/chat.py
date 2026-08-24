@@ -20,7 +20,7 @@ from discord.ext import commands
 from bot.config import config
 from bot.logger import logger
 from cogs.ai import ai_group
-from utils.embeds import error_embed, success_embed
+from utils.embeds import ai_disclosure_field, build_embed, COLOR_SUCCESS, error_embed, success_embed
 from utils.errors import UserWarning
 from utils.llm import generate_chat_stream_response
 
@@ -142,10 +142,12 @@ class AIChatCog(commands.Cog, name="AI Chat"):
             f"[AI Chat] Started session in channel {channel_id} by {ctx.author}. "
             f"Loaded {len(history) - 1} past messages."
         )
-        await ctx.respond(embed=success_embed(
+        await ctx.respond(embed=build_embed(
             "🌸 เริ่มต้นการสนทนา",
             "รับทราบค่ะ! หนูกำลังฟังทุกคนอยู่นะคะ (´｡• ᵕ •｡\`) \n\n"
             "หนูอ่านข้อความก่อนหน้านี้มาแล้วค่ะ ถ้าอยากคุยกับหนู อย่าลืม `@mention` เรียกหนูด้วยนะคะ!",
+            COLOR_SUCCESS,
+            fields=[ai_disclosure_field(config.openrouter_model)],
         ))
 
     # ──────────────────────────────────────────────────────────────────────

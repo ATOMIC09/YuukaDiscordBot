@@ -15,14 +15,13 @@ How speech reaches the LLM
 2. `utils.wake_acoustic` scores the raw segment against a trained wake-word
    model *before* anything gets transcribed. This is a cheap pre-filter, not
    the trigger — a miss means "not worth transcribing", not "definitely not
-   Yuuka", so it only runs on the initial summon (an already-awake speaker
-   skips straight to step 3).
+   Yuuka", so every segment goes through it, every time.
 3. `utils.stt` transcribes the segment with faster-whisper, which handles the
    Thai/English code-switching this server actually speaks.
 4. `utils.wake` decides whether Yuuka was addressed. **This gate is the whole
    point**: without it she replies to every sentence anyone says in the room.
-   A hit also opens a follow-up window for that speaker, so a back-and-forth
-   does not require repeating her name every single turn.
+   There is no follow-up window — every utterance needs the wake word, on
+   purpose, so it is never ambiguous whether she is listening right now.
 5. The accepted text goes through the same LLM → TTS → playback path as a
    typed message.
 
@@ -47,7 +46,7 @@ from discord.ext import commands
 from bot.config import config
 from bot.logger import logger
 from utils import wake
-from utils.embeds import error_embed, info_embed, success_embed
+from utils.embeds import ai_disclosure_field, build_embed, COLOR_SUCCESS, error_embed, info_embed
 from utils.errors import UserError, UserWarning
 from utils.llm import generate_chat_stream_response
 from utils.stt import ensure_loaded, model_description, transcribe_pcm
@@ -90,10 +89,6 @@ class VoiceChatSession:
     history: list[dict] = field(default_factory=list)
     queue: asyncio.Queue = field(default_factory=asyncio.Queue)
     worker: asyncio.Task | None = None
-
-    # Speakers who said the wake word recently, and may keep talking without
-    # repeating it: user_id → perf_counter deadline.
-    awake_until: dict[int, float] = field(default_factory=dict)
 
     # The interval during which Yuuka herself was audible, in perf_counter
     # terms. Segments overlapping it are echo and get dropped.
@@ -195,53 +190,49 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         user = self.bot.get_user(segment.user_id)
         display = user.display_name if user else f"Unknown ({segment.user_id})"
 
-        now = time.perf_counter()
-        in_followup = session.awake_until.get(segment.user_id, 0.0) > now
+        # Cheap pre-filter: is this worth transcribing at all? Runs on every
+        # segment — there is no standing "awake" state that skips it.
+        heard, acoustic_score = await acoustic_wake.detect(segment.pcm)
+        if not heard:
+            logger.debug(
+                f"[AI Voice] No acoustic wake hit from {display} "
+                f"(score {acoustic_score:.3f} < {config.stt_wake_acoustic_threshold}), skipping STT"
+            )
+            return
 
-        # Cheap pre-filter: is this worth transcribing at all? Only gates the
-        # initial summon — an already-awake speaker never needs to say the
-        # wake word again, acoustically or otherwise.
-        if not in_followup:
-            heard, acoustic_score = await acoustic_wake.detect(segment.pcm)
-            if not heard:
-                logger.debug(
-                    f"[AI Voice] No acoustic wake hit from {display} "
-                    f"(score {acoustic_score:.3f}), skipping STT"
-                )
-                return
+        logger.debug(
+            f"[AI Voice] Acoustic wake hit from {display} "
+            f"(score {acoustic_score:.3f} >= {config.stt_wake_acoustic_threshold})"
+        )
 
         result = await transcribe_pcm(segment.pcm, display)
         if not result.text:
             return
 
-        if in_followup:
-            prompt = result.text
-            logger.debug(f"[AI Voice] Follow-up window open for {display}")
-        else:
-            match = wake.detect(
-                result.text,
-                config.stt_wake_words,
-                threshold=config.stt_wake_threshold,
-                head_chars=config.stt_wake_head_chars,
+        match = wake.detect(
+            result.text,
+            config.stt_wake_words,
+            threshold=config.stt_wake_threshold,
+            head_chars=config.stt_wake_head_chars,
+        )
+        if not match:
+            # Logged at debug with the score so STT_WAKE_THRESHOLD can be
+            # tuned against what these speakers' mics actually produce.
+            logger.debug(
+                f"[AI Voice] No wake word from {display} "
+                f"(best {match.score:.0f} vs {match.word or '—'}): {result.text}"
             )
-            if not match:
-                # Logged at debug with the score so STT_WAKE_THRESHOLD can be
-                # tuned against what these speakers' mics actually produce.
-                logger.debug(
-                    f"[AI Voice] No wake word from {display} "
-                    f"(best {match.score:.0f} vs {match.word or '—'}): {result.text}"
-                )
-                return
+            return
 
-            logger.info(
-                f"[AI Voice] Wake word '{match.word}' matched at {match.score:.0f} from {display}"
-            )
-            prompt = match.remainder
+        logger.info(
+            f"[AI Voice] Wake word '{match.word}' matched at {match.score:.0f} from {display}"
+        )
+        prompt = match.remainder
 
         if not prompt:
-            # Just her name and nothing else — answer the summons and open the
-            # window so the actual request lands in the next utterance.
-            session.awake_until[segment.user_id] = now + config.stt_followup_window_s
+            # Just her name and nothing else — still answer the summons, but
+            # there is no follow-up window: the next utterance needs the wake
+            # word again like any other.
             prompt = "(เรียกชื่อเฉย ๆ ยังไม่ได้ถามอะไร)"
 
         # Show what she heard — invaluable when a wake word or a Thai/English
@@ -254,9 +245,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         except discord.HTTPException:
             pass
 
-        await self._respond(
-            segment.guild_id, session, display, prompt, speaker_id=segment.user_id
-        )
+        await self._respond(segment.guild_id, session, display, prompt)
 
     # ──────────────────────────────────────────────────────────────────────
     # Shared reply path — used by both spoken and typed input
@@ -275,10 +264,8 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         session: VoiceChatSession,
         speaker: str,
         text: str,
-        *,
-        speaker_id: int | None = None,
     ) -> None:
-        """Generate a reply, speak it, and refresh the speaker's follow-up window."""
+        """Generate a reply and speak it."""
         await self._remember(session, speaker, text)
 
         if session.busy:
@@ -324,12 +311,6 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                 logger.error(f"[AI Voice] TTS synthesis failed in guild {guild_id}: {exc}")
         finally:
             session.busy = False
-            if speaker_id is not None:
-                # Measured from now, not from when they spoke, so the window
-                # covers the reply itself rather than being eaten by it.
-                session.awake_until[speaker_id] = (
-                    time.perf_counter() + config.stt_followup_window_s
-                )
 
     # ──────────────────────────────────────────────────────────────────────
     # Public API — called by AIChatCog
@@ -416,8 +397,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             how = (
                 f"พูดชื่อหนู ({wake_list}) ตรงไหนของประโยคก็ได้ค่ะ "
                 "เช่น *«ยูกะ ตอนนี้กี่โมงแล้ว»* หรือ *«แล้วอีกแบบคืออะไรล่ะยูกะ»*\n"
-                f"หลังหนูตอบแล้ว คุยต่อได้เลยภายใน **{config.stt_followup_window_s} วินาที** "
-                "ไม่ต้องเรียกชื่อซ้ำน้า\n"
+                "ต้องเรียกชื่อหนูทุกครั้งที่อยากคุยนะคะ หนูไม่ได้ฟังต่อเนื่องหลังตอบแล้วค่ะ\n"
                 f"หรือจะ `@mention` ในช่อง **{ctx.channel.name}** ก็ได้ค่ะ!"
             )
         else:
@@ -426,10 +406,19 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                 f"ตอนนี้คุยกับหนูได้โดย `@mention` ในช่อง **{ctx.channel.name}** นะคะ"
             )
 
-        await ctx.respond(embed=success_embed(
+        voice_note = (
+            f"เสียงพูดจะถูกแปลงเป็นข้อความผ่าน `{model_description()}` "
+            "และคำตอบจะถูกอ่านออกเสียงผ่าน Microsoft Edge TTS ค่ะ"
+            if stt_ready
+            else "เสียงพูดจะยังไม่ถูกส่งไปที่ไหนเพราะระบบฟังเสียงปิดอยู่ค่ะ"
+        )
+
+        await ctx.respond(embed=build_embed(
             "🎙️ AI Voice Chat เริ่มแล้วค่ะ",
             f"หนูเข้ามาอยู่ในห้อง **{voice_channel.name}** แล้วนะคะ 🎧\n\n"
             f"{how}\n\nใช้ `/ai stop` เมื่อต้องการหยุดน้า",
+            COLOR_SUCCESS,
+            fields=[ai_disclosure_field(config.openrouter_model, extra_note=voice_note)],
         ))
 
     async def stop_session(self, guild_id: int) -> bool:

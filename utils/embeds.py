@@ -81,3 +81,24 @@ def info_embed(title: str, description: str = "") -> discord.Embed:
 def warning_embed(title: str, description: str = "") -> discord.Embed:
     """Yellow warning embed."""
     return build_embed(title=f"{title}", description=description, color=COLOR_WARNING)
+
+
+def ai_disclosure_field(model: str, extra_note: str = "") -> tuple[str, str, bool]:
+    """
+    Build the (name, value, inline) field tuple used on AI session-start embeds
+    to disclose which model is answering and how the conversation is handled.
+
+    Args:
+        model: The chat model identifier currently in use (e.g. config.openrouter_model).
+        extra_note: Optional extra line appended below the base disclosure
+            (e.g. voice-specific notes about STT/TTS providers).
+    """
+    value = (
+        f"กำลังใช้โมเดล `{model}` ผ่าน OpenRouter ค่ะ\n"
+        "⚠️ ข้อความที่คุยกับหนูจะถูกส่งไปประมวลผลกับผู้ให้บริการ AI ภายนอก "
+        "และอาจถูกบันทึก/นำไปใช้ฝึกโมเดลได้ตามนโยบายของผู้ให้บริการนั้น ๆ "
+        "(โดยเฉพาะโมเดลฟรี) กรุณาเลี่ยงการส่งข้อมูลส่วนตัวหรือข้อมูลละเอียดอ่อนนะคะ"
+    )
+    if extra_note:
+        value += f"\n{extra_note}"
+    return ("🤖 โมเดล & ความเป็นส่วนตัวของข้อมูล", value, False)

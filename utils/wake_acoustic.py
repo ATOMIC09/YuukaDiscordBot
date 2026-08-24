@@ -5,12 +5,16 @@ worth transcribing at all, ahead of utils/wake.py's text match.
 
 Why a pre-filter and not the trigger itself
 --------------------------------------------
-The shipped model (see wakeword_training/TRAINING.md) is a proof-of-concept:
-about 91 false triggers/hour at 80% recall. That is fine for a "is this worth
-paying for STT" gate — a false accept just costs one wasted transcription that
-utils/wake.py's text match silently drops. It would not be fine as the sole
-trigger: the LLM would end up answering unrelated conversation roughly every
-40 minutes.
+The shipped model (yuuka_wakeword_v2, see wakeword_training/TRAINING.md) runs
+at about 87% recall and 43 false accepts/hour on its held-out set. That is fine
+for a "is this worth paying for STT" gate — a false accept just costs one
+wasted transcription that utils/wake.py's text match silently drops. It would
+not be fine as the sole trigger: the LLM would end up answering unrelated
+conversation every couple of minutes.
+
+The threshold that buys those numbers is model-specific, not a constant, so
+re-derive it with wakeword_training/compare_models.py after any promotion —
+the same number means a different operating point on a different model.
 
 Why a sliding window
 ---------------------

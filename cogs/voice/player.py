@@ -10,10 +10,6 @@ import discord
 import numpy as np
 import yt_dlp
 
-try:
-    from yt_dlp.extractor.youtube.jsc._builtin import ejs
-except ImportError:
-    pass
 from discord.ext import commands
 
 from bot.logger import logger
@@ -21,10 +17,35 @@ from utils.embeds import success_embed, error_embed, info_embed
 from utils.errors import UserError
 from utils.voice_hub import voice_hub
 
-yt_dlp.utils.bug_reports_message = lambda: ''
+class _YtdlLogger:
+    """Route yt-dlp's own diagnostics into the bot log.
+
+    `ignoreerrors` turns a failed extraction into a bare `None` return, so
+    without this bridge the reason - a missing PO token, a 403 from the media
+    host, an expired URL - never reaches the log and the only symptom is a
+    track that starts and ends in the same breath.
+    """
+
+    def debug(self, msg: str):
+        pass
+
+    def info(self, msg: str):
+        pass
+
+    def warning(self, msg: str):
+        logger.warning(f"[yt-dlp] {msg}")
+
+    def error(self, msg: str):
+        logger.error(f"[yt-dlp] {msg}")
+
 
 ytdl_format_options = {
     'format': 'bestaudio/best',
+    # Only deno is enabled by default, so name every runtime yt-dlp supports
+    # and let it pick whichever the host actually has - absent ones are
+    # skipped rather than treated as an error. Extraction without any JS
+    # runtime is deprecated upstream and quietly drops formats.
+    'js_runtimes': {'deno': {}, 'node': {}, 'bun': {}, 'quickjs': {}},
     'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
     'restrictfilenames': True,
     'noplaylist': False,
@@ -33,7 +54,8 @@ ytdl_format_options = {
     'ignoreerrors': True,
     'logtostderr': False,
     'quiet': True,
-    'no_warnings': True,
+    'no_warnings': False,
+    'logger': _YtdlLogger(),
     'default_search': 'auto',
     'source_address': '0.0.0.0',
 }

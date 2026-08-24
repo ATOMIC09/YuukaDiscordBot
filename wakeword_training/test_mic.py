@@ -38,7 +38,7 @@ def main() -> None:
     )
 
     print("Listening... say 'Yuuka' (Ctrl+C to stop)")
-    print("Remember: this is the tiny proof-of-concept model (FPPH=91), expect it to be noisy/unreliable.\n")
+    print(f"Model: {MODEL_PATH.name} -- the bot gates STT at 0.02 (see TRAINING.md).\n")
 
     buffer = np.zeros(0, dtype=np.int16)
     try:

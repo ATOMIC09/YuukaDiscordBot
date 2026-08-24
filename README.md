@@ -1,5 +1,5 @@
-<h1 align="center">🌈 YuukaDiscordBot - v3.0 "Echoes of Mind 💖" </h1>
-<p align="center">"เสียงสะท้อนแห่งความคิด"</p>
+<h1 align="center">🌈 YuukaDiscordBot - v3.1 "Where Echoes Find Their Voice 🎙️" </h1>
+<p align="center">"เมื่อเสียงสะท้อนได้ค้นพบเสียงของตน"</p>
 
 <p align="center">
   <img alt="Version" src="https://img.shields.io/github/v/tag/ATOMIC09/YuukaDiscordBot?label=version&color=blue" />
@@ -58,9 +58,6 @@
 - `Grayscale` เปลี่ยนเป็นสีขาวดำ
 - `Image Info` ดูคุณสมบัติและข้อมูลเชิงลึกของรูปภาพ
 - `Wide` ยืดภาพให้กว้างงงง
-
-## 👦🏻 ช่องทางการติดต่อกับผู้สร้าง
-* Discord : [@ATOMIC09](https://discords.com/bio/p/atomic09)
 
 ## © เครดิต
 - ภาพโปรไฟล์ของบอท [👀](https://www.pixiv.net/en/artworks/121894766)

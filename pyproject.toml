@@ -1,7 +1,7 @@
 [project]
 name = "yuukadiscordbot"
 version = "3.1.0"
-description = "Add your description here"
+description = "Yuuka does all the hard work so her lazy creator doesn't have to"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.12, <3.14"

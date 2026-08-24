@@ -70,7 +70,6 @@ class Config:
     stt_wake_words: list[str] = field(default_factory=list)
     stt_wake_threshold: int = 80       # rapidfuzz partial_ratio, 0-100
     stt_wake_head_chars: int = 0       # 0 = match the name anywhere; N = first N chars only
-    stt_followup_window_s: int = 10    # keep listening to that speaker afterwards
 
     # ── Acoustic wake-word pre-filter (/ai voice only) ────────────────────
     stt_wake_acoustic_enabled: bool = True
@@ -155,7 +154,6 @@ class Config:
             stt_wake_words=stt_wake_words,
             stt_wake_threshold=int(os.getenv("STT_WAKE_THRESHOLD", "80")),
             stt_wake_head_chars=int(os.getenv("STT_WAKE_HEAD_CHARS", "0")),
-            stt_followup_window_s=int(os.getenv("STT_FOLLOWUP_WINDOW_S", "10")),
             stt_wake_acoustic_enabled=os.getenv("STT_WAKE_ACOUSTIC_ENABLED", "true").strip().lower()
             not in ("false", "0", "no"),
             stt_wake_acoustic_model_path=os.getenv(

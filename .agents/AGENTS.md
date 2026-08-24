@@ -198,6 +198,13 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
 - **No follow-up window** — every utterance needs the wake word, every time, so it's never
   ambiguous whether she's listening. (An earlier version kept a speaker "awake" for a few seconds
   after a hit; removed because it confused people about when they still needed to say her name.)
+- **Pause bridge, not a follow-up window**: `utils.voice_hub` cuts a segment on ~800ms of packet
+  silence, so "Yuuka, *(pause)*, what time is it" lands as two segments — the name alone, then the
+  question. A bare-name segment starts a `STT_WAKE_BRIDGE_WINDOW_S`-long task
+  (`_bridge_timeout`) waiting for exactly the next segment from that speaker; if it arrives, it's
+  transcribed and sent straight to the LLM with no acoustic/wake re-check. If nothing arrives, the
+  bare name is dropped silently — far more often a stray acoustic hit than a deliberate "hi". One
+  gap, one use — unlike the old follow-up window, it does not stay open after a reply.
 - **Echo guard**: segments overlapping Yuuka's own playback are dropped — a speaker without
   headphones has her voice coming back through their mic.
 - Spoken and typed input both funnel into `_respond()`, so the two paths cannot drift apart.
@@ -384,6 +391,7 @@ STT_MIN_PEAK=0.02                   # reject segments quieter than this
 STT_WAKE_WORDS=ยูกะ,ยูคะ,ยุกะ,ยูกา,yuuka,yuka,yuuca
 STT_WAKE_THRESHOLD=80               # rapidfuzz partial_ratio 0-100
 STT_WAKE_HEAD_CHARS=0               # 0 = name anywhere in the sentence; N = first N chars
+STT_WAKE_BRIDGE_WINDOW_S=2.5        # how long a bare-name segment waits for its continuation
 ```
 
 ---

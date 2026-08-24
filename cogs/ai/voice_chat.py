@@ -21,7 +21,13 @@ How speech reaches the LLM
 4. `utils.wake` decides whether Yuuka was addressed. **This gate is the whole
    point**: without it she replies to every sentence anyone says in the room.
    There is no follow-up window — every utterance needs the wake word, on
-   purpose, so it is never ambiguous whether she is listening right now.
+   purpose, so it is never ambiguous whether she is listening right now. The
+   one exception is a bare "just her name" segment: step 1's silence-based
+   cut means a natural pause before the actual sentence lands as its own
+   segment, so that one case gets a short bridge (`_bridge_timeout`) that
+   waits briefly for the continuation. If nothing follows, it's dropped —
+   a bare name alone is far more often a stray acoustic hit than someone
+   deliberately calling her just to say hi.
 5. The accepted text goes through the same LLM → TTS → playback path as a
    typed message.
 
@@ -98,6 +104,11 @@ class VoiceChatSession:
     # One in-flight generation per guild — a second speaker interrupting mid
     # thought gets their words remembered, not answered twice over.
     busy: bool = False
+
+    # A bare "just her name" segment starts a short-lived task here while it
+    # waits for a possible continuation (see _on_segment). Not a standing
+    # "awake" window — consumed or expired within one bridge.
+    pending_bridge: dict[int, asyncio.Task] = field(default_factory=dict)
 
 
 class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
@@ -190,6 +201,21 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         user = self.bot.get_user(segment.user_id)
         display = user.display_name if user else f"Unknown ({segment.user_id})"
 
+        # A bare "just her name" segment leaves a short-lived bridge task
+        # waiting for exactly this: the next segment from that same speaker.
+        # If one arrives in time, it's the rest of the sentence the pause
+        # split off — skip the acoustic/wake gates entirely and treat the
+        # whole transcript as the prompt.
+        bridge = session.pending_bridge.pop(segment.user_id, None)
+        if bridge is not None:
+            bridge.cancel()
+            result = await transcribe_pcm(segment.pcm, display)
+            if not result.text:
+                return
+            logger.info(f"[AI Voice] Bridged pause-continuation from {display}: {result.text}")
+            await self._announce_and_respond(segment.guild_id, session, display, result.text)
+            return
+
         # Cheap pre-filter: is this worth transcribing at all? Runs on every
         # segment — there is no standing "awake" state that skips it.
         heard, acoustic_score = await acoustic_wake.detect(segment.pcm)
@@ -227,25 +253,48 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         logger.info(
             f"[AI Voice] Wake word '{match.word}' matched at {match.score:.0f} from {display}"
         )
-        prompt = match.remainder
 
-        if not prompt:
-            # Just her name and nothing else — still answer the summons, but
-            # there is no follow-up window: the next utterance needs the wake
-            # word again like any other.
-            prompt = "(เรียกชื่อเฉย ๆ ยังไม่ได้ถามอะไร)"
+        if match.remainder:
+            await self._announce_and_respond(segment.guild_id, session, display, match.remainder)
+            return
 
-        # Show what she heard — invaluable when a wake word or a Thai/English
-        # phrase gets misheard and the reply looks like a non-sequitur. The 💬
-        # marks it as voice *chat*: /transcribe posts live captions in the same
-        # format under 🎙️, and two identical-looking streams are impossible to
-        # tell apart when one session ends and the other begins.
+        # Just her name and nothing else — wait briefly for a continuation
+        # (the natural pause before the actual sentence, which the segmenter
+        # cuts into its own segment). This bridges exactly one gap, not a
+        # standing "awake" window: consumed above the moment a continuation
+        # lands. If nothing follows, it's dropped rather than acknowledged —
+        # a bare name with no question is far more often a stray acoustic
+        # hit than someone deliberately calling her just to say hi.
+        session.pending_bridge[segment.user_id] = asyncio.create_task(
+            self._bridge_timeout(session, segment.user_id, display),
+            name=f"wake_bridge_{segment.guild_id}_{segment.user_id}",
+        )
+
+    async def _bridge_timeout(
+        self, session: VoiceChatSession, user_id: int, display: str
+    ) -> None:
+        """Drops the bare-name segment if no continuation arrives in time."""
+        try:
+            await asyncio.sleep(config.stt_wake_bridge_window_s)
+        except asyncio.CancelledError:
+            return
+        session.pending_bridge.pop(user_id, None)
+        logger.debug(f"[AI Voice] No continuation from {display} after bare wake word, dropping")
+
+    async def _announce_and_respond(
+        self, guild_id: int, session: VoiceChatSession, display: str, prompt: str
+    ) -> None:
+        """Post what she heard, then generate and speak a reply."""
+        # Invaluable when a wake word or a Thai/English phrase gets misheard
+        # and the reply looks like a non-sequitur. The 💬 marks it as voice
+        # *chat*: /transcribe posts live captions under 🎙️, and two
+        # identical-looking streams are impossible to tell apart otherwise.
         try:
             await session.text_channel.send(f"💬 **{display}**: {prompt}")
         except discord.HTTPException:
             pass
 
-        await self._respond(segment.guild_id, session, display, prompt)
+        await self._respond(guild_id, session, display, prompt)
 
     # ──────────────────────────────────────────────────────────────────────
     # Shared reply path — used by both spoken and typed input
@@ -432,6 +481,9 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         session = self.active_sessions.pop(guild_id)
         voice_hub.unsubscribe(guild_id, _HUB_KEY)
 
+        for task in session.pending_bridge.values():
+            task.cancel()
+
         # Cancel the audio worker
         if session.worker and not session.worker.done():
             session.worker.cancel()
@@ -507,6 +559,8 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                 logger.info(f"[AI Voice] Bot disconnected from voice in guild {guild_id}. Cleaning up.")
                 session = self.active_sessions.pop(guild_id)
                 voice_hub.unsubscribe(guild_id, _HUB_KEY)
+                for task in session.pending_bridge.values():
+                    task.cancel()
                 if session.worker and not session.worker.done():
                     session.worker.cancel()
                     try:

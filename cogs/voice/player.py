@@ -425,6 +425,22 @@ class Track:
         if self.duration is None:
             self.duration = 0
 
+@dataclasses.dataclass
+class EnqueueResult:
+    """Outcome of `PlayerCog.enqueue_query`.
+
+    A return value rather than a raise: the caller may be an interaction that
+    wants an ephemeral red embed, or the AI action runner that wants to keep a
+    conversation going after a failed lookup. Neither wants an exception.
+    """
+    ok: bool
+    error_title: str = ""
+    error_detail: str = ""
+    added: int = 0
+    is_playlist: bool = False
+    first_track: "Track | None" = None
+
+
 class AudioState:
     def __init__(self, bot: discord.Bot, guild_id: int):
         self.bot = bot
@@ -1340,7 +1356,7 @@ class PlayerCog(commands.Cog):
 
         state.voice_client = None
         if state.text_channel:
-                await state.text_channel.send(embed=info_embed("ไปแล้วค่า~", "หนูขอตัวออกก่อนนะคะ เพราะไม่มีเพลงเล่นมา 3 นาทีแล้ว (´・ω・)"))
+            await state.text_channel.send(embed=info_embed("ไปแล้วค่า~", "หนูขอตัวออกก่อนนะคะ เพราะไม่มีเพลงเล่นมา 3 นาทีแล้ว (´・ω・)"))
 
     async def _rewind_async(self, guild_id: int) -> bool:
         """Pop the most recent history entry and play it, pushing the current
@@ -1542,6 +1558,227 @@ class PlayerCog(commands.Cog):
             logger.error(f"Error playing track in guild {guild_id}: {e}")
             self.bot.loop.create_task(self._play_next_async(guild_id))
 
+    # ──────────────────────────────────────────────────────────────────────
+    # Interaction-free cores
+    #
+    # Everything in this block runs without an ApplicationContext, so the AI
+    # cogs can execute a music command on a user's behalf (see
+    # `utils.ai_actions`). Discord interaction tokens are single-use and expire,
+    # so a faked context is not an option — the logic has to live somewhere both
+    # entry points can reach. The slash commands below are thin wrappers that
+    # add defer/respond around these, which is what stops voice-triggered and
+    # typed music from drifting apart.
+    # ──────────────────────────────────────────────────────────────────────
+
+    async def enqueue_query(
+        self,
+        *,
+        guild: discord.Guild,
+        requester: discord.User | discord.Member,
+        voice_channel: discord.VoiceChannel,
+        text_channel,
+        query: str,
+    ) -> EnqueueResult:
+        """Resolve `query`, append the result to the guild queue, and start playing."""
+        state = self.get_state(guild.id)
+        state.text_channel = text_channel
+
+        if guild.voice_client and guild.voice_client.channel.id != voice_channel.id:
+            return EnqueueResult(
+                False,
+                "คนละห้องค่ะ",
+                "เซนเซย์อยู่คนละห้องกับหนูนะคะ มาหาหนูก่อนน้า (・`ω´・)",
+            )
+
+        # ytsearch1 if not URL (faster search)
+        search = query if query.startswith(("http://", "https://")) else f"ytsearch1:{query}"
+
+        try:
+            data = await self._extract_info(search, download=False)
+        except Exception as e:
+            logger.error(f"yt-dlp extract error: {e}")
+            return EnqueueResult(
+                False,
+                "หาเพลงไม่เจอค่ะ",
+                "แง... หนูหาเพลงนี้ไม่เจอ หรืออาจจะโหลดไม่ได้นะคะ ขอโทษด้วยค่ะ (╥﹏╥)",
+            )
+
+        if not data:
+            return EnqueueResult(False, "หาเพลงไม่เจอค่ะ", "ไม่มีข้อมูลเพลงนี้เลยค่ะ (╥﹏╥)")
+
+        entries = [data]
+        is_playlist = False
+        if 'entries' in data:
+            entries = list(data['entries'])
+            is_playlist = True
+
+        added_count = 0
+        first_track = None
+
+        for entry in entries:
+            if not entry:
+                continue
+
+            url = entry.get('url')
+            webpage_url = entry.get('webpage_url')
+            if not webpage_url and 'id' in entry:
+                webpage_url = f"https://www.youtube.com/watch?v={entry['id']}"
+
+            title = entry.get('title', 'Unknown Title')
+            duration = entry.get('duration', 0)
+            thumbnail = entry.get('thumbnail', '')
+            uploader = entry.get('uploader')
+            if 'channel' in entry and entry['channel'] != uploader:
+                uploader = f"{uploader} ({entry['channel']})" if uploader else entry['channel']
+            view_count = entry.get('view_count')
+            like_count = entry.get('like_count')
+            comment_count = entry.get('comment_count')
+            upload_date = entry.get('upload_date')
+            channel_follower_count = entry.get('channel_follower_count')
+
+            track = Track(
+                title=title,
+                duration=duration,
+                thumbnail=thumbnail,
+                requester=requester,
+                original_url=webpage_url,
+                stream_url=url if not is_playlist else None,
+                uploader=uploader,
+                view_count=view_count,
+                like_count=like_count,
+                comment_count=comment_count,
+                upload_date=upload_date,
+                channel_follower_count=channel_follower_count
+            )
+            state.queue.append(track)
+            if not first_track:
+                first_track = track
+            added_count += 1
+
+        if added_count == 0:
+            return EnqueueResult(False, "หาเพลงไม่เจอค่ะ", "หาเพลงไม่เจอเลยค่ะ (╥﹏╥)")
+
+        # Update the public controller message directly
+        display_track = state.current if state.current else first_track
+        embed = self._build_player_embed(display_track, state)
+        await self._update_controller(state, embed)
+
+        await self.begin_playback(guild, voice_channel)
+
+        return EnqueueResult(
+            True, added=added_count, is_playlist=is_playlist, first_track=first_track
+        )
+
+    async def begin_playback(self, guild: discord.Guild, voice_channel: discord.VoiceChannel) -> None:
+        """Connect if needed and start the queue, or arm a crossfade if already going."""
+        state = self.get_state(guild.id)
+        vc = guild.voice_client
+
+        if not vc or not vc.is_connected():
+            if vc:
+                try:
+                    await vc.disconnect(force=True)
+                except Exception:
+                    pass
+            state.voice_client = await voice_channel.connect()
+        else:
+            state.voice_client = vc
+
+        if not state.current or not state.voice_client.is_playing():
+            # if playing is stopped, start it
+            self.bot.loop.create_task(self._play_next_async(guild.id, auto_send=True))
+        elif state.crossfade_enabled:
+            self._request_crossfade_prepare(state)
+
+    async def stop_playback(self, guild: discord.Guild) -> None:
+        """Clear the queue and stop the current track. Safe when nothing is playing."""
+        state = self.get_state(guild.id)
+        self._clear_crossfade(state)
+        state.queue.clear()
+        state.history.clear()
+        state.forward_history.clear()
+        state.loop_mode = "off"
+
+        if state.last_controller_message:
+            try:
+                embeds = state.last_controller_message.embeds
+                if embeds:
+                    embeds[0].color = discord.Color.dark_theme()
+                    await state.last_controller_message.edit(embed=embeds[0], view=None)
+                else:
+                    await state.last_controller_message.edit(view=None)
+            except Exception:
+                pass
+            state.last_controller_message = None
+
+        if guild.voice_client and guild.voice_client.is_playing():
+            guild.voice_client.stop()
+
+    async def skip_current(self, guild: discord.Guild, position: int | None = None) -> Track | None:
+        """Skip the playing track (or jump `position` entries in). Returns what plays next.
+
+        Raises UserError when there is nothing to skip or the position is out of
+        range — the slash handler renders that globally, and the AI action runner
+        catches it to build its own embed.
+        """
+        vc = guild.voice_client
+        if not vc or not vc.is_playing():
+            raise UserError(
+                "ไม่มีเพลงเล่นอยู่นะคะ",
+                "ตอนนี้หนูไม่ได้เปิดเพลงอะไรอยู่เลยค่ะ ข้ามไม่ได้น้า (´・ω・)",
+            )
+
+        state = self.get_state(guild.id)
+
+        if state.crossfade_next:
+            pending = state.crossfade_next
+            self._clear_crossfade(state)
+            # A self-crossfade preloaded the playing track; re-queueing it here
+            # would make the skip replay it instead of advancing.
+            if pending is not state.current:
+                state.queue.appendleft(pending)
+
+        if position:
+            if position > len(state.queue):
+                raise UserError(
+                    "ไม่มีเพลงในคิวนั้นค่ะ", f"คิวมีแค่ {len(state.queue)} เพลงนะคะ (´-ω-`)"
+                )
+
+            # Jumping to an explicit position diverges from any rewound path.
+            state.forward_history.clear()
+
+            for _ in range(position - 1):
+                track = state.queue.popleft()
+                if state.loop_mode == "queue":
+                    state.queue.append(track)
+
+        state.skip_request = True
+        vc.stop()
+
+        if not position and state.forward_history:
+            return state.forward_history[-1]
+        return state.queue[0] if len(state.queue) > 0 else None
+
+    @staticmethod
+    def build_skip_embed(next_track: Track | None) -> discord.Embed:
+        """The 'skipped, here is what is next' embed, shared by slash and AI paths."""
+        if next_track:
+            embed = discord.Embed(
+                title=f"เพลงถัดไป: {next_track.title}",
+                url=next_track.original_url,
+                description="⏭️ **ข้ามเพลงให้แล้วนะคะ!** นี่คือเพลงต่อไปค่ะ",
+                color=discord.Color(0x5865F2)
+            )
+            if next_track.thumbnail:
+                embed.set_thumbnail(url=next_track.thumbnail)
+        else:
+            embed = discord.Embed(
+                title="ข้ามเพลง",
+                description="⏭️ **ข้ามเพลงให้แล้วนะคะ!** (ไม่มีเพลงในคิวแล้วค่ะ)",
+                color=discord.Color(0x5865F2)
+            )
+        return embed
+
     music = discord.SlashCommandGroup("music", "🎵 ระบบเครื่องเล่นเพลง")
 
     @music.command(name="leave", description="👋 ออกจากห้องเสียง")
@@ -1674,116 +1911,34 @@ class PlayerCog(commands.Cog):
     @music.command(name="play", description="▶️ เปิดเพลงจาก YouTube (รองรับ Playlist)")
     @discord.option("query", description="ชื่อเพลงหรือ URL ของวิดีโอ/เพลย์ลิสต์ค่ะ")
     async def play(self, ctx: discord.ApplicationContext, query: str):
-        state = self.get_state(ctx.guild.id)
-        state.text_channel = ctx.channel
-        
         await ctx.defer(ephemeral=True)
 
         if not ctx.author.voice or not ctx.author.voice.channel:
             raise UserError("หนูเข้าห้องไม่ได้ค่ะ", "เซนเซย์ต้องเข้าไปในห้องเสียงก่อนนะคะถึงจะให้หนูตามเข้าไปได้ (´・ω・)")
 
-        channel = ctx.author.voice.channel
-        
-        if ctx.voice_client:
-            if ctx.voice_client.channel.id != channel.id:
-                raise UserError("คนละห้องค่ะ", "เซนเซย์อยู่คนละห้องกับหนูนะคะ มาหาหนูก่อนน้า (・`ω´・)")
-
         await ctx.interaction.edit_original_response(embed=info_embed("<a:MagnifierGIF:1052563354910216252> กำลังค้นหา...", f"หนูกำลังหาข้อมูล `{query}` ให้นะคะ รอแป๊บนึงน้า (・`ω´・)"))
 
+        result = await self.enqueue_query(
+            guild=ctx.guild,
+            requester=ctx.author,
+            voice_channel=ctx.author.voice.channel,
+            text_channel=ctx.channel,
+            query=query,
+        )
 
-
-        # ytsearch1 if not URL (faster search)
-        if not query.startswith(("http://", "https://")):
-            query = f"ytsearch1:{query}"
-
-        try:
-            data = await self._extract_info(query, download=False)
-        except Exception as e:
-            logger.error(f"yt-dlp extract error: {e}")
-            await ctx.interaction.edit_original_response(embed=error_embed("หาเพลงไม่เจอค่ะ", "แง... หนูหาเพลงนี้ไม่เจอ หรืออาจจะโหลดไม่ได้นะคะ ขอโทษด้วยค่ะ (╥﹏╥)"))
-            return
-
-        if not data:
-            await ctx.interaction.edit_original_response(embed=error_embed("หาเพลงไม่เจอค่ะ", "ไม่มีข้อมูลเพลงนี้เลยค่ะ (╥﹏╥)"))
-            return
-
-        entries = [data]
-        is_playlist = False
-        if 'entries' in data:
-            entries = list(data['entries'])
-            is_playlist = True
-
-        added_count = 0
-        first_track = None
-
-        for entry in entries:
-            if not entry:
-                continue
-            
-            url = entry.get('url')
-            webpage_url = entry.get('webpage_url')
-            if not webpage_url and 'id' in entry:
-                webpage_url = f"https://www.youtube.com/watch?v={entry['id']}"
-
-            title = entry.get('title', 'Unknown Title')
-            duration = entry.get('duration', 0)
-            thumbnail = entry.get('thumbnail', '')
-            uploader = entry.get('uploader')
-            if 'channel' in entry and entry['channel'] != uploader:
-                uploader = f"{uploader} ({entry['channel']})" if uploader else entry['channel']
-            view_count = entry.get('view_count')
-            like_count = entry.get('like_count')
-            comment_count = entry.get('comment_count')
-            upload_date = entry.get('upload_date')
-            channel_follower_count = entry.get('channel_follower_count')
-            
-            track = Track(
-                title=title,
-                duration=duration,
-                thumbnail=thumbnail,
-                requester=ctx.author,
-                original_url=webpage_url,
-                stream_url=url if not is_playlist else None,
-                uploader=uploader,
-                view_count=view_count,
-                like_count=like_count,
-                comment_count=comment_count,
-                upload_date=upload_date,
-                channel_follower_count=channel_follower_count
+        if not result.ok:
+            await ctx.interaction.edit_original_response(
+                embed=error_embed(result.error_title, result.error_detail)
             )
-            state.queue.append(track)
-            if not first_track:
-                first_track = track
-            added_count += 1
-
-        if added_count == 0:
-            await ctx.interaction.edit_original_response(embed=error_embed("หาเพลงไม่เจอค่ะ", "หาเพลงไม่เจอเลยค่ะ (╥﹏╥)"))
             return
 
-        # Update the public controller message directly
-        display_track = state.current if state.current else first_track
-        embed = self._build_player_embed(display_track, state)
-        await self._update_controller(state, embed)
-        
         # Send ephemeral confirmation to the user
-        msg = f"Playlist ({added_count} เพลง)" if is_playlist else f"[{first_track.title}]({first_track.original_url})"
+        msg = (
+            f"Playlist ({result.added} เพลง)"
+            if result.is_playlist
+            else f"[{result.first_track.title}]({result.first_track.original_url})"
+        )
         await ctx.interaction.edit_original_response(embed=success_embed("✅ เพิ่มเข้าคิวแล้ว!", f"เพิ่ม {msg} ลงคิวเรียบร้อยค่ะ! ไปดูที่หน้าเล่นเพลงได้เลยนะคะ (๑>◡<๑)"))
-
-        if not ctx.guild.voice_client or not ctx.guild.voice_client.is_connected():
-            if ctx.guild.voice_client:
-                try:
-                    await ctx.guild.voice_client.disconnect(force=True)
-                except Exception:
-                    pass
-            state.voice_client = await channel.connect()
-        else:
-            state.voice_client = ctx.guild.voice_client
-
-        if not state.current or not state.voice_client.is_playing():
-            # if playing is stopped, start it
-            self.bot.loop.create_task(self._play_next_async(ctx.guild.id, auto_send=True))
-        elif state.crossfade_enabled:
-            self._request_crossfade_prepare(state)
 
     @music.command(name="pause", description="⏸️ หยุดเพลงชั่วคราว")
     async def pause(self, ctx: discord.ApplicationContext):
@@ -1820,81 +1975,13 @@ class PlayerCog(commands.Cog):
 
     @music.command(name="stop", description="⏹️ หยุดเพลงและล้างคิวทั้งหมด")
     async def stop(self, ctx: discord.ApplicationContext):
-        state = self.get_state(ctx.guild.id)
-        self._clear_crossfade(state)
-        state.queue.clear()
-        state.history.clear()
-        state.forward_history.clear()
-        state.loop_mode = "off"
-        
-        if state.last_controller_message:
-            try:
-                embeds = state.last_controller_message.embeds
-                if embeds:
-                    embeds[0].color = discord.Color.dark_theme()
-                    await state.last_controller_message.edit(embed=embeds[0], view=None)
-                else:
-                    await state.last_controller_message.edit(view=None)
-            except Exception:
-                pass
-            state.last_controller_message = None
-            
-        if ctx.voice_client and ctx.voice_client.is_playing():
-            ctx.voice_client.stop()
-            
+        await self.stop_playback(ctx.guild)
         await ctx.respond(embed=success_embed("⏹️ หยุดเพลงแล้วค่ะ", "หนูหยุดเพลงและเคลียร์คิวให้หมดแล้วนะคะ (・`ω´・)"))
 
     @music.command(name="skip", description="⏭️ ข้ามเพลงปัจจุบัน หรือข้ามไปเพลงที่ระบุ")
     async def skip(self, ctx: discord.ApplicationContext, position: discord.Option(int, description="ลำดับเพลงในคิวที่ต้องการข้ามไป", min_value=1, required=False) = None):
-        if not ctx.voice_client or not ctx.voice_client.is_playing():
-            raise UserError("ไม่มีเพลงเล่นอยู่นะคะ", "ตอนนี้หนูไม่ได้เปิดเพลงอะไรอยู่เลยค่ะ ข้ามไม่ได้น้า (´・ω・)")
-            
-        state = self.get_state(ctx.guild.id)
-
-        if state.crossfade_next:
-            pending = state.crossfade_next
-            self._clear_crossfade(state)
-            # A self-crossfade preloaded the playing track; re-queueing it here
-            # would make the skip replay it instead of advancing.
-            if pending is not state.current:
-                state.queue.appendleft(pending)
-
-        if position:
-            if position > len(state.queue):
-                raise UserError("ไม่มีเพลงในคิวนั้นค่ะ", f"คิวมีแค่ {len(state.queue)} เพลงนะคะ (´-ω-`)")
-
-            # Jumping to an explicit position diverges from any rewound path.
-            state.forward_history.clear()
-
-            for _ in range(position - 1):
-                track = state.queue.popleft()
-                if state.loop_mode == "queue":
-                    state.queue.append(track)
-
-        state.skip_request = True
-        ctx.voice_client.stop()
-
-        if not position and state.forward_history:
-            next_track = state.forward_history[-1]
-        else:
-            next_track = state.queue[0] if len(state.queue) > 0 else None
-
-        if next_track:
-            embed = discord.Embed(
-                title=f"เพลงถัดไป: {next_track.title}",
-                url=next_track.original_url,
-                description="⏭️ **ข้ามเพลงให้แล้วนะคะ!** นี่คือเพลงต่อไปค่ะ",
-                color=discord.Color(0x5865F2)
-            )
-            if next_track.thumbnail:
-                embed.set_thumbnail(url=next_track.thumbnail)
-        else:
-            embed = discord.Embed(
-                title="ข้ามเพลง",
-                description="⏭️ **ข้ามเพลงให้แล้วนะคะ!** (ไม่มีเพลงในคิวแล้วค่ะ)",
-                color=discord.Color(0x5865F2)
-            )
-        await ctx.respond(embed=embed)
+        next_track = await self.skip_current(ctx.guild, position)
+        await ctx.respond(embed=self.build_skip_embed(next_track))
 
     @music.command(name="seek", description="⏩ เลื่อนไปยังเวลาที่ต้องการ")
     @discord.option("timestamp", description="เช่น 90, 1:30 หรือ 1:02:03")

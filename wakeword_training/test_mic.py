@@ -18,7 +18,7 @@ from livekit.wakeword import WakeWordModel
 
 # Resolved from this script's own location, not a hardcoded machine path —
 # works regardless of which machine or directory this is run from.
-MODEL_PATH = Path(__file__).parent / "output" / "yuuka_wakeword_v1" / "yuuka_wakeword_v1.onnx"
+MODEL_PATH = Path(__file__).parent / "output" / "yuuka_wakeword_v2" / "yuuka_wakeword_v2.onnx"
 SAMPLE_RATE = 16000
 FRAME_SAMPLES = 1280  # 80ms
 CHUNK_SECONDS = 2.0

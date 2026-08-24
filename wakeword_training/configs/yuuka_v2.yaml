@@ -1,0 +1,177 @@
+# =============================================================================
+# Yuuka wake-word config — v2 (v1's weak recall/FPPH tradeoff, scaled up)
+#
+# Same wake word, same script/accent/negative-phrase design as yuuka_v1.yaml.
+# v1's eval (wakeword_training/output/yuuka_wakeword_v1/yuuka_wakeword_v1_eval.json):
+# fpph=0.30 / recall=53% at threshold 0.5, or fpph=44 / recall=88% at the
+# "optimal" threshold — not good enough at either operating point. Per
+# TRAINING.md's "Next steps", this scales up the three things flagged as
+# most likely to matter, in order:
+#   1. n_samples/n_samples_val: 10000/2000 -> 25000/5000 (the shipped-example
+#      default per yuuka.yaml's own comment)
+#   2. n_background_samples(_val): 200/40 -> 2000/400 (10x) — v1's count was
+#      "tiny next to 30,000 positive/negative" per TRAINING.md. The source
+#      recording (background_noise_source.wav) is video-conference audio,
+#      not generic room ambience — a deliberate choice to match this bot's
+#      real deployment (people talking over VOIP in a Discord VC), not a
+#      data-quality compromise.
+#   3. steps: 50000 -> 100000 (the two existing configs' comments disagreed
+#      on the library's true default — 50k per yuuka_v1.yaml's comment vs.
+#      100k per yuuka.yaml's — unresolved because the training venv wasn't
+#      built in the workspace this was drafted in; 100000 chosen directly
+#      rather than left ambiguous)
+# See TRAINING.md's "Next steps" and "The config file" sections for context.
+# =============================================================================
+
+model_name: yuuka_wakeword_v2
+
+target_phrases:
+  - "yuuka"
+  - "yuka"
+  - "ゆうか"
+  - "ユーカ"
+  - "ยูกะ"
+  - "ยูคะ"
+
+tts_backend: voxcpm
+
+# Shipped-example scale (per yuuka.yaml's own comment: "shipped example's
+# 25000/5000") — up from v1's 10000/2000. A 2.5x jump in positive/negative
+# data over v1.
+#
+# Time budget (RTX 3070, per TRAINING.md's measured table): ~11h for 25,000
+# positive clips alone (the library-class-default row); negatives/val/
+# backgrounds add more on top. Spans multiple nights. Resumes cleanly if
+# interrupted (counts existing clip_NNNNNN.wav files and continues).
+n_samples: 25000
+n_samples_val: 5000
+n_background_samples: 2000
+n_background_samples_val: 400
+
+# Same curated Thai confusable-phrase list as v1/POC — unrelated to the
+# scale-up above, still pulled from wake_chirp3_th.zip's metadata.csv.
+custom_negative_phrases:
+  - "ขอบคุณนะ"
+  - "ช่วยด้วย"
+  - "ช่วยตั้งเวลาให้หน่อย"
+  - "ดูกัน"
+  - "ดูค่ะ"
+  - "ตอนนี้กี่โมงแล้ว"
+  - "ปิดไฟให้หน่อย"
+  - "พรุ่งนี้ฝนจะตกไหม"
+  - "มานี่หน่อย"
+  - "มีอะไรในปฏิทินวันนี้"
+  - "ยุนะ"
+  - "ยุ่งค่ะ"
+  - "ยูกัน"
+  - "ยูกิ"
+  - "ยูทูบ"
+  - "ยูนะ"
+  - "ยูฟ่า"
+  - "ยูริ"
+  - "รู้กัน"
+  - "รู้ค่ะ"
+  - "ลดเสียงลงหน่อย"
+  - "ลูกค้า"
+  - "วันนี้อากาศเป็นยังไง"
+  - "หยุดเพลง"
+  - "อยู่กัน"
+  - "อยู่ค่ะ"
+  - "เดี๋ยวก่อน"
+  - "เปิดเพลงหน่อย"
+  - "เปิดไฟห้องนอน"
+  - "เพิ่มเสียงอีกนิด"
+  - "เล่นเพลงต่อ"
+  - "โทรหาเพื่อนให้หน่อย"
+  - "โอเค"
+  - "ได้ยินไหม"
+  - "ไปกันเถอะ"
+
+noise_scales: [0.98]
+noise_scale_ws: [0.98]
+length_scales: [0.75, 1.0, 1.25]
+slerp_weights: [0.2, 0.35, 0.5, 0.65, 0.8]
+
+voxcpm_tts:
+  model_id: openbmb/VoxCPM2
+  model_cache_relpath: voxcpm/VoxCPM2
+  local_model_path: null
+  load_denoiser: false
+  cfg_values: [1.5, 2.0, 2.5, 3.0]
+  inference_timesteps_list: [8, 10, 12]
+  voice_design_prompts:
+    - "A Thai-accented English speaker, clear pace, mid pitch"
+    - "A Japanese-accented English speaker, measured pace"
+    - "A Korean-accented English speaker, moderate pace"
+    - "A German-accented English speaker, steady pace"
+    - "A native Thai speaker, natural pace, clear articulation"
+    - "A native Japanese speaker, natural pace, clear articulation"
+    - "A native English speaker, American accent, natural conversational pace"
+    - "A native English speaker, British accent, natural conversational pace"
+    - "A young adult woman, clear mid-pitch voice, moderate pace, calm"
+    - "A young adult man, warm baritone, steady pace, friendly"
+    - "A middle-aged woman, slightly low pitch, measured pace"
+    - "A middle-aged man, deep resonant voice, slow deliberate pace"
+
+# Same shared data_dir as v1/POC — setup's ~22GB download (VoxCPM weights,
+# ACAV100M bank, RIRs) is reused, not re-downloaded. output_dir is also
+# shared; model_output_dir = output_dir/model_name keeps this run in its own
+# wakeword_training/output/yuuka_wakeword_v2/ subfolder, so it cannot
+# collide with or overwrite v1's or the POC's output.
+# Relative to repo root — NOT this machine's absolute path. Correct as long
+# as commands are run from the repo root (run_v2_overnight.ps1 enforces this
+# via Set-Location; do the same for any manual invocation: cd to repo root
+# first, not into wakeword_training/ itself).
+data_dir: ./wakeword_training/data
+output_dir: ./wakeword_training/output
+
+augmentation:
+  clip_duration: 2.0
+  batch_size: 16
+  rounds: 3
+  # Chunked into ~591 small (~8s) files, not the original single 147MB
+  # background_noise_source.wav — with parallel workers (n_workers below),
+  # everyone reading the same one giant file causes severe disk contention
+  # (verified: stalled entirely with ~20 workers on the single-file
+  # version). Chunking lets random.choice() spread workers across different
+  # files instead.
+  background_paths: [./wakeword_training/data/backgrounds_chunked]
+  rir_paths: [./wakeword_training/data/rirs]
+  # From github.com/livekit/livekit-wakeword/pull/71 (unmerged as of
+  # writing, see TRAINING.md). 0 = os.cpu_count(). Verified: ~90x augment
+  # speedup.
+  n_workers: 0
+  mp_context: auto
+
+# Also from PR #71. onnxruntime-gpu is installed but CUDA isn't actually
+# reachable here (missing cublasLt64_13.dll — torch's bundled CUDA libs
+# aren't on onnxruntime's DLL search path); falls back to CPU automatically.
+# Not worth chasing — CPU + n_workers already verified at ~394 clips/sec.
+feature_extraction:
+  n_workers: 0
+  execution_providers: ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+eval:
+  execution_providers: ["CUDAExecutionProvider", "CPUExecutionProvider"]
+  batch_size: 64
+
+model:
+  model_type: conv_attention
+  model_size: medium   # unchanged from v1/POC; not part of this scale-up
+
+# Scaled up from v1's 50000 to 100000 (steps + steps/10 + steps/10 = ~120000
+# total) — see the discrepancy note at the top of this file. Everything
+# below is unchanged from v1/POC — already deliberate choices there, not
+# shortcuts.
+steps: 100000
+learning_rate: 0.0001
+weight_decay: 0.01
+label_smoothing: 0.05
+max_negative_weight: 3000
+target_fp_per_hour: 0.1
+
+batch_n_per_class:
+  positive: 50
+  adversarial_negative: 50
+  ACAV100M_sample: 1024
+  background_noise: 50

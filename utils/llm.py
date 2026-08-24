@@ -2,10 +2,23 @@
 utils/llm.py
 Asynchronous client for interacting with OpenRouter's OpenAI-compatible chat API.
 
-Web search is implemented via the standard OpenAI function-calling protocol:
-  1. Pass 1 — LLM decides whether to call web_search(query). If yes → search fires (1 Tavily credit).
-  2. Pass 2 — Results are injected as a "tool" message; LLM writes the grounded final answer.
-If the LLM does not call the tool (normal conversation), no search is made and no credit is spent.
+Tool use is expressed as inline text tags rather than the provider's
+function-calling API, so it works on any OpenRouter model regardless of whether
+that model advertises tool support. Two families exist, and both are stripped
+from the stream before a single character reaches the user:
+
+  [SEARCH: query] / [SEARCH_DETAIL: query | index]
+      Web search. Pass 1 decides whether to search; if it does, Tavily is
+      called (1 credit) and the results are injected for a grounded pass 2.
+      No tag means no search and no credit spent.
+
+  [ACTION: name | argument]
+      Run one of the bot's own Discord commands on the user's behalf — see
+      `utils.ai_actions` for the registry of what `name` may be. Any prose the
+      model writes *before* the tag is kept and becomes the spoken/posted
+      acknowledgement, so the caller gets both an utterance and an intent from
+      a single pass. Generation stops at the tag: whatever the action does next
+      is the caller's business, not the model's.
 """
 
 from __future__ import annotations
@@ -20,6 +33,25 @@ from bot.config import config
 from bot.logger import logger
 
 _OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+# Every control tag the streaming scanners must intercept. The scanners work a
+# character at a time on a partially-received buffer, so they need both "could
+# this still become a tag?" and "has this committed to being one?" — hence the
+# two helpers rather than a single regex.
+_TAG_PREFIXES = ("[SEARCH:", "[SEARCH_DETAIL:", "[ACTION:")
+
+_ACTION_RE = re.compile(r"\[ACTION:\s*([A-Za-z_]+)\s*(?:\|\s*(.*?)\s*)?\]", re.DOTALL)
+
+
+def _is_partial_tag(text: str) -> bool:
+    """True while `text` could still grow into one of the control tags."""
+    return any(prefix.startswith(text) for prefix in _TAG_PREFIXES)
+
+
+def _has_tag_prefix(text: str) -> bool:
+    """True once `text` has committed to being a control tag."""
+    return any(text.startswith(prefix) for prefix in _TAG_PREFIXES)
+
 
 class OpenRouterAPIError(Exception):
     def __init__(self, status: int, error_msg: str):
@@ -94,13 +126,13 @@ async def _filter_search_tags(stream: AsyncGenerator[str, None]) -> AsyncGenerat
         if idx != -1:
             potential_tag = buffer[idx:]
             
-            if "[SEARCH:".startswith(potential_tag) or "[SEARCH_DETAIL:".startswith(potential_tag):
+            if _is_partial_tag(potential_tag):
                 if idx > 0:
                     yield buffer[:idx]
                 buffer = potential_tag
                 continue
-                
-            if potential_tag.startswith("[SEARCH:") or potential_tag.startswith("[SEARCH_DETAIL:"):
+
+            if _has_tag_prefix(potential_tag):
                 if "]" in potential_tag:
                     if idx > 0:
                         yield buffer[:idx]
@@ -121,7 +153,11 @@ async def _filter_search_tags(stream: AsyncGenerator[str, None]) -> AsyncGenerat
         yield buffer
 
 
-async def generate_chat_stream_response(messages: list[dict], model: str = None) -> AsyncGenerator[tuple[str, Any], None]:
+async def generate_chat_stream_response(
+    messages: list[dict],
+    model: str = None,
+    action_catalog: str = "",
+) -> AsyncGenerator[tuple[str, Any], None]:
     """
     Send a message history to OpenRouter and yield the AI's response in chunks.
 
@@ -135,11 +171,16 @@ async def generate_chat_stream_response(messages: list[dict], model: str = None)
         messages: A list of message dicts (e.g., [{"role": "user", "content": "..."}]).
                   The system prompt should be the first element with role "system".
         model: Override the model to use. Falls back to config.openrouter_model.
+        action_catalog: Rendered list of the `[ACTION: ...]` tags this caller can
+            actually execute (see `utils.ai_actions.catalog_for`). Empty means the
+            model is never told actions exist and so cannot request one — which is
+            exactly what a caller with nowhere to run them wants.
 
     Yields:
-        Tuples of (type, text):
+        Tuples of (type, payload):
             - ("status", "status message")
             - ("content", "text chunk")
+            - ("action", {"name": str, "arg": str})  — terminal, nothing follows it
     """
     from utils.web_search import web_search, get_all_cached_tocs
 
@@ -155,6 +196,25 @@ async def generate_chat_stream_response(messages: list[dict], model: str = None)
             "[SEARCH_DETAIL: your search query | result_index]\n"
             "Do not include any other text if you are triggering a search."
         )
+
+        if action_catalog:
+            # Unlike SEARCH, an action tag is deliberately preceded by prose:
+            # the caller speaks (or posts) that sentence as the acknowledgement,
+            # so the user still gets a reply even though generation stops dead
+            # at the tag.
+            search_instruction += (
+                "\n\nYou can also run the bot's own Discord commands for the user. "
+                "To do so, write ONE short sentence acknowledging the request in your "
+                "normal voice, then the tag, and then nothing at all:\n"
+                f"{action_catalog}\n"
+                "Rules for actions:\n"
+                "- Only use an action when the user clearly asks for it. Talking "
+                "about music is not the same as asking for it to be played.\n"
+                "- Never invent a song title the user did not name.\n"
+                "- At most ONE action tag per reply, and it must be the last thing "
+                "you write.\n"
+                "- Do not describe the tag or mention that you are using one."
+            )
         
         toc_count, tocs_str = get_all_cached_tocs()
         if toc_count > 0:
@@ -181,6 +241,7 @@ async def generate_chat_stream_response(messages: list[dict], model: str = None)
     buffer = ""
     search_query = ""
     search_detail_index = None
+    action: dict[str, str] | None = None
 
     try:
         async for chunk in _stream_openrouter(squashed, actual_model, headers):
@@ -190,13 +251,13 @@ async def generate_chat_stream_response(messages: list[dict], model: str = None)
             if idx != -1:
                 potential_tag = buffer[idx:]
                 
-                if "[SEARCH:".startswith(potential_tag) or "[SEARCH_DETAIL:".startswith(potential_tag):
+                if _is_partial_tag(potential_tag):
                     if idx > 0:
                         yield ("content", buffer[:idx])
                     buffer = potential_tag
                     continue
                     
-                if potential_tag.startswith("[SEARCH:") or potential_tag.startswith("[SEARCH_DETAIL:"):
+                if _has_tag_prefix(potential_tag):
                     if "]" in potential_tag:
                         if idx > 0:
                             yield ("content", buffer[:idx])
@@ -204,7 +265,24 @@ async def generate_chat_stream_response(messages: list[dict], model: str = None)
                         search_match = re.search(r'\[SEARCH:\s*(.+?)\]', potential_tag)
                         detail_match = re.search(r'\[SEARCH_DETAIL:\s*(.+?)\s*\|\s*(\d+)\]', potential_tag)
                         
-                        if search_match:
+                        action_match = _ACTION_RE.search(potential_tag)
+
+                        if action_match:
+                            action = {
+                                "name": action_match.group(1).strip().lower(),
+                                "arg": (action_match.group(2) or "").strip(),
+                            }
+                            # Whatever preceded the tag was already yielded as
+                            # content and becomes the acknowledgement. Drop the
+                            # tag itself so it can never reach TTS or a message.
+                            buffer = ""
+                            logger.info(
+                                f"[LLM] 🎛️ LLM requested ACTION('{action['name']}'"
+                                f"{', ' + action['arg'] if action['arg'] else ''})"
+                            )
+                            yield ("action", action)
+                            break
+                        elif search_match:
                             search_query = search_match.group(1).strip()
                             yield ("status", f"<a:MagnifierGIF:1052563354910216252> ค้นหาข้อมูลบนเว็บ: `{search_query}`...")
                             logger.info(f"[LLM] 🔎 LLM requested SEARCH('{search_query}')")
@@ -227,7 +305,7 @@ async def generate_chat_stream_response(messages: list[dict], model: str = None)
             yield ("content", buffer)
             buffer = ""
 
-        if buffer and not search_query:
+        if buffer and not search_query and action is None:
             yield ("content", buffer)
 
         if search_query:

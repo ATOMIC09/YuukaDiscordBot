@@ -30,6 +30,12 @@ How speech reaches the LLM
    deliberately calling her just to say hi.
 5. The accepted text goes through the same LLM → TTS → playback path as a
    typed message.
+6. If the model answers with an `[ACTION: ...]` tag instead of plain prose, it
+   is asking to run one of the bot's own commands (`utils.ai_actions`). She
+   speaks whatever she said before the tag, waits for it to actually finish
+   (a track cannot start while she is mid-sentence — one VoiceClient), then
+   runs the command. The session is never torn down: while music plays she
+   keeps listening and answers in the text channel instead of out loud.
 
 Both a typed message and a spoken one land in `_respond()`, so the two entry
 points cannot drift apart.
@@ -51,8 +57,14 @@ from discord.ext import commands
 
 from bot.config import config
 from bot.logger import logger
-from utils import wake
-from utils.embeds import ai_disclosure_field, build_embed, COLOR_SUCCESS, error_embed, info_embed
+from utils import ai_actions, wake
+from utils.embeds import (
+    ai_disclosure_field,
+    build_embed,
+    COLOR_SUCCESS,
+    error_embed,
+    info_embed,
+)
 from utils.errors import UserError, UserWarning
 from utils.llm import generate_chat_stream_response
 from utils.stt import ensure_loaded, model_description, transcribe_pcm
@@ -85,6 +97,10 @@ _VOICE_PROMPT_SUFFIX = (
 # tail) is discarded rather than transcribed.
 _ECHO_TAIL_S = 0.4
 
+# Upper bound on waiting for queued speech to finish playing. Only reached when
+# the audio worker has died, which must not wedge the turn forever.
+_SPEECH_DRAIN_TIMEOUT_S = 60.0
+
 
 @dataclass
 class VoiceChatSession:
@@ -109,6 +125,11 @@ class VoiceChatSession:
     # waits for a possible continuation (see _on_segment). Not a standing
     # "awake" window — consumed or expired within one bridge.
     pending_bridge: dict[int, asyncio.Task] = field(default_factory=dict)
+
+    # Whether the room has already been told she is typing instead of speaking.
+    # Explaining it once per silent stretch is helpful; repeating it above every
+    # reply is noise. Cleared again the moment she manages to speak out loud.
+    text_fallback_announced: bool = False
 
 
 class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
@@ -138,15 +159,28 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         logger.debug(f"[AI Voice] Audio worker started for guild {guild_id}")
         try:
             while True:
-                mp3_path: str = await session.queue.get()
+                mp3_path, spoken_text = await session.queue.get()
 
                 vc = session.voice_client
                 if not vc or not vc.is_connected():
-                    logger.warning(f"[AI Voice] Voice client gone for guild {guild_id}, dropping audio.")
-                    try:
-                        os.unlink(mp3_path)
-                    except OSError:
-                        pass
+                    logger.warning(
+                        f"[AI Voice] Voice client gone for guild {guild_id}, posting the line instead"
+                    )
+                    self._discard(mp3_path)
+                    await self._post_unspoken(session, spoken_text)
+                    session.queue.task_done()
+                    continue
+
+                # The music player shares this VoiceClient and play() raises on
+                # one that is already busy. Her line loses to somebody's track —
+                # but losing the audio slot is not a reason to lose the answer,
+                # so it goes to the text channel instead of nowhere.
+                if vc.is_playing() or vc.is_paused():
+                    logger.info(
+                        f"[AI Voice] Voice client busy in guild {guild_id}, posting the line instead"
+                    )
+                    self._discard(mp3_path)
+                    await self._post_unspoken(session, spoken_text)
                     session.queue.task_done()
                     continue
 
@@ -168,6 +202,9 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                 await play_done.wait()
 
                 session.speaking_until = time.perf_counter() + _ECHO_TAIL_S
+                # She has her voice back, so the next silent stretch is worth
+                # explaining again.
+                session.text_fallback_announced = False
 
                 try:
                     os.unlink(mp3_path)
@@ -198,7 +235,13 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             )
             return
 
-        user = self.bot.get_user(segment.user_id)
+        # A Member, not just a User: running a command on someone's behalf needs
+        # to know which voice channel they are sitting in. A cache miss only
+        # costs the ability to run actions for them, so the name still falls
+        # back to the user cache rather than degrading every log line too.
+        guild = self.bot.get_guild(segment.guild_id)
+        member = guild.get_member(segment.user_id) if guild else None
+        user = member or self.bot.get_user(segment.user_id)
         display = user.display_name if user else f"Unknown ({segment.user_id})"
 
         # A bare "just her name" segment leaves a short-lived bridge task
@@ -213,7 +256,9 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             if not result.text:
                 return
             logger.info(f"[AI Voice] Bridged pause-continuation from {display}: {result.text}")
-            await self._announce_and_respond(segment.guild_id, session, display, result.text)
+            await self._announce_and_respond(
+                segment.guild_id, session, display, result.text, member
+            )
             return
 
         # Cheap pre-filter: is this worth transcribing at all? Runs on every
@@ -260,7 +305,10 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         )
 
         if match.remainder:
-            await self._announce_and_respond(segment.guild_id, session, display, match.remainder)
+            await self._announce_and_respond(
+                segment.guild_id, session, display, match.remainder, member,
+                heard=result.text,
+            )
             return
 
         # Just her name and nothing else — wait briefly for a continuation
@@ -287,19 +335,31 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         logger.debug(f"[AI Voice] No continuation from {display} after bare wake word, dropping")
 
     async def _announce_and_respond(
-        self, guild_id: int, session: VoiceChatSession, display: str, prompt: str
+        self,
+        guild_id: int,
+        session: VoiceChatSession,
+        display: str,
+        prompt: str,
+        member: discord.Member | None = None,
+        heard: str | None = None,
     ) -> None:
-        """Post what she heard, then generate and speak a reply."""
-        # Invaluable when a wake word or a Thai/English phrase gets misheard
-        # and the reply looks like a non-sequitur. The 💬 marks it as voice
-        # *chat*: /transcribe posts live captions under 🎙️, and two
-        # identical-looking streams are impossible to tell apart otherwise.
+        """Post what she heard, then generate and speak a reply.
+
+        `prompt` is what the LLM is given — the wake word stripped out, since it
+        is addressing and not content. `heard` is the raw transcript to display.
+        They differ because cutting the wake word out of the middle of a
+        sentence leaves a mangled quote ("Hey play never gonna give you up"),
+        and the whole point of posting the line is to show what she actually
+        heard when a reply looks like a non-sequitur.
+        """
+        # The 💬 marks it as voice *chat*: /transcribe posts live captions under
+        # 🎙️, and two identical-looking streams are impossible to tell apart.
         try:
-            await session.text_channel.send(f"💬 **{display}**: {prompt}")
+            await session.text_channel.send(f"💬 **{display}**: {heard or prompt}")
         except discord.HTTPException:
             pass
 
-        await self._respond(guild_id, session, display, prompt)
+        await self._respond(guild_id, session, display, prompt, member)
 
     # ──────────────────────────────────────────────────────────────────────
     # Shared reply path — used by both spoken and typed input
@@ -312,14 +372,88 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         while len(session.history) > config.max_history_length:
             session.history.pop(1)  # preserve system prompt at index 0
 
+    @staticmethod
+    def _discard(mp3_path: str) -> None:
+        """Delete a temp clip that is not going to be played."""
+        try:
+            os.unlink(mp3_path)
+        except OSError:
+            pass
+
+    async def _post_unspoken(self, session: VoiceChatSession, text: str) -> None:
+        """Deliver in text what she could not say out loud.
+
+        Reached whenever the audio slot is unavailable — most often because a
+        track is playing. Silently dropping the line makes her look broken; the
+        answer is the point, the voice is only the medium.
+
+        Sent as a plain message rather than an embed: this is her ordinary reply
+        that happens to be typed, and wrapping every one in a titled box buries
+        the content it is supposed to deliver. The reason is explained once per
+        silent stretch and then left alone.
+        """
+        if not text.strip():
+            return
+
+        body = text
+        if not session.text_fallback_announced:
+            # Discord subtext ("-# ") renders small and grey, so the reason sits
+            # above the reply without competing with it.
+            body = "-# 🔇 มีเพลงเล่นอยู่ หนูขอพิมพ์ตอบแทนพูดนะคะ\n" + text
+            session.text_fallback_announced = True
+
+        try:
+            await session.text_channel.send(body)
+        except discord.HTTPException as exc:
+            logger.warning(f"[AI Voice] Could not post an unspoken line: {exc}")
+
+    async def _speak(self, session: VoiceChatSession, text: str) -> None:
+        """Say `text` out loud, or post it if the voice slot is taken.
+
+        The check here is an optimisation, not the safety net: synthesizing an
+        MP3 the worker is only going to discard costs an Edge-TTS round trip and
+        a temp file for nothing. The worker still re-checks, because music can
+        start in the gap between this line and playback.
+        """
+        if not text.strip():
+            return
+
+        vc = session.voice_client
+        if vc and (vc.is_playing() or vc.is_paused()):
+            logger.info("[AI Voice] Voice slot taken, answering in text without synthesizing")
+            await self._post_unspoken(session, text)
+            return
+
+        try:
+            mp3_path = await synthesize_speech(text)
+            # The text rides along so the worker can still deliver the answer if
+            # it turns out it cannot play the audio.
+            await session.queue.put((mp3_path, text))
+            logger.debug(f"[AI Voice] Enqueued audio (queue size: {session.queue.qsize()})")
+        except Exception as exc:
+            logger.error(f"[AI Voice] TTS synthesis failed: {exc}")
+
+    async def _await_speech(self, session: VoiceChatSession) -> None:
+        """Block until everything queued has actually finished playing.
+
+        Normal replies do not need this — the worker gets to them in its own
+        time. An action does: `vc.play()` raises on a client that is already
+        playing, so a track must not start while she is still mid-sentence.
+        """
+        try:
+            await asyncio.wait_for(session.queue.join(), timeout=_SPEECH_DRAIN_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            logger.warning("[AI Voice] Timed out waiting for queued speech to finish")
+
     async def _respond(
         self,
         guild_id: int,
         session: VoiceChatSession,
         speaker: str,
         text: str,
+        member: discord.Member | None = None,
     ) -> None:
-        """Generate a reply and speak it."""
+        """Generate a reply and speak it, or run the command it asks for."""
         await self._remember(session, speaker, text)
 
         if session.busy:
@@ -328,12 +462,19 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             logger.debug(f"[AI Voice] Busy in guild {guild_id}, not replying to {speaker}")
             return
 
+        # Without a resolved Member there is nobody to run a command on behalf
+        # of, so the model is not told actions exist and cannot ask for one.
+        catalog = ai_actions.catalog_for(self.bot) if member is not None else ""
+
         session.busy = True
+        action: dict[str, str] | None = None
+        full_response = ""
         try:
-            full_response = ""
             try:
                 async with session.text_channel.typing():
-                    async for msg_type, chunk in generate_chat_stream_response(session.history):
+                    async for msg_type, chunk in generate_chat_stream_response(
+                        session.history, action_catalog=catalog
+                    ):
                         if msg_type == "error":
                             dev_msg = chunk.get("dev", chunk) if isinstance(chunk, dict) else chunk
                             user_msg = chunk.get("user", chunk) if isinstance(chunk, dict) else chunk
@@ -344,31 +485,116 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                             return
                         elif msg_type == "content":
                             full_response += chunk
+                        elif msg_type == "action":
+                            action = chunk
                         # "status" chunks (web search) are silently ignored in voice mode
             except Exception as exc:
                 logger.error(f"[AI Voice] LLM error in guild {guild_id}: {exc}")
                 await session.text_channel.send(embed=error_embed("AI Error", str(exc)))
                 return
 
-            if not full_response:
+            if not full_response and action is None:
                 logger.warning(f"[AI Voice] Empty response in guild {guild_id}")
                 return
 
-            logger.debug(f"[AI Voice] LLM response ({len(full_response)} chars): {full_response}")
-            session.history.append({"role": "assistant", "content": full_response})
+            if full_response:
+                logger.debug(f"[AI Voice] LLM response ({len(full_response)} chars): {full_response}")
+                session.history.append({"role": "assistant", "content": full_response})
 
-            try:
-                mp3_path = await synthesize_speech(full_response)
-                await session.queue.put(mp3_path)
-                logger.debug(f"[AI Voice] Enqueued audio (queue size: {session.queue.qsize()})")
-            except Exception as exc:
-                logger.error(f"[AI Voice] TTS synthesis failed in guild {guild_id}: {exc}")
+            if action is None:
+                await self._speak(session, full_response)
+            else:
+                # Deliberately still inside the busy window: an action runs for
+                # seconds and ends by tearing the session down, and a second
+                # generation starting on top of that would race the teardown.
+                await self._run_action(guild_id, session, member, action, full_response)
         finally:
             session.busy = False
+
+    async def _run_action(
+        self,
+        guild_id: int,
+        session: VoiceChatSession,
+        member: discord.Member | None,
+        action: dict[str, str],
+        ack: str,
+    ) -> None:
+        """Speak the acknowledgement, then run the command it asked for."""
+        if member is None:
+            logger.warning(
+                f"[AI Voice] Action '{action['name']}' in guild {guild_id} "
+                "has no resolved requester, ignoring"
+            )
+            return
+
+        # Said before the command runs, and awaited: the room hears something
+        # during the yt-dlp lookup, and — since a track and her voice share one
+        # VoiceClient — playback cannot start while she is still mid-sentence.
+        if ack:
+            await self._speak(session, ack)
+            await self._await_speech(session)
+
+        result = await ai_actions.run_action(
+            self.bot,
+            name=action["name"],
+            arg=action["arg"],
+            guild=member.guild,
+            member=member,
+            fallback_channel=session.text_channel,
+        )
+
+        if result is None:
+            # A name the model invented. Nothing ran, nothing was posted.
+            return
+
+        # Either way she reports back — out loud if the slot is free, in text if
+        # a track has taken it. The session keeps running regardless.
+        if not result.ok or not ack:
+            await self._speak(session, result.spoken_fallback)
 
     # ──────────────────────────────────────────────────────────────────────
     # Public API — called by AIChatCog
     # ──────────────────────────────────────────────────────────────────────
+
+    async def _open_session(
+        self,
+        *,
+        guild_id: int,
+        voice_client: discord.VoiceClient,
+        text_channel,
+        history: list[dict] | None = None,
+    ) -> tuple[VoiceChatSession, bool]:
+        """Register a live session and start listening. Returns (session, stt_ready).
+
+        Shared by `/ai voice` and the automatic resume after a song, so the two
+        cannot drift into subtly different sessions.
+        """
+        # Loading the model can mean a multi-gigabyte download on first run.
+        # Voice chat still works without it (typed input), so a failure here
+        # degrades rather than aborts.
+        stt_ready = await ensure_loaded()
+
+        if history is None:
+            history = [{
+                "role": "system",
+                "content": config.openrouter_system_prompt + _VOICE_PROMPT_SUFFIX,
+            }]
+
+        session = VoiceChatSession(
+            text_channel=text_channel,
+            voice_client=voice_client,
+            history=history,
+        )
+        self.active_sessions[guild_id] = session
+
+        session.worker = asyncio.create_task(
+            self._audio_worker(guild_id), name=f"voice_worker_{guild_id}"
+        )
+
+        if stt_ready:
+            voice_hub.subscribe(voice_client, _HUB_KEY, on_segment=self._on_segment)
+
+        return session, stt_ready
 
     async def start_session(self, ctx: discord.ApplicationContext) -> None:
         """Join caller's voice channel and activate a voice-chat session."""
@@ -401,11 +627,6 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                         "หนูมีเซสชั่น `/ai chat` อยู่แล้วนะคะ ใช้ `/ai stop` ก่อนน้า",
                     )
 
-        # Loading the model can mean a multi-gigabyte download on first run.
-        # Voice chat still works without it (typed input), so a failure here
-        # degrades rather than aborts.
-        stt_ready = await ensure_loaded()
-
         voice_channel = ctx.author.voice.channel
         voice_client: discord.VoiceClient | None = ctx.guild.voice_client
 
@@ -421,23 +642,9 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         elif voice_client.channel != voice_channel:
             await voice_client.move_to(voice_channel)
 
-        # Build history with voice-mode system prompt
-        voice_system_prompt = config.openrouter_system_prompt + _VOICE_PROMPT_SUFFIX
-        history: list[dict] = [{"role": "system", "content": voice_system_prompt}]
-
-        session = VoiceChatSession(
-            text_channel=ctx.channel,
-            voice_client=voice_client,
-            history=history,
+        _, stt_ready = await self._open_session(
+            guild_id=guild_id, voice_client=voice_client, text_channel=ctx.channel
         )
-        self.active_sessions[guild_id] = session
-
-        session.worker = asyncio.create_task(
-            self._audio_worker(guild_id), name=f"voice_worker_{guild_id}"
-        )
-
-        if stt_ready:
-            voice_hub.subscribe(voice_client, _HUB_KEY, on_segment=self._on_segment)
 
         logger.info(
             f"[AI Voice] Session started in guild {guild_id}, "
@@ -452,7 +659,11 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                 f"พูดชื่อหนู ({wake_list}) ตรงไหนของประโยคก็ได้ค่ะ "
                 "เช่น *«ยูกะ ตอนนี้กี่โมงแล้ว»* หรือ *«แล้วอีกแบบคืออะไรล่ะยูกะ»*\n"
                 "ต้องเรียกชื่อหนูทุกครั้งที่อยากคุยนะคะ หนูไม่ได้ฟังต่อเนื่องหลังตอบแล้วค่ะ\n"
-                f"หรือจะ `@mention` ในช่อง **{ctx.channel.name}** ก็ได้ค่ะ!"
+                f"หรือจะ `@mention` ในช่อง **{ctx.channel.name}** ก็ได้ค่ะ!\n\n"
+                "🎵 สั่งเปิดเพลงด้วยเสียงได้ด้วยนะคะ เช่น *«ยูกะ เปิดเพลง YOASOBI ให้หน่อย»* "
+                "หนูจะเรียก `/music` ให้เอง แล้วบอกในช่องนี้ว่าใช้คำสั่งอะไรไปค่ะ\n"
+                "(ระหว่างมีเพลงเล่นอยู่หนูยังฟังอยู่นะคะ แต่พูดออกเสียงไม่ได้ "
+                "หนูจะพิมพ์ตอบในช่องนี้แทนค่ะ)"
             )
         else:
             how = (
@@ -543,7 +754,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
 
         logger.info(f"[AI Voice] Triggered by {message.author} in guild {message.guild.id}")
         await self._respond(
-            message.guild.id, session, message.author.display_name, content
+            message.guild.id, session, message.author.display_name, content, message.author
         )
 
     # ──────────────────────────────────────────────────────────────────────

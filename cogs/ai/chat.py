@@ -21,6 +21,7 @@ from bot.config import config
 from bot.logger import logger
 from cogs.ai import ai_group
 from utils.embeds import ai_disclosure_field, build_embed, COLOR_SUCCESS, error_embed, success_embed
+from utils import ai_actions
 from utils.errors import UserWarning
 from utils.llm import generate_chat_stream_response
 
@@ -234,8 +235,15 @@ class AIChatCog(commands.Cog, name="AI Chat"):
                 full_response = ""
                 last_edit = time.time()
                 error_occurred = False
+                pending_action = None
 
-                async for msg_type, chunk in generate_chat_stream_response(history):
+                # No guild means no voice channel and no music player, so the
+                # model is not told actions exist and cannot ask for one.
+                catalog = ai_actions.catalog_for(self.bot) if message.guild else ""
+
+                async for msg_type, chunk in generate_chat_stream_response(
+                    history, action_catalog=catalog
+                ):
                     if msg_type == "status":
                         embed = discord.Embed(description=chunk, color=discord.Color.blue())
                         if not active_msg:
@@ -263,6 +271,8 @@ class AIChatCog(commands.Cog, name="AI Chat"):
                         else:
                             await active_msg.edit(content=current_chunk_text or None, embed=error_embed("AI Error", user_msg))
                         break
+                    elif msg_type == "action":
+                        pending_action = chunk
                     elif msg_type == "content":
                         current_chunk_text += chunk
                         full_response += chunk
@@ -287,6 +297,29 @@ class AIChatCog(commands.Cog, name="AI Chat"):
 
                 if full_response and not full_response.startswith("❌"):
                     history.append({"role": "assistant", "content": full_response})
+
+                if pending_action is not None:
+                    await self._run_action(message, pending_action)
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Model-requested commands
+    # ──────────────────────────────────────────────────────────────────────
+
+    async def _run_action(self, message: discord.Message, action: dict[str, str]) -> None:
+        """Run a command the model asked for during a text-chat turn.
+
+        Whatever she wrote before the tag was already posted as her reply, so
+        all that is left is to run the thing and let `utils.ai_actions` post the
+        embed documenting it.
+        """
+        await ai_actions.run_action(
+            self.bot,
+            name=action["name"],
+            arg=action["arg"],
+            guild=message.guild,
+            member=message.author,
+            fallback_channel=message.channel,
+        )
 
     # ──────────────────────────────────────────────────────────────────────
     # on_reaction_add — short reaction to user emoji on bot's message

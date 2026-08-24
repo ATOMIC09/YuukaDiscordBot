@@ -1320,16 +1320,26 @@ class PlayerCog(commands.Cog):
     async def _idle_disconnect(self, guild_id: int):
         await asyncio.sleep(180)
         state = self.states.get(guild_id)
-        if state and state.voice_client and state.voice_client.is_connected():
-            await state.voice_client.disconnect()
-            state.voice_client = None
-            self._clear_crossfade(state)
-            state.active_audio_source = None
-            state.queue.clear()
-            state.current = None
-            state.history.clear()
-            state.forward_history.clear()
-            if state.text_channel:
+        if not (state and state.voice_client and state.voice_client.is_connected()):
+            return
+
+        # Drop the player's own claim on the connection first...
+        self._clear_crossfade(state)
+        state.active_audio_source = None
+        state.queue.clear()
+        state.current = None
+        state.history.clear()
+        state.forward_history.clear()
+
+        # ...then let the hub decide. /ai voice or /transcribe may be live on
+        # this same client, and an idle *player* is no reason to hang up on
+        # them. Only announce leaving if we actually left.
+        guild = self.bot.get_guild(guild_id)
+        if guild is None or not await voice_hub.release_voice(guild):
+            return
+
+        state.voice_client = None
+        if state.text_channel:
                 await state.text_channel.send(embed=info_embed("ไปแล้วค่า~", "หนูขอตัวออกก่อนนะคะ เพราะไม่มีเพลงเล่นมา 3 นาทีแล้ว (´・ω・)"))
 
     async def _rewind_async(self, guild_id: int) -> bool:

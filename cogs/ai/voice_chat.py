@@ -500,8 +500,11 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         # Stop her own speech, then leave only if nobody else is using the
         # connection. This used to disconnect unconditionally, which killed
         # music playback and any live capture that happened to share the client.
+        # Only her own speech. is_playing() is equally true when the music
+        # player owns the client, and stopping that would kill a track somebody
+        # queued — speaking_until is infinite exactly while a TTS clip is mid-air.
         vc = session.voice_client
-        if vc and vc.is_playing():
+        if vc and vc.is_playing() and session.speaking_until == float("inf"):
             vc.stop()
 
         guild = self.bot.get_guild(guild_id)

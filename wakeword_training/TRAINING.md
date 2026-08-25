@@ -62,6 +62,7 @@ Re-derive with `compare_models.py` on every promotion — then keep it if it hol
 | `yuuka_wakeword` (POC) | 300 / 60 · 100 / 20 | 3,600 | Deliberately starved to validate the pipeline. Essentially noise — 20-30 points behind v2 everywhere. Was the promoted model until v2; **not** a rollback target, and no longer kept under `models/wake_word/`. Output still in `output/yuuka_wakeword/`. |
 | `yuuka_wakeword_v1` | 10,000 / 2,000 · 200 / 40 | 60,000 total | Real signal, never promoted. Validation accuracy climbed from chance (~50%) to ~76%, confirming the pipeline works. |
 | `yuuka_wakeword_v2` | 25,000 / 5,000 · 2,000 / 400 | 120,000 total | **Current.** The scale-up v1's results called for. |
+| `yuuka_wakeword_v3` | 25,000 / 5,000 · 2,000 / 400 | 60,000 total | **Rejected — do not promote.** Piper VITS instead of VoxCPM2. Best synthetic numbers of any run (82.9% recall @0.5) and clearly worse in the bot: 17-36 points behind v2 at every matched FPPH budget on a common eval set, and near-blind on unseen TTS engines. See [Why v3 lost](#why-v3-lost-single-tts-overfitting). Its negative set and hyperparameters were genuine improvements and are worth carrying into v4. |
 
 `steps` in the config sets phase 1 only; the real total is `steps + steps/10 + steps/10`.
 
@@ -309,24 +310,98 @@ change, not a git revert.
 
 ## What to try next
 
-v2's scale-up bought ~3 points of recall over v1 at 25 FPPH and under 1 point at 250 — clearly
-positive but flattening, so another straight scale-up is probably not the best next lever.
-Roughly in order:
+### TODO (agreed, not yet started)
 
-1. **Real recorded positives.** Everything so far is 100% VoxCPM2-synthetic. A few hundred real
-   clips of the actual speakers over the actual Discord audio path target the exact domain gap
-   augmentation only approximates.
-2. **`model_size: large`** — `medium` on every run so far, so its effect is unmeasured, and it
-   costs a `train` run (~42 min) rather than a `generate` run (~20 h).
-3. **More/harder adversarial negatives** — the false-accept side is what sets the threshold.
+1. **Record real positives.** ~200-500 clips of the actual speakers saying "Yuuka" / "hey Yuuka",
+   varied: normal/fast/slow, quiet/loud, near mic and across the room, with music or a fan
+   running, ideally several server members. ~20-30 minutes of recording.
+   - `_augment_directory` globs **every** `*.wav` in a split, so real clips just get dropped into
+     `positive_train/` and are augmented and feature-extracted like synthetic ones. No pipeline
+     change needed.
+   - Name them `real_NNNN.wav`, **not** `clip_NNNNNN.wav`. They train normally, and
+     `eval_per_phrase.py` skips them (its regex only matches `clip_\d+`), which is correct —
+     they have no `target_phrases` index.
+   - Replicate them to roughly **3-5% of positives**. At 200 clips against 50,000 synthetic they
+     are 0.4% and too dilute to shift anything.
+2. **Extend `test_mic.py` into a recorder** — key-press captures a 2s clip to `real_NNNN.wav`,
+   with a level meter so a too-quiet take is obvious. It already has the pyaudio 16 kHz mono
+   plumbing; nothing new to install.
+3. **Make `test_mic.py`'s model path a CLI argument.** It is hardcoded to v3, so mic testing has
+   been v3-only while the bot runs v2 — the two were never compared on the same utterance.
+4. **v4: additive mixing, not 50/50.** Keep all 25,000 VoxCPM2 positives *and* add 25,000 Piper
+   on top (`n_samples: 50000`), covering both the train and test splits. A 50/50 split at a fixed
+   25,000 total would **halve** the accent-diverse data that is the only reason v2 works on real
+   voices. Piper's half costs ~10 minutes; VoxCPM2's is the usual ~20 h.
+   Mix must be identical in positives *and* negatives, or the model learns "VoxCPM2 = wake word".
+5. **`model_size: large`** — `medium` on every run so far, so its effect is unmeasured, and it
+   costs a `train` run (~42 min) rather than a `generate` run.
 
-Already tried and discarded: a **v3 sweep over checkpoint-selection strategies**. It won on AUT
-and lost badly at every budget this bot would deploy at, which is what prompted `compare_models.py`.
-Its scripts and output were removed; don't re-run it expecting a different answer.
+### Already tried and discarded
+
+**A checkpoint-selection sweep** (confusingly also called "v3" at the time, unrelated to
+`yuuka_wakeword_v3`). Won on AUT, lost badly at every budget this bot deploys at, which is what
+prompted `compare_models.py`. Scripts and output removed; don't re-run it.
+
+**`yuuka_wakeword_v3` — Piper instead of VoxCPM2.** Do not repeat this. See
+[Why v3 lost](#why-v3-lost-single-tts-overfitting).
 
 Whatever the change: give it a new `model_name`, re-run `generate → augment → train → export →
 eval`, then rank with `compare_models.py` against `yuuka_wakeword_v2`. A model is only better if
-it wins recall at a *matched* FPPH budget.
+it wins recall at a *matched* FPPH budget — **and only if that budget is measured on audio from a
+TTS engine the model never trained on.** See below.
+
+---
+
+## Why v3 lost: single-TTS overfitting
+
+`yuuka_wakeword_v3` swapped VoxCPM2 for Piper VITS. Its own `eval.json` looked like a clear win —
+recall **82.9%** @0.5 vs v2's 59.3%, and `optimal_threshold` finally decompressed from 0.01 to
+**0.86**. In the bot it was much worse: it would not spike above 0.6 on a real Thai-accented
+voice, where v2 fires reliably.
+
+The eval was not wrong, it was **measuring Piper against Piper**. Train and validation split from
+the same generator, so the eval was structurally unable to see the problem. Scored on a common
+set, each model wins on its own engine's audio and collapses on the other's:
+
+| eval set | v2 | v3 |
+|---|---|---|
+| v2's held-out (VoxCPM2, accent-diverse) | **84.4%** @25 FPPH | 58.4% |
+| v3's held-out (Piper, US English) | 71.1% @25 FPPH | **95.6%** |
+
+Neither model learned "Yuuka" — each learned its TTS engine's acoustics. On **unseen** engines
+(the gitignored `wake_multilang_colab.zip` Edge-TTS and `wake_chirp3_th.zip` Chirp3 archives,
+whose audio was never training data — only the chirp3 *text* was reused as negatives):
+
+| unseen engine | v2 median | v3 median | v2 >0.5 | v3 >0.5 |
+|---|---|---|---|---|
+| Edge-TTS (multi-accent) | 0.525 | **0.038** | 52.7% | **3.4%** |
+| Chirp3 Thai | 0.846 | **0.450** | 73.0% | 47.0% |
+| Chirp3 Thai *negatives* | 0.060 | 0.076 | 19.7% | 21.0% |
+
+v3 fires on 3.4% of Edge-TTS wake words against v2's 52.7% — and its false-accept rate is
+slightly *worse*, so it is not trading recall for safety. It is blind to any voice that is not
+Piper. This matches the informal check: v2 triggers on Google Translate TTS in English, Thai and
+Japanese; v3 does not.
+
+**Root cause.** v2's VoxCPM2 `voice_design_prompts` included `"A Thai-accented English speaker"`
+and `"A native Thai speaker"`. Piper's `en-us-libritts-high` is ~900 native American-English
+speakers. 900 speakers of one accent is a *narrower* acoustic manifold than 12 personas spanning
+several — diversity of manifold beats diversity of speaker count.
+
+**Two lessons that outlive this run:**
+
+- The phoneme sequence is not the accent. `ยูกะ`, `ユーカ` and `yuka` are one phoneme string, which
+  is why the romanized Piper spellings were phonetically defensible — but a Thai speaker's
+  unaspirated /k/, vowel length and prosody are different *acoustics*, and the frozen
+  speech-embedding is sensitive to exactly that.
+- **Lowering `max_negative_weight` cannot fix it.** On accent-diverse audio, 51% of v3's positives
+  score below its own negatives' 99th percentile — unreachable by any threshold. v3 already uses
+  the gentler setting (1000 vs v2's 3000) and still loses at every budget, including 150 FPPH.
+
+openWakeWord would not have helped: takoyaki's pipeline is the same frozen frontend, the same
+Piper generator and the same 3-phase trainer, and its report names "dependence on synthetic
+speech" and missing "Thai-accented English" as its own top weakness (§36.1), with
+`th_hey_tako.wav` scoring 0.342 — the identical failure.
 
 ---
 
@@ -380,6 +455,55 @@ bot's real deployment (people talking over VOIP in a Discord VC), not a data-qua
 
 ## Gotchas
 
+- **`custom_negative_phrases` never reaches the validation split.** The library builds the
+  negative pool as `generate_adversarial_phrases(...)` (uncapped) and *then*
+  `.extend(config.custom_negative_phrases)` — after the shuffle that happens inside that
+  function. Curated phrases therefore always sit in the pool's tail. Clips are assigned
+  `phrases[i % len(phrases)]`, and `n_samples_val` (5,000) is smaller than the pool (5,529 for
+  v1/v2's targets), so the validation split only ever consumes a prefix and never reaches
+  index 5,494+. **Every `fpph` number in v1's and v2's `*_eval.json` was measured against zero
+  hard negatives** — treat them as recall-only results, not as a false-accept baseline.
+  `wakeword.py` caps the auto pool and interleaves the curated list through it; verify with
+  its `--dry-run`, which prints per-split hard-negative coverage.
+- **The auto-generated adversarials are mostly not near-misses.** For v2's targets the CMUDict
+  search returned 5,494 phrases, nearly all shaped `"<random long word> ka"` (`"accumulation
+  ka"`, `"acupuncture ka"`) — because `yuuka` is not in CMUDict and contributes nothing, the
+  CJK/Thai spellings contribute nothing (CMUDict is English-only), and only `yuka` matched,
+  split into `yu` + `ka`. Scaling `n_samples` multiplies these, not hard negatives.
+- **Piper mangles the obvious spellings of "Yuuka", in two different ways.** Both are silent —
+  the config looks right and the audio is wrong. Always run `check_pronunciation.py` before
+  adding any spelling to `target_phrases`; it gates on both.
+  1. `normalize_phrases_for_piper` splits words CMUDict does not know into known subwords
+     *before* espeak sees them, so `yuka` synthesizes as `yu ka` — two words with a boundary.
+  2. espeak reads a doubled vowel letter as two nuclei, so `yuuka` — which survives
+     normalization intact — phonemizes to `/jˈuːjuːkə/`, "yoo-YOO-kuh", three syllables. Every
+     `yuu*` spelling does this, including `yuuki`/`yuukai`/`yuukari` as *negatives*, where it
+     quietly destroys the near-miss they were chosen for.
+
+  The spellings that actually work are `oo`-based: `yoocah` /jˈuːkə/, `yoocaa` /jˈuːkɑː/,
+  `yoocuh` /jˈuːkʌ/, `yoo-cah` /jˈuːkˈɑː/. Onset minimal pairs for negatives follow the same
+  pattern — `foocah`, `roocah`, `koocah`, `goocah` (`/ɡ/` vs `/k/` is the tightest pair in the
+  set).
+- **Piper requires `espeak-ng` on PATH** and the library's error message only documents
+  macOS/Linux. On Windows install the `.msi` from
+  [espeak-ng releases](https://github.com/espeak-ng/espeak-ng/releases) and confirm
+  `espeak-ng --version` resolves; the `generate` stage fails without it. `PYTHONUTF8=1` is
+  **required**, not cosmetic, for this path — `_espeak_phonemize` decodes espeak's IPA output
+  with the console codepage, and cp1252 raises `UnicodeDecodeError` on it.
+- **Piper's duration predictor can run away and OOM the box.** VITS computes
+  `w = exp(logw) * length_scale` and clamps it only from *below*
+  (`torch.clamp_min`, synthesis.py:301). A rare draw from the stochastic duration predictor
+  (logw ~8, roughly 1000x normal) is exponentiated into a ~970-second utterance;
+  `y_lengths.max()` then sizes the tensors for the whole batch, so one bad sample inflates every
+  clip beside it. Observed: a 64-clip batch requesting 4.4 GB, exhausting 8 GB of VRAM, spilling
+  into Windows shared memory and taking system RAM with it. It is **not** a memory leak, and
+  lowering `noise_scale_ws` barely helps — measured over 800 draws, natural maxima are 2.9s at
+  `noise_w=0.8` vs 3.1s at 0.98. `wakeword.py` installs a guard that bounds *total* utterance
+  length (default 8s, `--max-seconds`), rescaling logw proportionally so rhythm is preserved.
+  A per-token clamp is the wrong instrument: individual tokens legitimately reach logw 4.9, so
+  any cap tight enough to catch runaways fires on ~40% of ordinary clips.
+  Clips already written before a crash are fine — `remove_silence` trims them — so `generate`
+  can simply be resumed.
 - **`PYTHONUTF8=1` before every command.** The CLI's `rich` console output crashes on Windows'
   legacy codepage (`UnicodeEncodeError`).
 - **`chcp 65001` too, or logs are mojibake** (`Γûê` instead of `█`). Cosmetic — the underlying

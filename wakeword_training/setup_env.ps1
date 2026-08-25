@@ -69,6 +69,77 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# --- 3b. Patch data/piper/synthesis.py -----------------------------------
+# Two defects in the Piper path, neither of which has a config knob. Patched
+# here so every stage runs as plain `livekit-wakeword <cmd> <config>` with no
+# wrapper scripts. Idempotent: keyed off the marker comment.
+#
+#   a) get_phonemes() shells out to the espeak-ng binary once PER CLIP, for a
+#      deterministic function of (text, voice) over a cycling list of at most a
+#      few thousand phrases. At ~54ms per process spawn on Windows this was
+#      ~39% of a batch and serialised the GPU. Measured effect of the cache:
+#      ~1 clip/s -> ~71 clips/s end to end.
+#
+#   b) VITS computes `w = exp(logw) * length_scale` from the STOCHASTIC
+#      duration predictor and clamps it only from BELOW. A rare draw becomes a
+#      ~970-second utterance, and y_lengths.max() sizes the tensors for the
+#      whole batch, so one bad sample inflates all of them: observed a 64-clip
+#      batch requesting 4.4GB, exhausting VRAM and spilling into system RAM.
+#      The patch scales an over-long utterance down proportionally, preserving
+#      relative phoneme rhythm. 689 frames = 8.0s at 22050Hz / hop 256; the
+#      natural maximum for these phrases is ~271 frames (3.1s), measured over
+#      800 draws, so it only ever fires on a runaway.
+#
+# Both are genuine upstream bugs and worth filing against livekit-wakeword.
+Write-Host "`n=== Patching piper/synthesis.py (phoneme cache + duration bound) ==="
+$synth = & $venvPy -c "import livekit.wakeword.data.piper.synthesis as m; print(m.__file__)"
+if (-not (Test-Path $synth)) {
+    Write-Host "FATAL: could not locate synthesis.py (got '$synth')."
+    exit 1
+}
+$src = Get-Content -Raw -Encoding UTF8 $synth
+if ($src -match 'YUUKA-PATCH') {
+    Write-Host "already patched, skipping."
+} else {
+    $needle = '    phonemes_str = _espeak_phonemize(text, voice)'
+    $repl   = @'
+    # YUUKA-PATCH (a): memoize the per-clip espeak subprocess.
+    phonemes_str = _cached_espeak_phonemize(text, voice)
+'@
+    if ($src -notmatch [regex]::Escape($needle)) {
+        Write-Host "FATAL: patch (a) anchor not found -- upstream changed, re-check the patch."
+        exit 1
+    }
+    $src = $src.Replace($needle, $repl)
+    $src = $src.Replace("def get_phonemes(", @'
+@functools.lru_cache(maxsize=8192)
+def _cached_espeak_phonemize(text: str, voice: str = "en-us") -> str:
+    return _espeak_phonemize(text, voice)
+
+
+def get_phonemes(
+'@.TrimEnd() + "`n")
+    $src = $src -replace '(?m)^import json', "import functools`nimport json"
+
+    $needle2 = '    w = torch.exp(logw) * x_mask * length_scale'
+    $repl2 = @'
+    w = torch.exp(logw) * x_mask * length_scale
+    # YUUKA-PATCH (b): bound runaway stochastic-duration draws. Upstream clamps
+    # y_lengths from below only; an unlucky exp() produces a ~970s utterance and
+    # y_lengths.max() then sizes the tensors for the entire batch.
+    _total = torch.sum(w, [1, 2], keepdim=True)
+    _cap = 689.0
+    w = torch.where(_total > _cap, w * (_cap / _total), w)
+'@
+    if ($src -notmatch [regex]::Escape($needle2)) {
+        Write-Host "FATAL: patch (b) anchor not found -- upstream changed, re-check the patch."
+        exit 1
+    }
+    $src = $src.Replace($needle2, $repl2)
+    Set-Content -Path $synth -Value $src -Encoding UTF8 -NoNewline
+    Write-Host "patched $synth"
+}
+
 # --- 4. Verify everything, independently ---------------------------------
 Write-Host "`n=== Verifying ==="
 

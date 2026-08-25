@@ -1,0 +1,471 @@
+# =============================================================================
+# ##  REJECTED — DO NOT PROMOTE THIS MODEL. Kept for the record only.  ##
+#
+# v3 produced the best synthetic numbers of any run (82.9% recall @0.5, and
+# optimal_threshold finally decompressed from 0.01 to 0.86) and was clearly
+# WORSE in the bot: it will not spike above 0.6 on a real Thai-accented voice,
+# where v2 fires reliably. It is 17-36 points behind v2 at every matched FPPH
+# budget on a common eval set, and near-blind on TTS engines it never saw
+# (3.4% of Edge-TTS wake words vs v2's 52.7%).
+#
+# Cause: swapping VoxCPM2 for Piper traded away accent diversity, and the eval
+# could not detect it because train and validation came from the same engine.
+# Full analysis and numbers: TRAINING.md, "Why v3 lost: single-TTS overfitting".
+#
+# Worth reusing in v4: the curated negatives below, and max_negative_weight /
+# target_fp_per_hour (1000 / 0.2), which is what fixed the score compression.
+# Not worth reusing: tts_backend piper_vits on its own, and the romanized
+# English-only target_phrases that come with it.
+# =============================================================================
+#
+# Yuuka wake-word config — v3: Piper rebaseline with a real hard-negative set
+#
+# v3 is a deliberate from-scratch rebaseline, not an incremental v2 tweak.
+# Four things change together; see "Reading the result" at the bottom for how
+# to attribute the outcome.
+#
+# 1. TTS: voxcpm -> piper_vits.
+#    "Yuuka" is one acoustic target, /juu-ka/, in every language a speaker of
+#    this bot uses. Thai "ยูกะ" and Japanese "ユーカ" are the same sound as
+#    "yuuka" — the classifier reads the Google speech_embedding, which is
+#    phonetic, not orthographic, so the six script spellings in v1/v2 were six
+#    near-duplicate acoustic targets. VoxCPM2's multilingual phonemization was
+#    buying redundancy at ~1.6 s/clip (measured, RTX 3070). Piper VITS is one
+#    non-autoregressive forward pass — no AR decode, no 8-12 flow-matching
+#    steps, no CFG double-forward — and phonemizes any spelling through
+#    `espeak-ng --ipa`. Expect `generate` to drop from ~20 h to well under an
+#    hour, which is what makes iterating on this model practical at all.
+#
+#    Lost in the trade: VoxCPM2's `voice_design_prompts` accent personas.
+#    Piper's en-us-libritts-high is ~900 native-American-English speakers,
+#    diversified by SLERP blending (`slerp_weights`) and `length_scales`.
+#    Speaker variety, yes; non-native accent variety, no. If v3's real-world
+#    recall is weak specifically for Thai-accented speakers, that is the known
+#    gap to close next — with real recorded positives, not by going back.
+#
+# 2. Target phrases: only spellings that survive CMUDict pre-normalization.
+#    `normalize_phrases_for_piper` (piper_backend.py:62) splits unknown words
+#    into known subwords before espeak sees them, so "yuka" becomes "yu ka" —
+#    two words with a boundary, not the wake word. Every spelling below was
+#    verified to pass through intact. Do not add one without checking:
+#      python wakeword_training/check_pronunciation.py --config <this file>
+#
+# 3. A long form ("hey yuuka") joins the short form, 50/50.
+#    takoyaki's V1 measured 95.8% recall on 4-syllable "tako-yaki" against
+#    54.6% on 2-syllable "hey tako" in one model. v2's aggregate 59.3% is
+#    squarely the short-phrase regime. This tests whether length is the
+#    binding constraint here too.
+#
+# 4. max_negative_weight 3000 -> 1000, target_fp_per_hour 0.1 -> 0.2.
+#    v1/v2 both landed at optimal_threshold 0.01-0.02, i.e. the entire useful
+#    score range was compressed below 0.02 — the mild form of the collapse
+#    takoyaki documented at high negative weight on a compressed schedule.
+#    These values also sit nearer the library defaults (1500 / 0.2).
+#
+# Run it exactly like v1/v2 — stock CLI, config positional (except `setup`):
+#     $env:PYTHONUTF8="1"
+#     & $py -m livekit.wakeword setup    --config wakeword_training/configs/yuuka_v3.yaml
+#     & $py -m livekit.wakeword generate wakeword_training/configs/yuuka_v3.yaml
+#     ... augment / train / export / eval
+#
+# Two Piper bugs with no config knob (a per-clip espeak subprocess costing ~70x
+# throughput, and an unbounded duration prediction that OOMs the GPU) are fixed
+# by setup_env.ps1 step 3b, which patches site-packages the same way step 3
+# swaps webrtcvad. Nothing to remember at run time; re-run setup_env.ps1 after
+# any reinstall, since `uv sync` restores the unpatched file.
+# =============================================================================
+
+model_name: yuuka_wakeword_v3
+
+# DO NOT hand-edit these without re-running check_pronunciation.py.
+#
+# The obvious spellings are wrong. espeak reads a doubled "uu" as two separate
+# /juː/ glides, so "yuuka" phonemizes to /jˈuːjuːkə/ — "yoo-YOO-kuh", three
+# syllables, not the wake word. The first draft of this config used five such
+# spellings and would have trained the model on a word nobody says.
+#
+# All eight below were verified through both stages (CMUDict normalization +
+# espeak IPA) and give eight distinct, correct pronunciations:
+#
+#   yoocah      jˈuːkə        hey yoocah      hˈeɪ jˈuːkə
+#   yoocaa      jˈuːkɑː       hey yoocaa      hˈeɪ jˈuːkɑː
+#   yoocuh      jˈuːkʌ        hey yoocuh      hˈeɪ jˈuːkʌ
+#   yoo-cah     jˈuːkˈɑː      hey yoo-cah     hˈeɪ jˈuːkˈɑː
+#
+# The four short forms are one word with four final-vowel realizations —
+# schwa, open /ɑː/, strut /ʌ/, and a second-syllable stress. That spread is
+# deliberate: a Thai speaker's "ยูกะ" ends in a short open /a/, an English
+# speaker's ends in a schwa. This is takoyaki's tako-yaki/tahkoyaki trick,
+# and it is the only accent variation available now that Piper has replaced
+# VoxCPM2's voice_design_prompts. Round-robin assignment
+# (`index % len(phrases)`) makes the short/long split exactly 50/50.
+target_phrases:
+  - "yoocah"
+  - "yoocaa"
+  - "yoocuh"
+  - "yoo-cah"
+  - "hey yoocah"
+  - "hey yoocaa"
+  - "hey yoocuh"
+  - "hey yoo-cah"
+
+tts_backend: piper_vits
+
+piper_tts:
+  # Resolves under data_dir; `setup` downloads en-us-libritts-high here.
+  checkpoint_relpath: piper/en-us-libritts-high.pt
+
+# Held at v2's scale so recall is comparable at a matched FPPH budget. Piper
+# makes this cheap now — scaling to takoyaki's 50,000 is minutes, not nights —
+# but change one thing at a time: rebaseline first, then scale.
+n_samples: 25000
+n_samples_val: 5000
+n_background_samples: 2000
+n_background_samples_val: 400
+# 32, not 64. VITS pads every tensor in a batch to the longest predicted
+# duration in it, so one runaway sample inflates the whole batch — halving the
+# batch halves the blast radius. takoyaki landed on the same number after
+# Piper drove their machine into DPC_WATCHDOG_VIOLATION.
+tts_batch_size: 32
+
+# Curated hard negatives — phrases the model must NOT wake on. These sit near
+# the decision boundary; the ACAV100M bank supplies ordinary speech separately.
+#
+# In the YAML, as in v1/v2. The library appends these to the auto-generated
+# adversarial pool, and for v3 that pool is 1,269 phrases — so the combined pool
+# (1,456) is SMALLER than n_samples_val (5,000) and cycles 3.4x through the
+# validation split. Verified: all 187 reach both negative_train and
+# negative_test, at ~12.8% of the negative set.
+#
+# This did NOT hold for v1/v2, and it is worth knowing why. Their pool was 5,529
+# (the CMUDict search returns far more neighbours for "yuka" than for "yoocah"),
+# which is larger than n_samples_val, so clip assignment `phrases[i % len(pool)]`
+# only ever consumed a prefix — and because the library appends custom phrases
+# AFTER its internal shuffle, the curated list sat in the tail and the validation
+# split never reached it. Every fpph number in v1/v2's eval JSON was measured
+# against zero hard negatives. Switching to Piper spellings shrank the auto pool
+# enough that the problem disappeared on its own.
+#
+# If you ever enlarge target_phrases or shrink n_samples_val, re-check that
+# `len(auto) + len(custom) < n_samples_val` still holds.
+custom_negative_phrases:
+  # Hard negatives for the Yuuka wake word — Piper/espeak (en-us) romanized.
+  #
+  # WHY ROMANIZED: the classifier consumes the Google speech_embedding, which is
+  # phonetic, not orthographic. "ยูกิ", "ゆき" and "yuki" are one acoustic target.
+  # Piper phonemizes through `espeak-ng --ipa -v en-us`, so entries are spelled
+  # to make espeak produce the intended sound, not to be correct in any language.
+  #
+  # RULE FOR ADDING: it must be plausibly confusable with "yoocah" / "hey yoocah".
+  # Generic sentences ("please turn off the lights") are NOT hard negatives — the
+  # ACAV100M bank already supplies 2,000 hours of ordinary speech. Only entries
+  # that sit near the decision boundary belong here.
+  #
+  # RULE FOR NOT ADDING: never add a homophone of a target. Target spellings are
+  # yoocah / yoocaa / yoocuh / yoo-cah and their "hey" forms, so none of
+  # those may appear below. Training near-identical audio as both classes gives
+  # contradictory supervision — the mistake takoyaki caught with "taco yaki".
+  # check_pronunciation.py enforces this automatically once espeak-ng is present.
+  #
+
+  # ------------------------------------------------------------------------
+  # The -uka / -uca nucleus: the single hardest family
+  # ------------------------------------------------------------------------
+  - "asuka"
+  - "haruka"
+  - "shizuka"
+  - "yuzuka"
+  - "otsuka"
+  - "fukuoka"
+  - "okinawa"
+  - "osaka"
+  - "shizuoka"
+  - "tanuka"
+  - "luka"
+  - "lucca"
+  - "luca"
+  - "buka"
+  - "yucca"
+  - "yakuza"
+  - "eureka"
+  - "bazooka"
+  - "chewbacca"
+  - "hanukkah"
+  - "tapioca"
+  - "paprika"
+  - "harmonica"
+  - "veronica"
+  - "monica"
+  - "replica"
+  - "basilica"
+  - "angelica"
+  - "yukon"
+  - "ruka"
+  - "nuka"
+  - "duka"
+  - "tuka"
+  - "muka"
+  - "kuka"
+  - "suka"
+  - "puka"
+  - "juka"
+  - "guka"
+  - "zuka"
+
+  # ------------------------------------------------------------------------
+  # yuu- plus a different second mora — one phoneme from the target
+  # ------------------------------------------------------------------------
+  - "yoockee"
+  - "yoocko"
+  - "yootoh"
+  - "yoockya"
+  - "yootah"
+  - "yuuri"
+  - "yoogah"
+  - "yoosookay"
+  - "yoockai"
+  - "yoockan"
+  - "yoockari"
+  - "yoowaku"
+  - "fuuka"
+  - "tsuuka"
+  - "suuka"
+  - "ruuka"
+  - "nuuka"
+  - "muuka"
+  - "kuuka"
+
+  # ------------------------------------------------------------------------
+  # Short-vowel and neighbouring-consonant variants
+  # ------------------------------------------------------------------------
+  - "yuki"
+  - "yuna"
+  - "yumi"
+  - "yuri"
+  - "yura"
+  - "yuma"
+  # NOTE: bare "yuka" is deliberately absent — espeak splits it to "yu ka" and it
+  # is too close to the target to be a safe negative.
+  - "yurika"
+  - "yuika"
+  - "yoga"
+  - "yuga"
+  - "yuja"
+  - "yupa"
+  - "yuba"
+  - "yuta"
+  - "yusa"
+
+  # ------------------------------------------------------------------------
+  # English phrases carrying the same vowel-plus-k transition
+  # ------------------------------------------------------------------------
+  - "you can"
+  - "you cant"
+  - "you car"
+  - "you cut"
+  - "you could"
+  - "you come"
+  - "you called"
+  - "you kept"
+  - "you kick"
+  - "you know"
+  - "you okay"
+  - "you cool"
+  - "your car"
+  - "who cares"
+  - "new car"
+  - "look at"
+  - "took a"
+  - "cook a"
+  - "book a"
+  - "shook a"
+  - "unique"
+  - "you got"
+  - "you keep"
+  - "do you care"
+
+  # ------------------------------------------------------------------------
+  # "hey X" carriers — critical now that "hey yuuka" is a target. Without these
+  # the model can shortcut to detecting the "hey" carrier alone.
+  # ------------------------------------------------------------------------
+  - "hey yoockee"
+  - "hey yoocko"
+  - "hey yoockai"
+  - "hey yoockari"
+  - "hey fuuka"
+  - "hey asuka"
+  - "hey haruka"
+  - "hey shizuka"
+  - "hey yuki"
+  - "hey yuna"
+  - "hey yumi"
+  - "hey yuri"
+  - "hey luka"
+  - "hey lucas"
+  - "hey luca"
+  - "hey duke"
+  - "hey cooper"
+  - "hey google"
+  - "hey siri"
+  - "hey alexa"
+  - "hey cortana"
+  - "hey jarvis"
+  - "hey you"
+  - "hey uber"
+  - "hey yoga"
+  - "hey yucca"
+  - "hey euro"
+  - "hey eureka"
+  - "hey hookah"
+  - "hey buddy"
+  - "hey guys"
+  - "hey man"
+  - "hey there"
+  - "hey wait"
+  - "hey stop"
+  - "hey look"
+  - "hey listen"
+  - "hey yo"
+  - "hey okay"
+  - "hey what"
+  - "hey come here"
+  - "hey can you"
+  - "hey could you"
+  - "hey you can"
+  - "hey you know"
+  - "hey everyone"
+  - "hey friend"
+  - "hey bro"
+  - "hey dude"
+
+  # NOTE: "yoo ka" / "yoo kha" (romanized ยูกะ/ยูคะ) were REMOVED — they
+  # phonemize to j-uː-k-ɑː, identical to target "yoo-cah" apart from a word
+  # boundary. They are the wake word, not a near-miss.
+  # ------------------------------------------------------------------------
+  # Thai-origin near-misses, respelled for espeak en-us
+  # yoo-gan (อยู่กัน), doo-gan (ดูกัน), roo-gan (รู้กัน), look-kaa (ลูกค้า)
+  # ------------------------------------------------------------------------
+  - "yoo gan"
+  - "yoo nah"
+  - "yoo gee"
+  - "yoo ree"
+  - "yoo mee"
+  - "yoo fah"
+  - "yoo toob"
+  - "yoo roh"
+  - "yoo ganda"
+  - "yoo neean"
+  - "doo gan"
+  - "doo ka"
+  - "roo gan"
+  - "roo ka"
+  - "look kaa"
+  - "look get"
+  - "look pong"
+  - "took gwa"
+  - "soong gwa"
+  - "pook gan"
+  - "ploog gan"
+  - "moo gata"
+  - "yoong gat"
+  - "moon kaa"
+  - "too gep"
+  - "poo get"
+  - "kroo ka"
+  - "choo ka"
+  - "yoong gan"
+  - "yoo nah ka"
+
+  # ------------------------------------------------------------------------
+  # Thai "เฮ้ X" carriers, respelled
+  # ------------------------------------------------------------------------
+  - "hey yoo gee"
+  - "hey yoo ree"
+  - "hey yoo nah"
+  - "hey yoo nai"
+  - "hey doo gan"
+  - "hey look kaa"
+  - "hey took kon"
+  - "hey nai"
+  - "hey pheuan"
+  - "hey wa ngai"
+
+# Piper VITS sampling diversity. slerp_weights blends speaker embeddings across
+# the ~900 LibriTTS speakers; length_scales varies speaking rate.
+#
+# noise_scale_ws drives the STOCHASTIC DURATION PREDICTOR, whose output is
+# exponentiated with no upper bound (see wakeword_patches.py's duration guard).
+#
+# Lowered to 0.6/0.8 because en-us-libritts-high.json declares `noise_w: 0.8` as
+# the value this checkpoint was tuned for; the library default of 0.98 exceeds
+# it. To be accurate about what this buys: measured over 800 draws, 0.98's
+# natural maximum utterance is 3.1s vs 2.9s at 0.8 — so 0.98 is NOT what caused
+# the 4.4 GB OOM, it only fattens the tail slightly. The runaway is a rare draw
+# (logw ~8, ~1000x normal) that the SDP can produce at any noise_w. The duration
+# guard is the actual fix; this is prudence, not the remedy.
+noise_scales: [0.667, 0.8]
+noise_scale_ws: [0.6, 0.8]
+length_scales: [0.75, 0.9, 1.0, 1.1, 1.25]
+slerp_weights: [0.2, 0.35, 0.5, 0.65, 0.8]
+max_speakers: null
+
+# Shared with v1/v2 — the ~22 GB setup download (ACAV100M bank, RIRs) is
+# reused. model_output_dir = output_dir/model_name, so v3 cannot collide with
+# earlier runs. Relative to repo root, NOT this machine's absolute path: run
+# from the repo root, not from wakeword_training/.
+data_dir: ./wakeword_training/data
+output_dir: ./wakeword_training/output
+
+augmentation:
+  clip_duration: 2.0
+  batch_size: 16
+  rounds: 3
+  # 591 ~8s chunks, not the single 147MB source — parallel workers all reading
+  # one large file stalls on disk contention. Unchanged from v2.
+  background_paths: [./wakeword_training/data/backgrounds_chunked]
+  rir_paths: [./wakeword_training/data/rirs]
+  n_workers: 0
+  mp_context: auto
+
+feature_extraction:
+  n_workers: 0
+  execution_providers: ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+eval:
+  execution_providers: ["CUDAExecutionProvider", "CPUExecutionProvider"]
+  batch_size: 64
+
+model:
+  model_type: conv_attention
+  model_size: medium
+
+steps: 50000
+learning_rate: 0.0001
+weight_decay: 0.01
+label_smoothing: 0.05
+# See note 4 in the header.
+max_negative_weight: 1000
+target_fp_per_hour: 0.2
+
+batch_n_per_class:
+  positive: 50
+  adversarial_negative: 50
+  ACAV100M_sample: 1024
+  background_noise: 50
+
+# =============================================================================
+# Reading the result
+#
+# Aggregate recall in eval.json will NOT tell you whether the long phrase
+# helped — it pools short and long positives. Run:
+#     python wakeword_training/eval_per_phrase.py --config <this file>
+# and read the short-form and long-form rows separately, the way takoyaki split
+# tako-yaki / tahkoyaki / hey tako.
+#
+# The signal that the negative fix worked is `optimal_threshold` rising off
+# 0.01-0.02 toward a normal operating point, with fpph staying sane now that
+# hard negatives are actually present in validation. v1/v2's fpph figures are
+# NOT a valid baseline for that comparison — they were measured against junk.
+# Rank against v2 with compare_models.py at a matched FPPH budget, never by
+# eval.json alone.
+# =============================================================================

@@ -4,6 +4,9 @@ Turn what the model wrote ("#general", a mention, an id) into a real object.
 
 Names come from a model reading a human's message, so they are matched loosely
 (case, a leading #) and a miss lists the nearest names instead of just failing.
+Channel names are often decorated ("💬・main-chat"), so a channel also matches on
+its letters and digits alone, and a miss suggests mentions the model can pass back
+verbatim instead of retyping the decoration.
 
 Channels are only ever matched or suggested if the REQUESTER can see them. The
 bot usually sees far more than the person asking, and a channel they cannot see
@@ -14,6 +17,7 @@ from __future__ import annotations
 
 import difflib
 import re
+import unicodedata
 
 import discord
 
@@ -25,6 +29,25 @@ _CHANNEL_MENTION = re.compile(r"^<#(\d+)>$")
 
 def _clean(text: str) -> str:
     return text.strip().lstrip("#").strip().casefold()
+
+
+def _key(name: str) -> str:
+    """Only the letters, digits and marks of a name: emoji, separators and dashes go."""
+    text = unicodedata.normalize("NFKC", name).casefold()
+    # Marks (M*) carry Thai vowels and tones, so they are part of the name.
+    return "".join(ch for ch in text if unicodedata.category(ch)[0] in "LNM")
+
+
+def _suggest(raw: str, channels: list) -> str:
+    """The nearest channel names, each with a mention the model can pass back."""
+    by_key: dict[str, discord.abc.GuildChannel] = {}
+    for channel in channels:
+        by_key.setdefault(_key(channel.name), channel)
+    close = difflib.get_close_matches(_key(raw), list(by_key), n=3, cutoff=0.5)
+    if not close:
+        return ""
+    listed = ", ".join(f"#{by_key[k].name} = {by_key[k].mention}" for k in close)
+    return f" ช่องที่ใกล้เคียง: {listed} (ส่ง <#id> แทนชื่อได้เลยค่ะ)"
 
 
 async def can_view(member: discord.Member, channel: discord.TextChannel | discord.Thread) -> bool:
@@ -57,18 +80,21 @@ async def resolve_text_channel(ctx: YuukaContext, text: str) -> discord.TextChan
         if isinstance(channel, (discord.TextChannel, discord.Thread)) and await can_view(member, channel):
             return channel
 
-    wanted = _clean(raw)
-    for channel in [*guild.text_channels, *guild.threads]:
+    wanted, key = _clean(raw), _key(raw)
+    candidates = [*guild.text_channels, *guild.threads]
+    for channel in candidates:
         if channel.name.casefold() == wanted and await can_view(member, channel):
             return channel
+    if key:
+        for channel in candidates:
+            if _key(channel.name) == key and await can_view(member, channel):
+                return channel
 
     # Suggestions come only from channels the requester can already see. Private
     # threads are left out: checking each one could cost an API call.
     visible = [c for c in guild.text_channels if c.permissions_for(member).view_channel]
     visible += [t for t in guild.threads if not t.is_private() and t.permissions_for(member).view_channel]
-    close = difflib.get_close_matches(wanted, [c.name.casefold() for c in visible], n=3, cutoff=0.5)
-    hint = f" ช่องที่ใกล้เคียง: {', '.join('#' + n for n in close)}" if close else ""
-    raise UserWarning("หาช่องนั้นไม่เจอค่ะ", f"ไม่มีช่อง '{raw}' ในเซิร์ฟเวอร์นี้นะคะ.{hint}")
+    raise UserWarning("หาช่องนั้นไม่เจอค่ะ", f"ไม่มีช่อง '{raw}' ในเซิร์ฟเวอร์นี้นะคะ.{_suggest(raw, visible)}")
 
 
 _USER_MENTION = re.compile(r"^<@!?(\d+)>$")
@@ -120,11 +146,13 @@ def resolve_voice_channel(ctx: YuukaContext, text: str) -> discord.VoiceChannel:
             if channel.id == wanted_id:
                 return channel
 
-    wanted = _clean(raw)
+    wanted, key = _clean(raw), _key(raw)
     for channel in visible:
         if channel.name.casefold() == wanted:
             return channel
+    if key:
+        for channel in visible:
+            if _key(channel.name) == key:
+                return channel
 
-    close = difflib.get_close_matches(wanted, [c.name.casefold() for c in visible], n=3, cutoff=0.5)
-    hint = f" ช่องที่ใกล้เคียง: {', '.join(close)}" if close else ""
-    raise UserWarning("หาห้องเสียงนั้นไม่เจอค่ะ", f"ไม่มีห้องเสียง '{raw}' นะคะ.{hint}")
+    raise UserWarning("หาห้องเสียงนั้นไม่เจอค่ะ", f"ไม่มีห้องเสียง '{raw}' นะคะ.{_suggest(raw, visible)}")

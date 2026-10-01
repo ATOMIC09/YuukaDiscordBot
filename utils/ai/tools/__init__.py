@@ -10,13 +10,14 @@ from typing import Callable
 from langchain_core.tools import BaseTool
 
 from utils.ai.context import YuukaContext
-from utils.ai.tools import discord_read, music, search, server
+from utils.ai.tools import actions, discord_read, music, search, server
 
 _STATUS: dict[str, Callable[[dict], str]] = {
     **search.STATUS,
     **discord_read.STATUS,
     **server.STATUS,
     **music.STATUS,
+    **actions.STATUS,
 }
 
 
@@ -32,6 +33,12 @@ def tools_for(ctx: YuukaContext) -> list[BaseTool]:
 
     if ctx.guild and ctx.requester and ctx.bot.get_cog("PlayerCog") is not None:
         tools += music.TOOLS
+
+    if ctx.guild and actions.can_move_members(ctx):
+        tools.append(actions.voice_kick)
+        in_voice = ctx.requester.voice and ctx.requester.voice.channel
+        if in_voice and ctx.bot.get_cog("CountdisCog") is not None:
+            tools.append(actions.voice_disconnect_timer)
 
     return tools
 

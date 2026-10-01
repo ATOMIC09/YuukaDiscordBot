@@ -555,6 +555,21 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
     # Public API — called by AIChatCog
     # ──────────────────────────────────────────────────────────────────────
 
+    async def announce(self, guild_id: int, text: str) -> None:
+        """Say `text` in this guild's voice session, if she is free to.
+
+        For results that arrive after a turn has ended: a confirmed action, a
+        fired reminder. If music or her own speech holds the voice client the
+        answer is already visible as an embed, so nothing is posted here.
+        """
+        session = self.active_sessions.get(guild_id)
+        if session is None:
+            return
+        vc = session.voice_client
+        if not vc or vc.is_playing() or vc.is_paused():
+            return
+        await self._speak(session, text)
+
     async def _open_session(
         self,
         *,

@@ -21,9 +21,8 @@ from bot.config import config
 from bot.logger import logger
 from cogs.ai import ai_group
 from utils.embeds import ai_disclosure_field, build_embed, COLOR_SUCCESS, error_embed, success_embed
-from utils import ai_actions
+from utils.ai import YuukaContext, run_agent
 from utils.errors import UserWarning
-from utils.llm import generate_chat_stream_response
 
 
 class AIChatCog(commands.Cog, name="AI Chat"):
@@ -235,16 +234,27 @@ class AIChatCog(commands.Cog, name="AI Chat"):
                 full_response = ""
                 last_edit = time.time()
                 error_occurred = False
-                pending_action = None
 
-                # No guild means no voice channel and no music player, so the
-                # model is not told actions exist and cannot ask for one.
-                catalog = ai_actions.catalog_for(self.bot) if message.guild else ""
+                async def flush(_extra: str = "") -> None:
+                    # An action tool is about to post its own embed; make sure
+                    # her acknowledgement is already on screen above it.
+                    if active_msg and current_chunk_text and active_msg.content != current_chunk_text:
+                        await active_msg.edit(content=current_chunk_text, embed=None)
 
-                async for msg_type, chunk in generate_chat_stream_response(
-                    history, action_catalog=catalog
-                ):
+                # No guild means no voice channel and no music player, so there
+                # is nobody to run actions on behalf of.
+                ctx = YuukaContext(
+                    bot=self.bot,
+                    guild=message.guild,
+                    requester=message.author if message.guild else None,
+                    channel=message.channel,
+                    before_action=flush,
+                )
+
+                async for msg_type, chunk in run_agent(history, ctx):
                     if msg_type == "status":
+                        if not chunk:
+                            continue
                         embed = discord.Embed(description=chunk, color=discord.Color.blue())
                         if not active_msg:
                             active_msg = await message.reply(embed=embed)
@@ -271,8 +281,6 @@ class AIChatCog(commands.Cog, name="AI Chat"):
                         else:
                             await active_msg.edit(content=current_chunk_text or None, embed=error_embed("AI Error", user_msg))
                         break
-                    elif msg_type == "action":
-                        pending_action = chunk
                     elif msg_type == "content":
                         current_chunk_text += chunk
                         full_response += chunk
@@ -297,29 +305,6 @@ class AIChatCog(commands.Cog, name="AI Chat"):
 
                 if full_response and not full_response.startswith("❌"):
                     history.append({"role": "assistant", "content": full_response})
-
-                if pending_action is not None:
-                    await self._run_action(message, pending_action)
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Model-requested commands
-    # ──────────────────────────────────────────────────────────────────────
-
-    async def _run_action(self, message: discord.Message, action: dict[str, str]) -> None:
-        """Run a command the model asked for during a text-chat turn.
-
-        Whatever she wrote before the tag was already posted as her reply, so
-        all that is left is to run the thing and let `utils.ai_actions` post the
-        embed documenting it.
-        """
-        await ai_actions.run_action(
-            self.bot,
-            name=action["name"],
-            arg=action["arg"],
-            guild=message.guild,
-            member=message.author,
-            fallback_channel=message.channel,
-        )
 
     # ──────────────────────────────────────────────────────────────────────
     # on_reaction_add — short reaction to user emoji on bot's message
@@ -364,8 +349,18 @@ class AIChatCog(commands.Cog, name="AI Chat"):
             last_edit = time.time()
             error_occurred = False
 
-            async for msg_type, chunk in generate_chat_stream_response(short_history):
+            # No requester: a reaction is not a request, so no action tools.
+            ctx = YuukaContext(
+                bot=self.bot,
+                guild=message.guild,
+                requester=None,
+                channel=message.channel,
+            )
+
+            async for msg_type, chunk in run_agent(short_history, ctx):
                 if msg_type == "status":
+                    if not chunk:
+                        continue
                     embed = discord.Embed(description=chunk, color=discord.Color.blue())
                     if not active_msg:
                         active_msg = await message.channel.send(embed=embed)

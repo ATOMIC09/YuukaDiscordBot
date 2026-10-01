@@ -113,8 +113,8 @@ def setup(bot: discord.Bot):
   - `OLLAMA_SYSTEM_PROMPT` — system prompt injected at the start of every AI chat session
 
 > **Note**: The config keys are named `OLLAMA_*` for historical reasons, but the LLM backend is now
-> **OpenRouter** (not Ollama). The actual HTTP client in `utils/llm.py` targets the OpenRouter
-> `/chat/completions` endpoint with an `Authorization: Bearer` header.
+> **OpenRouter** (not Ollama). The client is LangChain's `ChatOpenAI` pointed at OpenRouter
+> (`utils/ai/models.py`).
 
 ### 5. Logging (`bot/logger.py`)
 - Uses **loguru** (`from loguru import logger`).
@@ -149,7 +149,7 @@ def setup(bot: discord.Bot):
 - **Response trigger**: Yuuka only generates a reply when she is `@mentioned` in an active channel.
 - **State**: `AIChatCog.active_channels` is a dict mapping `channel_id → list[dict]` (OpenAI-format message history).
 - **History pruning**: History is capped at `MAX_HISTORY_LENGTH = 5` turns to stay within token limits.
-- **LLM backend**: Calls `utils.llm.generate_chat_response(messages)` → OpenRouter.
+- **LLM backend**: Calls `utils.ai.run_agent(history, ctx)` → OpenRouter (see "LLM Backend" below).
 - **Message formatting**: Each user message is prefixed with timestamp and display name for context.
 
 ---
@@ -307,14 +307,13 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 
 ---
 
-## LLM Backend — `utils/llm.py`
+## LLM Backend — `utils/ai/`
 
-- **Provider**: [OpenRouter](https://openrouter.ai/) — OpenAI-compatible API.
-- **Endpoint**: `{OLLAMA_BASE_URL}/chat/completions`
-- **Auth**: `Authorization: Bearer <API_KEY>` header.
-- **Payload**: standard OpenAI `messages` array + `model` field. No streaming.
+- **Provider**: [OpenRouter](https://openrouter.ai/) through LangChain core (`langchain-core`, `langchain-openai`). No LangGraph.
+- **Agent loop**: `run_agent(history, ctx)` in `agent.py` — the model picks a tool, the result goes back, up to `MAX_ROUNDS` model calls (the last without tools). Yields `("status" | "content" | "action" | "error", payload)`.
+- **Tools**: standard LangChain `@tool`s in `utils/ai/tools/`, chosen per turn by `tools_for(ctx)`. Per-turn Discord state is passed as `YuukaContext` via `InjectedToolArg`, so the model never sees it.
+- **No native tool calls**: the free model has none, so `ToolPromptChatModel` (`tool_calling.py`) describes tools in the prompt and parses `<tool_call>{...}</tool_call>` back into `AIMessage.tool_calls`.
 - **History squashing**: consecutive messages with the same `role` are merged (required by some instruct models).
-- **Timeout**: 60 seconds total per request.
 
 ---
 

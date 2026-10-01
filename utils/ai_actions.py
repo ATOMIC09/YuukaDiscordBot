@@ -4,14 +4,11 @@ The bridge between an `[ACTION: ...]` tag from the LLM and a real bot command.
 
 Why this exists
 ---------------
-`utils.llm` can tell you the model asked for `music_play`, but it has no idea
-what a guild or a voice channel is. The cogs know that, but each of them would
-otherwise grow its own copy of "parse the intent, find the cog, run the thing,
-report what happened". This module is the single place that knows:
+The agent's music tools (`utils.ai.tools.music`) know the model asked for
+`music_play`, but not what a guild or a voice channel is. This module is the
+single place that knows how to turn that into a real bot command:
 
-  * which actions exist at all (`ACTIONS`), and how to describe them to the model
-    (`catalog_for` — a model is never told about an action whose cog is not
-    loaded, so it cannot ask for something that would only fail),
+  * which actions exist at all (`ACTIONS`),
   * how to actually run one (`run_action`),
   * and what the user sees while it runs.
 
@@ -19,7 +16,7 @@ That last point is not cosmetic. When Yuuka runs a command on her own initiative
 there is no slash-command invocation in the channel to point at afterwards, so
 the embed *is* the audit trail: it names the command, the argument, the person
 whose request triggered it, and how it turned out. It follows the same
-post-then-edit shape as the web-search status embed in `utils.llm`, so
+post-then-edit shape as the web-search status embed in the agent, so
 AI-initiated work looks consistent wherever it shows up.
 
 Voice sessions
@@ -51,11 +48,10 @@ _PLAYER_COG = "PlayerCog"
 
 @dataclass(frozen=True)
 class ActionSpec:
-    """One action the model may request, and how it is described to the model."""
+    """One action the model may request."""
 
-    tag: str            # what goes inside [ACTION: ...]
     command: str        # the slash command it stands in for, for the embed
-    description: str    # shown to the model in the catalog
+    description: str
     requires_cog: str = ""
 
 
@@ -72,38 +68,21 @@ class ActionResult:
 
 ACTIONS: dict[str, ActionSpec] = {
     "music_play": ActionSpec(
-        tag="music_play | song name or URL",
         command="/music play",
         description="play or queue a song in the voice channel the user is in",
         requires_cog=_PLAYER_COG,
     ),
     "music_skip": ActionSpec(
-        tag="music_skip",
         command="/music skip",
         description="skip the song playing right now",
         requires_cog=_PLAYER_COG,
     ),
     "music_stop": ActionSpec(
-        tag="music_stop",
         command="/music stop",
         description="stop playback and clear the whole queue",
         requires_cog=_PLAYER_COG,
     ),
 }
-
-
-def catalog_for(bot: discord.Bot) -> str:
-    """Render the actions this bot can currently run, for the system prompt.
-
-    An action whose cog failed to load is left out entirely rather than offered
-    and then refused — the model cannot ask for what it was never told about.
-    """
-    lines = [
-        f"[ACTION: {spec.tag}] — {spec.description}"
-        for spec in ACTIONS.values()
-        if not spec.requires_cog or bot.get_cog(spec.requires_cog) is not None
-    ]
-    return "\n".join(lines)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -30,12 +30,13 @@ How speech reaches the LLM
    deliberately calling her just to say hi.
 5. The accepted text goes through the same LLM → TTS → playback path as a
    typed message.
-6. If the model answers with an `[ACTION: ...]` tag instead of plain prose, it
-   is asking to run one of the bot's own commands (`utils.ai_actions`). She
-   speaks whatever she said before the tag, waits for it to actually finish
-   (a track cannot start while she is mid-sentence — one VoiceClient), then
-   runs the command. The session is never torn down: while music plays she
-   keeps listening and answers in the text channel instead of out loud.
+6. The reply comes from the agent loop (`utils.ai.run_agent`), which may call
+   tools first. The sentence she writes before a tool is spoken right away so
+   the room is not left in silence while it runs. A tool that runs a bot
+   command (`utils.ai_actions`) also waits for that speech to finish first
+   (a track cannot start while she is mid-sentence — one VoiceClient). The
+   session is never torn down: while music plays she keeps listening and
+   answers in the text channel instead of out loud.
 
 Both a typed message and a spoken one land in `_respond()`, so the two entry
 points cannot drift apart.
@@ -57,7 +58,8 @@ from discord.ext import commands
 
 from bot.config import config
 from bot.logger import logger
-from utils import ai_actions, wake
+from utils import wake
+from utils.ai import YuukaContext, run_agent
 from utils.embeds import (
     ai_disclosure_field,
     build_embed,
@@ -66,7 +68,6 @@ from utils.embeds import (
     info_embed,
 )
 from utils.errors import UserError, UserWarning
-from utils.llm import generate_chat_stream_response
 from utils.stt import ensure_loaded, model_description, transcribe_pcm
 from utils.tts import synthesize_speech
 from utils.voice_hub import SpeechSegment, voice_hub
@@ -462,19 +463,32 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             logger.debug(f"[AI Voice] Busy in guild {guild_id}, not replying to {speaker}")
             return
 
-        # Without a resolved Member there is nobody to run a command on behalf
-        # of, so the model is not told actions exist and cannot ask for one.
-        catalog = ai_actions.catalog_for(self.bot) if member is not None else ""
-
         session.busy = True
-        action: dict[str, str] | None = None
         full_response = ""
+        spoken_upto = 0  # how much of full_response has already been spoken
         try:
+            async def before_action(extra: str = "") -> None:
+                # The sentence before the tool call was spoken on its status
+                # event. Anything the tool adds goes next, and the track must
+                # not start until all of it has been said.
+                if extra:
+                    await self._speak(session, extra)
+                await self._await_speech(session)
+
+            # Without a resolved Member there is nobody to run a command on
+            # behalf of, so no action tools are offered.
+            ctx = YuukaContext(
+                bot=self.bot,
+                guild=session.text_channel.guild,
+                requester=member,
+                channel=session.text_channel,
+                voice=True,
+                before_action=before_action,
+            )
+
             try:
                 async with session.text_channel.typing():
-                    async for msg_type, chunk in generate_chat_stream_response(
-                        session.history, action_catalog=catalog
-                    ):
+                    async for msg_type, chunk in run_agent(session.history, ctx):
                         if msg_type == "error":
                             dev_msg = chunk.get("dev", chunk) if isinstance(chunk, dict) else chunk
                             user_msg = chunk.get("user", chunk) if isinstance(chunk, dict) else chunk
@@ -485,72 +499,41 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                             return
                         elif msg_type == "content":
                             full_response += chunk
+                        elif msg_type == "status":
+                            # A tool is about to run. Say what she has written
+                            # so far now, instead of leaving the room silent.
+                            # The status text itself is never spoken.
+                            pending = full_response[spoken_upto:]
+                            if pending.strip():
+                                await self._speak(session, pending)
+                                spoken_upto = len(full_response)
                         elif msg_type == "action":
-                            action = chunk
-                        # "status" chunks (web search) are silently ignored in voice mode
+                            # Said when the command failed, or when she gave no
+                            # acknowledgement of her own. Out loud if the slot
+                            # is free, in text if a track has taken it.
+                            if not chunk.ok or not full_response.strip():
+                                await self._speak(session, chunk.spoken_fallback)
             except Exception as exc:
                 logger.error(f"[AI Voice] LLM error in guild {guild_id}: {exc}")
                 await session.text_channel.send(embed=error_embed("AI Error", str(exc)))
                 return
 
-            if not full_response and action is None:
+            if not full_response:
                 logger.warning(f"[AI Voice] Empty response in guild {guild_id}")
                 return
 
-            if full_response:
-                logger.debug(f"[AI Voice] LLM response ({len(full_response)} chars): {full_response}")
-                session.history.append({"role": "assistant", "content": full_response})
+            logger.debug(f"[AI Voice] LLM response ({len(full_response)} chars): {full_response}")
+            session.history.append({"role": "assistant", "content": full_response})
 
-            if action is None:
-                await self._speak(session, full_response)
-            else:
-                # Deliberately still inside the busy window: an action runs for
-                # seconds and ends by tearing the session down, and a second
-                # generation starting on top of that would race the teardown.
-                await self._run_action(guild_id, session, member, action, full_response)
+            tail = full_response[spoken_upto:]
+            if tail.strip():
+                if spoken_upto:
+                    # _speak posts text instead of speaking while the voice
+                    # client is busy, and that includes her own earlier sentence.
+                    await self._await_speech(session)
+                await self._speak(session, tail)
         finally:
             session.busy = False
-
-    async def _run_action(
-        self,
-        guild_id: int,
-        session: VoiceChatSession,
-        member: discord.Member | None,
-        action: dict[str, str],
-        ack: str,
-    ) -> None:
-        """Speak the acknowledgement, then run the command it asked for."""
-        if member is None:
-            logger.warning(
-                f"[AI Voice] Action '{action['name']}' in guild {guild_id} "
-                "has no resolved requester, ignoring"
-            )
-            return
-
-        # Said before the command runs, and awaited: the room hears something
-        # during the yt-dlp lookup, and — since a track and her voice share one
-        # VoiceClient — playback cannot start while she is still mid-sentence.
-        if ack:
-            await self._speak(session, ack)
-            await self._await_speech(session)
-
-        result = await ai_actions.run_action(
-            self.bot,
-            name=action["name"],
-            arg=action["arg"],
-            guild=member.guild,
-            member=member,
-            fallback_channel=session.text_channel,
-        )
-
-        if result is None:
-            # A name the model invented. Nothing ran, nothing was posted.
-            return
-
-        # Either way she reports back — out loud if the slot is free, in text if
-        # a track has taken it. The session keeps running regardless.
-        if not result.ok or not ack:
-            await self._speak(session, result.spoken_fallback)
 
     # ──────────────────────────────────────────────────────────────────────
     # Public API — called by AIChatCog

@@ -11,6 +11,13 @@ are described to it in the prompt and it answers in plain text:
 standard `AIMessage.tool_calls`, so everything above it (tools, the agent loop)
 is ordinary LangChain and would work unchanged on a model with native tools.
 
+gpt-oss models sometimes fall back to their native "harmony" format instead,
+and some providers pass its special tokens through as text:
+
+    <|start|>assistant<|channel|>commentary to=functions.web_search<|message|>{...}<|call|>
+
+That is parsed as a call too.
+
 Call text is never yielded as content: it must not reach Discord or TTS.
 """
 
@@ -40,6 +47,14 @@ from bot.logger import logger
 
 _OPEN = "<tool_call>"
 _CLOSE = "</tool_call>"
+
+# Harmony special tokens. Any of them starts a block that is never shown;
+# `<|call|>` ends a call.
+_HARMONY_OPENERS = ("<|start|>", "<|channel|>", "<|constrain|>", "<|message|>", "<|call|>")
+_HARMONY_CALL = "<|call|>"
+_HARMONY_TOKEN = re.compile(r"<\|[a-z]+\|>")
+_HARMONY_RECIPIENT = re.compile(r"to=([\w.\-]+)")
+_HARMONY_FINAL = re.compile(r"<\|channel\|>\s*final\b.*?<\|message\|>(.*)", re.S)
 
 _TOOL_INSTRUCTIONS = """
 
@@ -112,17 +127,18 @@ def render_messages(messages: Sequence[BaseMessage], tools: list[dict]) -> list[
     return [kinds[role](content=content) for role, content in squashed]
 
 
-def _parse_call(raw: str) -> dict[str, Any] | None:
-    """Turn the text between the tags into {"name", "args"}, or None if unusable."""
-    raw = raw.strip()
-    raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw).strip()
+def _load_json(raw: str) -> Any:
+    raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip()).strip()
     try:
-        data = json.loads(raw)
+        return json.loads(raw)
     except ValueError:
         try:
-            data = parse_partial_json(raw)
+            return parse_partial_json(raw)
         except Exception:
             return None
+
+
+def _to_call(data: Any) -> dict[str, Any] | None:
     if not isinstance(data, dict) or not isinstance(data.get("name"), str):
         return None
 
@@ -137,10 +153,47 @@ def _parse_call(raw: str) -> dict[str, Any] | None:
     return {"name": data["name"].strip(), "args": args}
 
 
+def _parse_call(raw: str) -> dict[str, Any] | None:
+    """Turn the text between the tags into {"name", "args"}, or None if unusable."""
+    return _to_call(_load_json(raw))
+
+
+def _parse_harmony(raw: str) -> dict[str, Any] | None:
+    """Read a call out of a harmony block, or None if it holds no usable call."""
+    # The call follows the last recipient; anything before it may be reasoning.
+    recipients = list(_HARMONY_RECIPIENT.finditer(raw))
+    recipient = recipients[-1] if recipients else None
+    brace = raw.find("{", recipient.end() if recipient else 0)
+    if brace == -1:
+        return None
+    token = _HARMONY_TOKEN.search(raw, brace)
+    data = _load_json(raw[brace : token.start() if token else len(raw)])
+    call = _to_call(data)
+    if call is not None or recipient is None or not isinstance(data, dict):
+        return call
+    # Native harmony names the tool in the recipient and sends only the arguments.
+    return _to_call({"name": recipient.group(1).removeprefix("functions."), "arguments": data})
+
+
+def _harmony_final(raw: str) -> str:
+    """The answer in a harmony `final` channel, if the block is one."""
+    match = _HARMONY_FINAL.search(raw)
+    return _HARMONY_TOKEN.sub("", match.group(1)).strip() if match else ""
+
+
+def _find_open(buffer: str) -> tuple[int, str | None]:
+    """Where the earliest call opener starts, and which kind it is."""
+    found = [(buffer.find(_OPEN), "tag")]
+    found += [(buffer.find(token), "harmony") for token in _HARMONY_OPENERS]
+    found = [(pos, kind) for pos, kind in found if pos != -1]
+    return min(found) if found else (-1, None)
+
+
 def _partial_open_len(buffer: str) -> int:
-    """Length of the longest buffer suffix that could still grow into the open tag."""
-    for size in range(min(len(buffer), len(_OPEN) - 1), 0, -1):
-        if _OPEN.startswith(buffer[-size:]):
+    """Length of the longest buffer suffix that could still grow into an opener."""
+    openers = (_OPEN, *_HARMONY_OPENERS)
+    for size in range(min(len(buffer), max(map(len, openers)) - 1), 0, -1):
+        if any(opener.startswith(buffer[-size:]) for opener in openers):
             return size
     return 0
 
@@ -185,7 +238,7 @@ class ToolPromptChatModel(BaseChatModel):
         stream = self.inner.astream(rendered, stop=stop, **kwargs)
 
         buffer = ""
-        in_call = False
+        mode: str | None = None  # "tag" or "harmony" once a call has started
         call: dict[str, Any] | None = None
 
         async def emit(text: str):
@@ -197,37 +250,46 @@ class ToolPromptChatModel(BaseChatModel):
             async for piece in stream:
                 buffer += _text(piece)
 
-                if not in_call:
-                    start = buffer.find(_OPEN)
-                    if start == -1:
+                if mode is None:
+                    start, mode = _find_open(buffer)
+                    if mode is None:
                         keep = _partial_open_len(buffer)
                         out, buffer = buffer[: len(buffer) - keep], buffer[len(buffer) - keep :]
                         if out:
                             yield await emit(out)
                         continue
-                    out, buffer, in_call = buffer[:start], buffer[start + len(_OPEN) :], True
+                    out = buffer[:start]
+                    # Harmony keeps its tokens: the recipient sits between them.
+                    buffer = buffer[start + len(_OPEN) :] if mode == "tag" else buffer[start:]
                     if out:
                         yield await emit(out)
 
-                end = buffer.find(_CLOSE)
+                close = _CLOSE if mode == "tag" else _HARMONY_CALL
+                end = buffer.find(close)
                 if end != -1:
-                    call = _parse_call(buffer[:end])
-                    if call is None:
-                        logger.warning(f"[Tools] Dropped unreadable tool call: {buffer[:end][:200]!r}")
-                    buffer = ""
-                    in_call = False
+                    block, buffer = buffer[:end], ""
                     break
+            else:
+                block = buffer
         finally:
             aclose = getattr(stream, "aclose", None)
             if aclose is not None:
                 await aclose()
 
-        if in_call and buffer.strip():
-            # The model stopped before closing the tag; its JSON may still be whole.
-            call = _parse_call(buffer)
+        if mode == "tag":
+            # An unclosed tag means the model stopped early; its JSON may still be whole.
+            call = _parse_call(block) if block.strip() else None
+            if call is None and block.strip():
+                logger.warning(f"[Tools] Dropped unreadable tool call: {block[:200]!r}")
+        elif mode == "harmony":
+            call = _parse_harmony(block)
             if call is None:
-                logger.warning(f"[Tools] Dropped unterminated tool call: {buffer[:200]!r}")
-        elif not in_call and call is None and buffer:
+                final = _harmony_final(block)
+                if final:
+                    yield await emit(final)
+                else:
+                    logger.warning(f"[Tools] Dropped harmony block: {block[:200]!r}")
+        elif buffer:
             yield await emit(buffer)
 
         if call is not None:

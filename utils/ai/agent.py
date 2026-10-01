@@ -33,7 +33,7 @@ from utils.ai.context import YuukaContext
 from utils.ai.linker import ChannelLinker
 from utils.ai.models import chat_model
 from utils.ai.tool_calling import FABRICATED, ToolPromptChatModel
-from utils.ai.tools import status_line, tools_for
+from utils.ai.tools import music, status_line, tools_for
 from utils.ai_actions import ActionResult
 from utils.errors import UserError, UserWarning
 
@@ -115,12 +115,15 @@ async def _run_tool(tools: dict, call: dict, ctx: YuukaContext) -> tuple[ToolMes
 
 
 async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tuple[str, Any], None]:
+    tools = {t.name: t for t in tools_for(ctx)}
+
     messages = [dict(m) for m in history]
     if messages and messages[0]["role"] == "system":
         messages[0]["content"] += _cache_notice()
+        if "music_play" in tools:
+            messages[0]["content"] += music.now_playing_notice(ctx)
     conversation = convert_to_messages(messages)
 
-    tools = {t.name: t for t in tools_for(ctx)}
     plain = ToolPromptChatModel(inner=chat_model())
     with_tools = plain.bind_tools(list(tools.values())) if tools else plain
 

@@ -57,6 +57,23 @@ def _player(ctx: YuukaContext):
     return ctx.bot.get_cog("PlayerCog")
 
 
+def now_playing_notice(ctx: YuukaContext) -> str:
+    """The current song, for the prompt: "replay this song" then needs no lookup.
+
+    A lookup is a call whose result only arrives in a later reply, and a music
+    action ends the turn, so without this "stop, wait, play this again" cannot
+    be done in one reply.
+    """
+    state = _player(ctx).get_state(ctx.guild.id)
+    if state.current is None:
+        return "\n\n[MUSIC] Nothing is playing right now."
+    waiting = len(state.queue) + (1 if state.crossfade_next else 0)
+    return (
+        f"\n\n[MUSIC] Playing right now: {state.current.title} <{state.current.original_url}>. "
+        f"Songs waiting in the queue: {waiting}."
+    )
+
+
 def _describe(track) -> str:
     from cogs.voice.player import format_duration
 

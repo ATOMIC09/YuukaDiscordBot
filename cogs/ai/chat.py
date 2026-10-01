@@ -316,6 +316,14 @@ class AIChatCog(commands.Cog, name="AI Chat"):
                 if not error_occurred and active_msg and current_chunk_text and active_msg.content != current_chunk_text:
                     await active_msg.edit(content=current_chunk_text, embed=None)
 
+                # A turn of actions only (music, wait) writes no text, so the message is
+                # still a "กำลัง…" status embed that would claim it is still running.
+                if not error_occurred and active_msg and not full_response.strip():
+                    try:
+                        await active_msg.delete()
+                    except discord.HTTPException:
+                        pass
+
                 if full_response and not full_response.startswith("❌"):
                     history.append({"role": "assistant", "content": full_response})
 

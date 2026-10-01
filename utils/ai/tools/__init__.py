@@ -10,7 +10,7 @@ from typing import Callable
 from langchain_core.tools import BaseTool
 
 from utils.ai.context import YuukaContext
-from utils.ai.tools import actions, discord_read, music, reminders, search, server
+from utils.ai.tools import actions, discord_read, music, reminders, search, server, wait
 
 _STATUS: dict[str, Callable[[dict], str]] = {
     **search.STATUS,
@@ -19,6 +19,7 @@ _STATUS: dict[str, Callable[[dict], str]] = {
     **music.STATUS,
     **actions.STATUS,
     **reminders.STATUS,
+    **wait.STATUS,
 }
 
 
@@ -32,7 +33,8 @@ def tools_for(ctx: YuukaContext) -> list[BaseTool]:
         tools += server.TOOLS + discord_read.TOOLS
 
     if ctx.guild and ctx.requester and ctx.bot.get_cog("PlayerCog") is not None:
-        tools += music.TOOLS
+        # Waiting only makes sense between actions, and music is where they chain.
+        tools += music.TOOLS + wait.TOOLS
 
     if ctx.guild and actions.can_move_members(ctx):
         tools.append(actions.voice_kick)

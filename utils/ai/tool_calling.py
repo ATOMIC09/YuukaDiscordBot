@@ -99,8 +99,8 @@ Rules:
 # is an answer, and starts streaming.
 _PREAMBLE_CHARS = 300
 
-# Calls one reply may make ("play it, queue Beat It, then skip"). Reading stops at
-# the last, so a model that keeps going cannot run a long list.
+# Calls one reply may make ("play it, queue Beat It, wait 10 s, skip"). Reading stops
+# at the last, so a model that keeps going cannot run a long list.
 _MAX_CALLS = 5
 
 # After a long tool result in mixed languages, gpt-oss drifts into a language

@@ -43,6 +43,11 @@ def _line(message: discord.Message) -> str:
     return f"[{stamp}] {message.author.display_name}: {text} <{message.jump_url}>"
 
 
+def _source(channel: discord.TextChannel | discord.Thread) -> str:
+    # The mention renders as a clickable channel link in Discord.
+    return f"{channel.mention} (#{channel.name}); cite it as {channel.mention} in your answer"
+
+
 async def _history(channel, limit: int):
     try:
         async for message in channel.history(limit=limit):
@@ -73,7 +78,7 @@ async def read_messages(channel: str, ctx: Ctx, limit: int = 50) -> str:
         dropped += 1
 
     logger.info(f"[AI Tools] read_messages #{target.name}: {len(lines)} messages for {ctx.requester}")
-    header = f"#{target.name}, oldest first"
+    header = f"{_source(target)}, oldest first"
     if dropped:
         header += f" ({dropped} older messages left out to fit)"
     return header + "\n" + "\n".join(lines)
@@ -104,7 +109,10 @@ async def search_messages(query: str, channel: str, ctx: Ctx, limit: int = 500) 
     logger.info(f"[AI Tools] search_messages '{query}' in #{target.name}: {len(matches)} hits for {ctx.requester}")
     if not matches:
         return f"No message in #{target.name} contains '{query}' (checked {checked} messages)."
-    return f"{len(matches)} match(es) in #{target.name}, newest first:\n" + "\n".join(_line(m) for m in matches)
+    return (
+        f"{len(matches)} match(es) in {_source(target)}, newest first:\n"
+        + "\n".join(_line(m) for m in matches)
+    )
 
 
 def _read_status(args: dict) -> str:

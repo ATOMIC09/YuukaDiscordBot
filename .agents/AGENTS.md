@@ -7,17 +7,17 @@ Read this file before making any changes to understand the architecture, convent
 
 ## Project Overview
 
-**Yuuka** is a Discord bot built with:
-- **[py-cord](https://docs.pycord.dev/)** (`py-cord[speed,voice]>=2.8.0`) — Discord API wrapper (NOT `discord.py`)
+**Yuuka** is a Thai-speaking Discord bot (persona: Yuuka from Blue Archive) built with:
+- **[py-cord](https://docs.pycord.dev/)** (`py-cord[speed,voice]`, installed from a PR ref in `[tool.uv.sources]`) — Discord API wrapper (NOT `discord.py`)
 - **[uv](https://astral.sh/uv)** — Python package & virtual environment manager
-- **Python 3.12+**
+- **Python 3.12–3.13**
 
-The bot's primary features are:
-1. **Application commands** — slash commands (`/command`) and context menus (right-click menus)
-2. **AI chat** — stateful per-channel LLM conversations via OpenRouter
-3. **Voice listening** — receive and process audio from users via pycord's sink API
-4. **Voice transcription** — real-time STT using faster-whisper (multilingual Thai/English)
-5. **AI voice chat** — wake-word-gated spoken conversation (`/ai voice`)
+Main features:
+1. **AI chat** (`/ai chat`, `@mention`) — an agent on OpenRouter (LangChain core) that can search the web, read channels, control music, look up members and set reminders
+2. **AI voice chat** (`/ai voice`) — wake-word-gated spoken conversation (STT → agent → TTS)
+3. **Music player** (`/music …`) — yt-dlp streaming with queue, loop, seek and crossfade
+4. **Voice tools** — recording, live captions, attendance, kick, countdown disconnect
+5. **Image tools** — `/image …` and right-click message commands
 
 ---
 
@@ -25,48 +25,59 @@ The bot's primary features are:
 
 ```
 YuukaDiscordBot/
-├── main.py                   # Entry point: loads bot, auto-loads all cogs, runs
-├── pyproject.toml            # uv project manifest
-├── .env                      # Secrets (BOT_TOKEN, etc.) — NEVER commit this
-├── .env.example              # Template for .env — ALWAYS keep updated
-├── .python-version           # Python version pin for uv
+├── main.py                   # Entry point: builds YuukaBot, loads cogs, runs
+├── pyproject.toml, uv.lock   # uv manifest and lock (commit them together)
+├── .env.example              # Every env var bot/config.py reads — copy to .env
+├── Dockerfile                # Production image (ffmpeg + uv sync --frozen --no-dev)
+├── .github/workflows/        # docker-build.yml: publishes the image to ghcr.io on a v*.*.* tag
 │
-├── bot/                      # Core bot package
-│   ├── __init__.py
-│   ├── bot.py                # Bot subclass (YuukaBot) — intents, event hooks, cog loader
-│   ├── config.py             # Loads .env → typed Config dataclass
-│   └── logger.py             # Loguru logger setup — import logger from here
+├── bot/
+│   ├── bot.py                # YuukaBot(discord.Bot) — intents, cog loader
+│   ├── config.py             # .env → frozen Config dataclass (singleton `config`)
+│   └── logger.py             # Loguru setup — import `logger` from here
 │
-├── cogs/                     # Feature cogs (auto-loaded by main.py)
-│   ├── __init__.py
-│   ├── ai/                   # AI chat feature
-│   │   ├── __init__.py
-│   │   ├── chat.py           # /ai chat, /ai stop — text chat; owns the reminder scheduler
-│   │   └── voice_chat.py     # /ai voice — wake-word-gated spoken chat
-│   ├── voice/                # Voice feature group
-│   │   ├── __init__.py
-│   │   ├── listener.py       # /record start, /record stop — saves Opus files
-│   │   └── transcribe.py     # /transcribe start, /transcribe stop — live captions (no wake word)
-│   ├── general/              # (empty — stub cogs removed; re-add when implementing)
-│   │   └── __init__.py
-│   └── moderation/           # (empty — stub cog removed; re-add when implementing)
-│       └── __init__.py
+├── cogs/                     # Auto-loaded: every *.py except __init__.py
+│   ├── ai/
+│   │   ├── __init__.py       # The shared /ai SlashCommandGroup
+│   │   ├── chat.py           # /ai chat, /ai voice, /ai stop; @mention replies; owns the reminder scheduler
+│   │   └── voice_chat.py     # Voice-chat logic (no commands of its own; chat.py calls it)
+│   ├── voice/
+│   │   ├── player.py         # /music … — the music player (PlayerCog)
+│   │   ├── listener.py       # /record start|stop
+│   │   ├── transcribe.py     # /transcribe start|stop — live captions (no wake word)
+│   │   ├── attendance.py     # /attendance (with CSV), /absent
+│   │   ├── kick.py           # /kick — disconnect a member from voice
+│   │   └── countdis.py       # /countdis — countdown, then disconnect everyone
+│   ├── general/
+│   │   ├── help.py           # /help
+│   │   ├── info.py           # /status, /user, /server
+│   │   ├── image.py          # /image pet|resize|scale|qr + Deepfry/Grayscale/Wide/Image Info message commands
+│   │   ├── imgaudio.py       # /imgaudio — video from the channel's latest image and audio
+│   │   ├── feedback.py       # /feedback → FEEDBACK_CHANNEL_ID
+│   │   ├── logging.py        # Logs every command to LOG_CHANNEL_ID
+│   │   ├── admin.py          # /reload (owner only)
+│   │   └── send.py           # /send (owner only)
+│   └── moderation/           # Empty placeholder package
 │
-├── utils/                    # Shared utilities (no Discord state — pure helpers)
-│   ├── __init__.py
-│   ├── checks.py             # Custom @commands.check() decorators
-│   ├── embeds.py             # Embed builder factories
-│   ├── errors.py             # Global on_application_command_error handler
-│   ├── ai/                   # Yuuka agent (LangChain core): agent loop, tools, confirm, scheduler
-│   ├── ai_actions.py         # Runs music commands for the agent and posts their embeds
-│   ├── stt.py                # faster-whisper engine (ensure_loaded, transcribe_pcm)
-│   ├── audio.py              # PCM helpers: 48k stereo → 16k mono float32
-│   ├── wake.py               # Fuzzy wake-word gate (Thai/English tolerant)
-│   └── voice_hub.py          # Single owner of voice receive; emits SpeechSegments
+├── utils/
+│   ├── ai/                   # The agent: agent.py, tool_calling.py, models.py, context.py, confirm.py, scheduler.py, tools/
+│   ├── ai_actions.py         # Runs /music commands for the agent and posts their embeds
+│   ├── web_search.py         # Tavily search with an in-memory TTL cache
+│   ├── embeds.py             # Embed factories (success/error/info/warning)
+│   ├── errors.py             # UserError / UserWarning + global command error handler
+│   ├── checks.py             # Custom command checks
+│   ├── voice_hub.py          # Single owner of voice receive; emits SpeechSegments
+│   ├── stt.py                # Groq / faster-whisper transcription
+│   ├── wake.py               # Fuzzy text wake-word gate
+│   ├── wake_acoustic.py      # Acoustic wake-word pre-filter (model in models/)
+│   ├── tts.py                # Edge TTS → temp MP3
+│   ├── audio.py              # PCM helpers
+│   ├── image.py              # Image effects for /image
+│   └── video.py              # ffmpeg helpers for /imgaudio
 │
-└── assets/
-    └── audio/
-        └── recordings/       # WAV files saved by listener.py (auto-created at runtime)
+├── models/wake_word/         # Trained wake-word model used by wake_acoustic.py
+├── wakeword_training/        # Offline training/eval scripts for that model — not loaded by the bot
+└── assets/audio/recordings/  # Fallback location for /record output (created at runtime)
 ```
 
 ---
@@ -76,7 +87,7 @@ YuukaDiscordBot/
 ### 1. Bot Subclass (`bot/bot.py`)
 - The bot is an instance of `YuukaBot(discord.Bot)`.
 - Use `discord.Bot` (NOT `commands.Bot`) since we use **slash/application commands only**.
-- Required intents: `guilds`, `voice_states`, `message_content` (for the `on_message` listener in AI chat).
+- Intents: the defaults plus `members`, `presences`, `voice_states` and `message_content`. `members` is load-bearing: the agent resolves members by name, and with it `message.author` is the live cached `Member`.
 - `YuukaBot` is responsible for recursive cog loading via `load_cogs()`.
 
 ### 2. Cog Structure
@@ -99,24 +110,18 @@ def setup(bot: discord.Bot):
 ### 3. Slash Commands
 - Use `@discord.slash_command()` for slash commands.
 - Use `@discord.user_command()` / `@discord.message_command()` for context menus.
-- During **development**, pass `guild_ids=config.guild_ids` to sync commands instantly to test servers.
-- In **production**, omit `guild_ids` for global command sync.
+- Commands register **globally**. `GUILD_IDS` is parsed into `config.guild_ids`, but no cog passes it yet.
 
 ### 4. Config (`bot/config.py`)
-- All secrets and settings are loaded from `.env` via `python-dotenv`.
-- Access config via the singleton `config` object imported from `bot.config`.
-- **Never** hardcode tokens, IDs, or secrets anywhere else.
-- Key config values (all required unless noted):
-  - `BOT_TOKEN` — Discord bot token
-  - `GUILD_IDS` — comma-separated guild IDs for dev slash command sync
-  - `LOG_LEVEL` — logging verbosity (`DEBUG`, `INFO`, `WARNING`) — default: `INFO`
-  - `OLLAMA_BASE_URL` — OpenRouter base URL (e.g. `https://openrouter.ai/api/v1`)
-  - `OLLAMA_MODEL` — OpenRouter model string (e.g. `google/gemini-2.5-flash-lite`)
-  - `OLLAMA_SYSTEM_PROMPT` — system prompt injected at the start of every AI chat session
-
-> **Note**: The config keys are named `OLLAMA_*` for historical reasons, but the LLM backend is now
-> **OpenRouter** (not Ollama). The client is LangChain's `ChatOpenAI` pointed at OpenRouter
-> (`utils/ai/models.py`).
+- All settings come from `.env` via `python-dotenv` and are exposed as the frozen singleton `config`
+  (`from bot.config import config`). Never read `os.environ` elsewhere, and never hardcode tokens or IDs.
+- **`.env.example` lists every variable with its default.** Adding a setting means three edits: a field
+  in `Config`, parsing in `from_env()`, and a line in `.env.example`.
+- Required: `BOT_TOKEN`, `OPENROUTER_API_KEY`, `OPENROUTER_SYSTEM_PROMPT` — startup fails without them.
+  Optional keys switch a feature off when empty (no `TAVILY_API_KEY` = no web search, no
+  `GROQ_API_KEY` = local STT only).
+- In `.env`, keep comments on their own line when a value is empty: python-dotenv reads
+  `KEY=   # note` as the value `# note`.
 
 ### 5. Logging (`bot/logger.py`)
 - Uses **loguru** (`from loguru import logger`).
@@ -150,7 +155,7 @@ def setup(bot: discord.Bot):
 - **Activation**: `/ai chat` activates Yuuka in the current channel. She reads recent history for context, then listens passively.
 - **Response trigger**: Yuuka only generates a reply when she is `@mentioned` in an active channel.
 - **State**: `AIChatCog.active_channels` is a dict mapping `channel_id → list[dict]` (OpenAI-format message history).
-- **History pruning**: History is capped at `MAX_HISTORY_LENGTH = 5` turns to stay within token limits.
+- **History pruning**: capped at `MAX_HISTORY_LENGTH` messages (default 50); the system prompt is always kept.
 - **LLM backend**: Calls `utils.ai.run_agent(history, ctx)` → OpenRouter (see "LLM Backend" below).
 - **Reminders**: `AIChatCog.scheduler` (`utils/ai/scheduler.py`) holds in-memory reminders and voice-join watches; its `on_voice_state_update` listener fires the watches.
 - **Message formatting**: Each user message is prefixed with timestamp and display name for context.
@@ -291,28 +296,25 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
   your speakers' mics actually produce rather than guessing. The score reported on a miss is the
   best *raw* score, even if it was rejected by the short-needle floor.
 
-### TTS — (not yet implemented)
-- **Planned slash commands**: `/tts speak <text>`, `/tts voice <name>`
-- No cog file exists yet. When implementing, create `cogs/voice/tts.py`.
-- Recommended engine: **edge-tts** (`uv add edge-tts`) — free, Microsoft Edge TTS voices.
-- Alternative engines: `openai TTS`, `gTTS`, `pyttsx3`.
-- Pipeline: `edge_tts.Communicate(text, voice).save("output.mp3")` → `discord.FFmpegPCMAudio("output.mp3")` → `voice_client.play(source)`.
+### TTS — `utils/tts.py`
+- `synthesize_speech(text)` → temp MP3 via Edge TTS (`en-US-EmmaMultilingualNeural`, which also speaks Thai).
+  The caller plays it and deletes the file.
+- Only `/ai voice` uses it; there is no standalone `/tts` command.
 
-### Audio Playback — (not yet implemented)
-- **Planned slash commands**: `/join`, `/leave`, `/play <query>`, `/pause`, `/resume`, `/stop`, `/skip`, `/queue`, `/volume`
-- No cog file exists yet. When implementing, create `cogs/voice/player.py`.
-- Architecture: one `VoiceClient` per guild (dict keyed by `guild.id`), per-guild audio queue (`collections.deque`).
-- Audio source: `discord.FFmpegPCMAudio` wrapped in `discord.PCMVolumeTransformer`.
-- For URL/search playback: use **yt-dlp** to extract the direct stream URL before passing to FFmpeg.
-
-### General Commands — (not yet implemented)
-- **Planned**: `/help`, `/ping`, `/botinfo`, `/serverinfo`
-- No cog files exist yet. When implementing, create `cogs/general/help.py` and `cogs/general/info.py`.
-
-### Moderation Commands — (not yet implemented)
-- **Planned**: `/kick`, `/ban`, `/unban`, `/timeout`, `/untimeout`, `/purge`
-- No cog file exists yet. When implementing, create `cogs/moderation/mod.py`.
-- All commands should require appropriate permissions via decorators (`@commands.has_permissions(...)`).
+### Music Player — `cogs/voice/player.py`
+- `/music play|local|pause|resume|stop|skip|seek|previous|nowplaying|loop|queue|volume|leave`, plus a
+  button controller embed (`PlayerControls`).
+- Per-guild `AudioState` (`PlayerCog.get_state(guild_id)`): `queue` (deque), `current`, `history`
+  (last 10), `loop_mode`, `volume` and crossfade state.
+- yt-dlp resolves the stream; playback goes through `BufferedAudioSource` / `SeamlessCrossfadeSource`.
+  The bot leaves after 180 s idle.
+- Other code uses the public methods — `enqueue_query`, `skip_current`, `stop_playback`,
+  `remove_from_queue` — rather than editing `AudioState` directly.
+- **One `VoiceClient` per guild is shared with `/ai voice`.** `vc.play()` raises while something is
+  playing, so Yuuka can't speak during a track (she posts text instead), and a track must not start
+  while she is speaking (`AIVoiceChatCog._await_speech`).
+- The track prepared for crossfade (`state.crossfade_next`) is out of `state.queue` but still shown as
+  queue position 1; count it when indexing the queue the way users see it.
 
 ---
 
@@ -340,23 +342,14 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 
 ## Dependency Management (uv)
 
-```toml
-# pyproject.toml — key dependencies
-dependencies = [
-    "py-cord[speed,voice]>=2.8.0",
-    "python-dotenv>=1.0.0",
-    "loguru>=0.7.0",
-    "aiohttp>=3.9.0",
-    # AI agent (/ai) — core only, no LangGraph
-    "langchain-core>=1.6.6",
-    "langchain-openai>=1.6.7",
-    # STT (/transcribe and /ai voice)
-    "faster-whisper>=1.1.0",
-    "rapidfuzz>=3.9.0",
-]
-```
+Key dependencies (versions in `pyproject.toml`):
+- Discord: `py-cord[speed,voice]` (from a PR ref in `[tool.uv.sources]`)
+- AI: `langchain-core`, `langchain-openai` (no LangGraph), `tavily-python`
+- Voice: `faster-whisper`, `livekit-wakeword`, `rapidfuzz`, `edge-tts`, `yt-dlp`, `numpy`
+- Images: `pillow`, `pet-pet-gif`, `qrcode`
+- System: **ffmpeg** on PATH (playback, recording, `/imgaudio`); the Dockerfile installs it.
 
-- **Add a dependency**: `uv add <package>`
+- **Add a dependency**: `uv add <package>` (commit `uv.lock` with it)
 - **Install / sync**: `uv sync`
 - **Install / sync on a GPU box**: `uv sync --extra cuda`
 - **Run the bot**: `uv run main.py`
@@ -379,67 +372,38 @@ startup line — `[STT] Ready — large-v3-turbo / cuda / float16` — if speed 
 
 ## Environment Variables (`.env`)
 
-Copy `.env.example` to `.env` and fill in values. Never commit `.env`.
-
-```ini
-BOT_TOKEN=your_discord_bot_token_here
-GUILD_IDS=123456789,987654321       # Comma-separated dev server IDs
-
-LOG_LEVEL=DEBUG
-
-# LLM (OpenRouter) — variable names kept as OLLAMA_* for historical reasons
-OLLAMA_BASE_URL=https://openrouter.ai/api/v1
-OLLAMA_MODEL=google/gemini-2.5-flash-lite
-OLLAMA_SYSTEM_PROMPT=You are Yuuka, a helpful Discord bot assistant.
-
-# ── Speech-to-text ───────────────────────────────────────────────────────
-# Free key from https://console.groq.com/keys — the free tier is enough for
-# a hobby bot (20 req/min, 2000 req/day, 8h audio/day).
-GROQ_API_KEY=gsk_...
-STT_BACKEND=auto                    # auto | groq | local
-GROQ_MODEL=whisper-large-v3-turbo
-GROQ_TIMEOUT_S=20
-
-# Local fallback (used when Groq is unset/unreachable/rate-limited)
-STT_MODEL=auto                      # auto | tiny | base | small | large-v3-turbo | <ct2 dir>
-STT_DEVICE=auto                     # auto | cpu | cuda
-STT_COMPUTE_TYPE=auto               # auto | int8 | int8_float32 | float16 | float32
-STT_CPU_THREADS=0                   # 0 = let CTranslate2 decide
-STT_LANGUAGE=en,th,ja               # shortlist detection is restricted to;
-                                    # empty = any of Whisper's ~100, one = hard lock
-STT_BEAM_SIZE=5
-
-# Utterance segmentation
-STT_SILENCE_MS=800                  # packet silence that ends an utterance
-STT_MIN_SEGMENT_MS=400              # shorter than this is a blip, not speech
-STT_MAX_SEGMENT_S=20                # force-flush a monologue
-STT_MIN_PEAK=0.02                   # reject segments quieter than this
-
-# Wake word (/ai voice only — /transcribe is deliberately ungated)
-STT_WAKE_WORDS=ยูกะ,ยูคะ,ยุกะ,ยูกา,yuuka,yuka,yuuca
-STT_WAKE_THRESHOLD=80               # rapidfuzz partial_ratio 0-100
-STT_WAKE_HEAD_CHARS=0               # 0 = name anywhere in the sentence; N = first N chars
-STT_WAKE_BRIDGE_WINDOW_S=2.5        # how long a bare-name segment waits for its continuation
-STT_WAKE_ACOUSTIC_CONFIDENT_SCORE=0.5  # acoustic score that trusts a near-miss text match
-STT_WAKE_RELAXED_THRESHOLD=70       # text threshold used once that confident
-```
+See **`.env.example`**: every variable `bot/config.py` reads, with its default and a short note.
+Copy it to `.env`; never commit `.env`.
 
 ---
 
 ## Development Workflow
 
-1. `uv sync` — install/update dependencies
-2. Copy `.env.example` → `.env` and fill in `BOT_TOKEN` and OpenRouter keys
-3. `uv run main.py` — start the bot
-4. Test slash commands in the dev guild(s) listed in `GUILD_IDS`
+1. `uv sync` (GPU box: `uv sync --extra cuda`)
+2. Copy `.env.example` to `.env` and fill in the required values
+3. `uv run main.py`, then try the commands in a test server
 
-### Version Bumping
-```bash
-uv run bump-my-version bump patch   # 3.0.0 → 3.0.1
-uv run bump-my-version bump minor   # 3.0.0 → 3.1.0
-uv run bump-my-version bump major   # 3.0.0 → 4.0.0
-git push origin main --tags
-```
+### Checking a change
+There is no test suite. Before committing:
+- `uv run python -m compileall -q bot cogs utils` — syntax
+- Import every cog (`pkgutil.walk_packages` over `cogs`) — catches broken imports without connecting to Discord
+- Logic: a throwaway script with fakes (`unittest.mock`, LangChain's `GenericFakeChatModel`), kept out of the repo
+- Discord and voice behaviour still needs a run in a test server; say so if it wasn't done.
+
+### Commits
+- Work happens on `yuuka-v3` (the default branch). Don't push or tag unless asked.
+- Format: `type(scope): summary`. Types: `feat`, `fix`, `refactor`, `chore`, `docs`. Scopes in use: `ai`,
+  `voice`, `music`, `wake`, `deps`. Lowercase, imperative, no trailing period, about 60 characters.
+- Body optional: 1–3 short lines on what changed and why. One commit per meaningful step, each leaving
+  the bot working.
+
+### Releases and deployment
+- `uv run bump-my-version bump patch|minor|major` commits and tags `vX.Y.Z`. Full steps, including how
+  to undo a bump: `.agents/DEVELOPMENT.md`.
+- Pushing a `v*.*.*` tag runs `.github/workflows/docker-build.yml`, which publishes the image to ghcr.io.
+- The container is **stateless**: nothing written at runtime survives a restart (no database; reminders
+  live in memory). Don't build features that assume persistence.
+- Production runs on a CPU-only i5-6500 (see STT Engine).
 
 ---
 
@@ -461,4 +425,4 @@ git push origin main --tags
 - ❌ Do NOT install `langchain` or `langgraph` — `langchain` v1 pulls in LangGraph; use `langchain-core` / `langchain-openai` only
 - ❌ Do NOT let an AI tool act on other people without the `ConfirmActionView` button, and check the **requester's** permissions, never just the bot's
 - ❌ Do NOT let an AI tool find, list or name a channel the requester cannot see — resolve through `utils/ai/tools/resolve.py`, which treats hidden channels as nonexistent
-- ❌ Do NOT confuse `OLLAMA_*` env vars with actual Ollama — the LLM backend is now **OpenRouter**
+- ❌ Do NOT use `OLLAMA_*` env vars — nothing reads them; the LLM settings are `OPENROUTER_*`

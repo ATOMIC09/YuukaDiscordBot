@@ -10,7 +10,7 @@ from typing import Callable
 from langchain_core.tools import BaseTool
 
 from utils.ai.context import YuukaContext
-from utils.ai.tools import actions, discord_read, music, search, server
+from utils.ai.tools import actions, discord_read, music, reminders, search, server
 
 _STATUS: dict[str, Callable[[dict], str]] = {
     **search.STATUS,
@@ -18,6 +18,7 @@ _STATUS: dict[str, Callable[[dict], str]] = {
     **server.STATUS,
     **music.STATUS,
     **actions.STATUS,
+    **reminders.STATUS,
 }
 
 
@@ -39,6 +40,9 @@ def tools_for(ctx: YuukaContext) -> list[BaseTool]:
         in_voice = ctx.requester.voice and ctx.requester.voice.channel
         if in_voice and ctx.bot.get_cog("CountdisCog") is not None:
             tools.append(actions.voice_disconnect_timer)
+
+    if ctx.guild and ctx.requester and reminders.scheduler_for(ctx) is not None:
+        tools += reminders.TOOLS
 
     return tools
 

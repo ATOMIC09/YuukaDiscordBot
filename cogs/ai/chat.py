@@ -22,6 +22,7 @@ from bot.logger import logger
 from cogs.ai import ai_group
 from utils.embeds import ai_disclosure_field, build_embed, COLOR_SUCCESS, error_embed, success_embed
 from utils.ai import YuukaContext, run_agent
+from utils.ai.scheduler import ReminderScheduler
 from utils.errors import UserWarning
 
 
@@ -32,6 +33,18 @@ class AIChatCog(commands.Cog, name="AI Chat"):
         self.bot = bot
         # channel_id → list[dict]  (OpenAI-format message history)
         self.active_channels: dict[int, list[dict]] = {}
+        # Reminders and voice-join alerts set by the agent; they cost no LLM calls.
+        self.scheduler = ReminderScheduler(bot)
+
+    def cog_unload(self) -> None:
+        self.scheduler.cancel_all()
+
+    @commands.Cog.listener()
+    async def on_voice_state_update(
+        self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState
+    ) -> None:
+        if before.channel is None and after.channel is not None:
+            await self.scheduler.on_voice_join(member, after.channel)
 
     # This cog is the sole owner of the /ai SlashCommandGroup.
     # voice_chat.py (AIVoiceChatCog) has NO class-level ai attribute — it only

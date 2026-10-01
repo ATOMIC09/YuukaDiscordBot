@@ -23,6 +23,8 @@ dependencies = [
     "tinytag>=2.2.1",
     "psutil>=7.2.2",
     "livekit-wakeword>=0.2.1",
+    "langchain-core>=1.6.6",
+    "langchain-openai>=1.6.7",
 ]
 
 [project.optional-dependencies]

@@ -41,7 +41,8 @@ YuukaDiscordBot/
 │   ├── __init__.py
 │   ├── ai/                   # AI chat feature
 │   │   ├── __init__.py
-│   │   └── chat.py           # /ai chat, /ai stop — stateful LLM chat sessions
+│   │   ├── chat.py           # /ai chat, /ai stop — text chat; owns the reminder scheduler
+│   │   └── voice_chat.py     # /ai voice — wake-word-gated spoken chat
 │   ├── voice/                # Voice feature group
 │   │   ├── __init__.py
 │   │   ├── listener.py       # /record start, /record stop — saves Opus files
@@ -56,7 +57,8 @@ YuukaDiscordBot/
 │   ├── checks.py             # Custom @commands.check() decorators
 │   ├── embeds.py             # Embed builder factories
 │   ├── errors.py             # Global on_application_command_error handler
-│   ├── llm.py                # Async OpenRouter chat client (generate_chat_response)
+│   ├── ai/                   # Yuuka agent (LangChain core): agent loop, tools, confirm, scheduler
+│   ├── ai_actions.py         # Runs music commands for the agent and posts their embeds
 │   ├── stt.py                # faster-whisper engine (ensure_loaded, transcribe_pcm)
 │   ├── audio.py              # PCM helpers: 48k stereo → 16k mono float32
 │   ├── wake.py               # Fuzzy wake-word gate (Thai/English tolerant)
@@ -150,6 +152,7 @@ def setup(bot: discord.Bot):
 - **State**: `AIChatCog.active_channels` is a dict mapping `channel_id → list[dict]` (OpenAI-format message history).
 - **History pruning**: History is capped at `MAX_HISTORY_LENGTH = 5` turns to stay within token limits.
 - **LLM backend**: Calls `utils.ai.run_agent(history, ctx)` → OpenRouter (see "LLM Backend" below).
+- **Reminders**: `AIChatCog.scheduler` (`utils/ai/scheduler.py`) holds in-memory reminders and voice-join watches; its `on_voice_state_update` listener fires the watches.
 - **Message formatting**: Each user message is prefixed with timestamp and display name for context.
 
 ---
@@ -213,6 +216,12 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
 - **Echo guard**: segments overlapping Yuuka's own playback are dropped — a speaker without
   headphones has her voice coming back through their mic.
 - Spoken and typed input both funnel into `_respond()`, so the two paths cannot drift apart.
+- **Speaking around tools**: on each `status` event from `run_agent`, the sentence written so far is
+  spoken immediately (`spoken_upto`), so the room is not silent while a tool runs. `_speak` strips
+  links for TTS only; text fallbacks keep them. One `VoiceClient` is shared with music, so she
+  cannot speak while a track plays and posts text instead (`_post_unspoken`).
+- **`announce(guild_id, text)`**: speaks results that arrive after a turn ends (confirmed actions,
+  fired reminders); silent if music or her own speech holds the voice client.
 
 ### STT Engine — `utils/stt.py`
 **Two backends: Groq primary, local faster-whisper fallback.** `STT_BACKEND=auto` (default) uses
@@ -309,10 +318,22 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 
 ## LLM Backend — `utils/ai/`
 
-- **Provider**: [OpenRouter](https://openrouter.ai/) through LangChain core (`langchain-core`, `langchain-openai`). No LangGraph.
-- **Agent loop**: `run_agent(history, ctx)` in `agent.py` — the model picks a tool, the result goes back, up to `MAX_ROUNDS` model calls (the last without tools). Yields `("status" | "content" | "action" | "error", payload)`.
-- **Tools**: standard LangChain `@tool`s in `utils/ai/tools/`, chosen per turn by `tools_for(ctx)`. Per-turn Discord state is passed as `YuukaContext` via `InjectedToolArg`, so the model never sees it.
-- **No native tool calls**: the free model has none, so `ToolPromptChatModel` (`tool_calling.py`) describes tools in the prompt and parses `<tool_call>{...}</tool_call>` back into `AIMessage.tool_calls`.
+- **Provider**: [OpenRouter](https://openrouter.ai/) through LangChain core (`langchain-core`, `langchain-openai`). **No LangGraph** — do not add `langchain` or `langgraph`; the loop is hand-written.
+- **Agent loop**: `run_agent(history, ctx)` in `agent.py` — the model picks a tool, the result goes back, up to `MAX_ROUNDS` model calls (the last without tools). Yields `("status" | "content" | "action" | "error", payload)`. A `return_direct` tool ends the turn only if it succeeded; a refusal goes back to the model.
+- **No native tool calls**: the free model has none, so `ToolPromptChatModel` (`tool_calling.py`) describes tools in the prompt and parses `<tool_call>{...}</tool_call>` back into `AIMessage.tool_calls`. Call text never reaches Discord or TTS.
+- **Tools**: standard LangChain `@tool`s in `utils/ai/tools/`, chosen per turn by `tools_for(ctx)`. Per-turn Discord state is passed as `YuukaContext` (`Ctx` alias) via `InjectedToolArg`, so the model never sees it. Adding a tool: write it in a module there, export `TOOLS` and `STATUS`, and gate it in `tools_for`.
+
+| Module | Tools |
+|---|---|
+| `search.py` | `web_search` |
+| `discord_read.py` | `read_messages`, `search_messages` — permissions are the **requester's**, not the bot's |
+| `music.py` | `music_play/skip/stop` (via `ai_actions.run_action`), `music_now_playing/queue/history/remove` |
+| `server.py` | `voice_members`, `user_info`, `server_info` |
+| `actions.py` | `voice_kick`, `voice_disconnect_timer` — propose only; `confirm.py` button (requester only) runs them |
+| `reminders.py` | `remind_me`, `notify_when_joins_voice` — timers/listeners in `scheduler.py`, **0 LLM requests** while waiting or firing |
+
+- **Token budget** (free model: 20 RPM, 50/day without credits): a plain chat is 1 request, a tool turn 2, worst case `MAX_ROUNDS`. Button presses, reminders and watches never call the model.
+- **State**: nothing is persisted (stateless Docker container); pending reminders are lost on restart by design.
 - **History squashing**: consecutive messages with the same `role` are merged (required by some instruct models).
 
 ---
@@ -326,6 +347,9 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "loguru>=0.7.0",
     "aiohttp>=3.9.0",
+    # AI agent (/ai) — core only, no LangGraph
+    "langchain-core>=1.6.6",
+    "langchain-openai>=1.6.7",
     # STT (/transcribe and /ai voice)
     "faster-whisper>=1.1.0",
     "rapidfuzz>=3.9.0",
@@ -434,4 +458,6 @@ git push origin main --tags
 - ❌ Do NOT call `voice_client.start_recording()` from a cog — subscribe to `utils.voice_hub` instead; a VoiceClient only supports one sink and the features will fight over it
 - ❌ Do NOT peak-normalise STT audio — it amplifies room tone on quiet segments and makes Whisper hallucinate
 - ❌ Do NOT remove the wake-word gate from `/ai voice` — without it the bot replies to every sentence spoken in the room
+- ❌ Do NOT install `langchain` or `langgraph` — `langchain` v1 pulls in LangGraph; use `langchain-core` / `langchain-openai` only
+- ❌ Do NOT let an AI tool act on other people without the `ConfirmActionView` button, and check the **requester's** permissions, never just the bot's
 - ❌ Do NOT confuse `OLLAMA_*` env vars with actual Ollama — the LLM backend is now **OpenRouter**

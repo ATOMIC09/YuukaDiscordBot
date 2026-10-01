@@ -78,7 +78,7 @@ _TOOL_INSTRUCTIONS = """
 You can use tools. Available tools (JSON schema for each):
 {tools}
 
-To use a tool, reply with ONLY the call, with nothing before or after it:
+To use a tool, reply with ONLY the call, inside the tags exactly as shown, with nothing before or after it:
 <tool_call>{{"name": "<tool name>", "arguments": {{...}}}}</tool_call>
 
 The result comes back as a message of the form <tool_response name="...">...</tool_response>.
@@ -211,6 +211,21 @@ def _to_call(data: Any) -> dict[str, Any] | None:
 def _parse_call(raw: str) -> dict[str, Any] | None:
     """Turn the text between the tags into {"name", "args"}, or None if unusable."""
     return _to_call(_load_json(raw))
+
+
+def _bare_call(text: str, names: set[str]) -> dict[str, Any] | None:
+    """A call written as plain JSON with no tags, ending the reply, for a tool on offer."""
+    body = re.sub(r"\s*```\s*$", "", text.strip())
+    for brace in re.finditer(r"\{", body):
+        try:
+            data = json.loads(body[brace.start() :])
+        except ValueError:
+            continue
+        # The first "{" that parses to the end is the outermost object; anything
+        # after it would only be a piece of it, such as the arguments.
+        call = _to_call(data)
+        return call if call is not None and call["name"] in names else None
+    return None
 
 
 def _parse_harmony(raw: str) -> dict[str, Any] | None:
@@ -364,6 +379,10 @@ class ToolPromptChatModel(BaseChatModel):
                     logger.warning(f"[Tools] Dropped harmony block: {block[:200]!r}")
         elif mode is None:
             tail = buffer
+            # gpt-oss sometimes drops the tags and writes the bare JSON. Only a short
+            # reply (still held, nothing shown) naming a real tool counts as a call.
+            if holding and tools:
+                call = _bare_call(held + tail, {t["function"]["name"] for t in tools})
 
         if call is not None or mode == "fake":
             if held.strip():

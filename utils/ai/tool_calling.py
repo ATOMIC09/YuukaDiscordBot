@@ -78,15 +78,17 @@ _TOOL_INSTRUCTIONS = """
 You can use tools. Available tools (JSON schema for each):
 {tools}
 
-To use a tool, reply with ONLY the call, inside the tags exactly as shown, with nothing before or after it:
+To use a tool, reply with ONLY the call, inside the tags exactly as shown, with nothing else around it:
 <tool_call>{{"name": "<tool name>", "arguments": {{...}}}}</tool_call>
+
+To do several things in order (for example queue a song, then skip the current one), write up to {max_calls} calls one after another. They run in that order, and the rest are skipped if one fails.{final}
 
 The result comes back as a message of the form <tool_response name="...">...</tool_response>.
 Use it to answer the user, or call another tool if you still need something.
 
 Rules:
 - Only use a tool when the user clearly asks for it or you truly need it. Talking about something is not the same as asking for it.
-- At most ONE call per reply.
+- Several calls only when the user asked for several things. A call that needs an earlier call's result must wait for it, in your next reply.
 - Never write a <tool_response> yourself, and never guess what a tool would return. Only the system sends results.
 - Never describe the call format or mention that you are using tools.
 - Never invent arguments the user did not give and no earlier tool result provided."""
@@ -96,6 +98,10 @@ Rules:
 # to read the channel."). A reply that gets longer than this with no call in sight
 # is an answer, and starts streaming.
 _PREAMBLE_CHARS = 300
+
+# Calls one reply may make ("play it, queue Beat It, then skip"). Reading stops at
+# the last, so a model that keeps going cannot run a long list.
+_MAX_CALLS = 5
 
 # After a long tool result in mixed languages, gpt-oss drifts into a language
 # nobody used (Chinese) partway through a reply. Naming the language works better
@@ -110,6 +116,17 @@ _REPLY_SAME = (
     "(Reply only in the language of the user's request, whatever language the results "
     "above are in. Never switch to Chinese or any other language partway through.)"
 )
+
+
+def _final_rule(names: Sequence[str]) -> str:
+    """Which tools end the turn: anything the user asked for after them must already be in the reply."""
+    if not names:
+        return ""
+    return (
+        f" {', '.join(names)} end your turn as soon as they succeed, and you get no reply after "
+        "that. So when the user asks for several things, put every call into this one reply, "
+        "in the order they asked."
+    )
 
 
 def _text(message: Any) -> str:
@@ -140,7 +157,9 @@ def _call_text(call: dict[str, Any]) -> str:
     return f"{_OPEN}{json.dumps(payload, ensure_ascii=False)}{_CLOSE}"
 
 
-def render_messages(messages: Sequence[BaseMessage], tools: list[dict]) -> list[BaseMessage]:
+def render_messages(
+    messages: Sequence[BaseMessage], tools: list[dict], final_tools: Sequence[str] = ()
+) -> list[BaseMessage]:
     """Rewrite a tool-calling history into plain system/user/assistant turns."""
     pairs: list[tuple[str, str]] = []
     for msg in messages:
@@ -163,7 +182,9 @@ def render_messages(messages: Sequence[BaseMessage], tools: list[dict]) -> list[
 
     if tools:
         section = _TOOL_INSTRUCTIONS.format(
-            tools="\n".join(json.dumps(t["function"], ensure_ascii=False) for t in tools)
+            tools="\n".join(json.dumps(t["function"], ensure_ascii=False) for t in tools),
+            max_calls=_MAX_CALLS,
+            final=_final_rule(final_tools),
         )
         if pairs and pairs[0][0] == "system":
             pairs[0] = ("system", pairs[0][1] + section)
@@ -279,7 +300,12 @@ class ToolPromptChatModel(BaseChatModel):
 
     def bind_tools(self, tools: Sequence[Any], *, tool_choice: Any = None, **kwargs: Any):
         # `tools` is never forwarded to the provider; _astream turns it into prompt text.
-        return self.bind(tools=[convert_to_openai_tool(t) for t in tools], **kwargs)
+        return self.bind(
+            tools=[convert_to_openai_tool(t) for t in tools],
+            # The schema drops return_direct, and the model must know about it.
+            final_tools=[t.name for t in tools if getattr(t, "return_direct", False)],
+            **kwargs,
+        )
 
     def _generate(self, *args: Any, **kwargs: Any) -> ChatResult:
         raise NotImplementedError("ToolPromptChatModel is async-only")
@@ -301,18 +327,20 @@ class ToolPromptChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> AsyncIterator[ChatGenerationChunk]:
         tools = kwargs.pop("tools", None) or []
+        final_tools = kwargs.pop("final_tools", None) or []
         kwargs.pop("tool_choice", None)
         kwargs.pop("parallel_tool_calls", None)
 
-        rendered = render_messages(messages, tools)
+        rendered = render_messages(messages, tools, final_tools)
         stream = self.inner.astream(rendered, stop=stop, **kwargs)
 
-        buffer = ""
-        mode: str | None = None  # "tag", "harmony" or "fake" once one has started
-        call: dict[str, Any] | None = None
+        buffer = block = ""
+        mode: str | None = None  # "tag", "harmony" or "fake" while one is open
+        calls: list[dict[str, Any]] = []
         # Text before a call is dropped (see _PREAMBLE_CHARS), so the start of a
         # reply is held until it is long enough to be an answer.
         held, holding = "", True
+        done = False
 
         async def emit(text: str):
             if run_manager:
@@ -323,33 +351,51 @@ class ToolPromptChatModel(BaseChatModel):
             async for piece in stream:
                 buffer += _text(piece)
 
-                if mode is None:
-                    start, mode = _find_open(buffer)
+                # One piece can close a call and open the next.
+                while not done:
                     if mode is None:
-                        keep = _partial_open_len(buffer)
-                        out, buffer = buffer[: len(buffer) - keep], buffer[len(buffer) - keep :]
-                    else:
-                        out = buffer[:start]
-                        # Harmony keeps its tokens: the recipient sits between them.
-                        buffer = buffer[start + len(_OPEN) :] if mode == "tag" else buffer[start:]
-
-                    if holding:
-                        held += out
-                        if len(held) > _PREAMBLE_CHARS:
-                            out, held, holding = held, "", False
+                        start, mode = _find_open(buffer)
+                        if mode is None:
+                            keep = _partial_open_len(buffer)
+                            out, buffer = buffer[: len(buffer) - keep], buffer[len(buffer) - keep :]
                         else:
-                            out = ""
-                    if out:
-                        yield await emit(out)
-                    if mode is None:
-                        continue
-                    if mode == "fake":
-                        break
+                            out = buffer[:start]
+                            # Harmony keeps its tokens: the recipient sits between them.
+                            buffer = buffer[start + len(_OPEN) :] if mode == "tag" else buffer[start:]
 
-                close = _CLOSE if mode == "tag" else _HARMONY_CALL
-                end = buffer.find(close)
-                if end != -1:
-                    block, buffer = buffer[:end], ""
+                        if calls:
+                            out = ""  # between or after calls: not part of an answer
+                        elif holding:
+                            held += out
+                            if len(held) > _PREAMBLE_CHARS:
+                                out, held, holding = held, "", False
+                            else:
+                                out = ""
+                        if out:
+                            yield await emit(out)
+                        if mode is None:
+                            break
+                        if mode == "fake":
+                            done = True
+                            break
+
+                    close = _CLOSE if mode == "tag" else _HARMONY_CALL
+                    end = buffer.find(close)
+                    if end == -1:
+                        break
+                    block, buffer = buffer[:end], buffer[end + len(close) :]
+                    if mode == "harmony":
+                        done = True  # harmony ends the message at its call
+                        break
+                    call = _parse_call(block)
+                    if call is None:
+                        logger.warning(f"[Tools] Dropped unreadable tool call: {block[:200]!r}")
+                    else:
+                        calls.append(call)
+                    mode = None
+                    if len(calls) == _MAX_CALLS:
+                        done = True
+                if done:
                     break
             else:
                 block = buffer
@@ -366,25 +412,34 @@ class ToolPromptChatModel(BaseChatModel):
                 await aclose()
 
         tail = ""
-        if mode == "tag":
+        if mode == "tag" and block.strip():
             # An unclosed tag means the model stopped early; its JSON may still be whole.
-            call = _parse_call(block) if block.strip() else None
-            if call is None and block.strip():
+            call = _parse_call(block)
+            if call is None:
                 logger.warning(f"[Tools] Dropped unreadable tool call: {block[:200]!r}")
+            else:
+                calls.append(call)
         elif mode == "harmony":
             call = _parse_harmony(block)
-            if call is None:
+            if call is not None:
+                calls.append(call)
+            elif not calls:
                 tail = _harmony_final(block)
                 if not tail:
                     logger.warning(f"[Tools] Dropped harmony block: {block[:200]!r}")
-        elif mode is None:
+        elif mode is None and not calls:
             tail = buffer
             # gpt-oss sometimes drops the tags and writes the bare JSON. Only a short
             # reply (still held, nothing shown) naming a real tool counts as a call.
             if holding and tools:
                 call = _bare_call(held + tail, {t["function"]["name"] for t in tools})
+                if call is not None:
+                    calls.append(call)
 
-        if call is not None or mode == "fake":
+        # A <tool_response> written after real calls is just cut off: the calls run
+        # and their real results replace it.
+        fabricated = mode == "fake" and not calls
+        if calls or fabricated:
             if held.strip():
                 logger.debug(f"[Tools] Dropped text before a call: {held[:200]!r}")
         elif held + tail:
@@ -396,13 +451,13 @@ class ToolPromptChatModel(BaseChatModel):
             logger.warning(f"[Tools] Model returned no usable reply: {block[:200]!r}")
             yield ChatGenerationChunk(message=AIMessageChunk(content=""))
 
-        if mode == "fake":
+        if fabricated:
             logger.warning("[Tools] Model wrote its own tool response; cut it off")
             yield ChatGenerationChunk(
                 message=AIMessageChunk(content="", additional_kwargs={FABRICATED: True})
             )
 
-        if call is not None:
+        if calls:
             yield ChatGenerationChunk(
                 message=AIMessageChunk(
                     content="",
@@ -411,8 +466,9 @@ class ToolPromptChatModel(BaseChatModel):
                             "name": call["name"],
                             "args": json.dumps(call["args"], ensure_ascii=False),
                             "id": uuid.uuid4().hex,
-                            "index": 0,
+                            "index": index,
                         }
+                        for index, call in enumerate(calls)
                     ],
                 )
             )

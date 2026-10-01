@@ -175,19 +175,31 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
 
             conversation.append(AIMessage(content=reply.content, tool_calls=calls))
             stop = False
-            for call in calls:
+            for index, call in enumerate(calls):
                 logger.info(f"[Agent] Tool call: {call['name']}({call['args']})")
                 yield ("status", status_line(call["name"], call["args"]))
 
                 result, ok = await _run_tool(tools, call, ctx)
                 conversation.append(result)
 
-                if isinstance(result.artifact, ActionResult):
-                    yield ("action", result.artifact)
+                action = result.artifact if isinstance(result.artifact, ActionResult) else None
+                if action is not None:
+                    yield ("action", action)
                 # A terminal tool ends the turn only when it worked; a refusal
                 # goes back to the model so she can explain it.
                 if ok and tools[call["name"]].return_direct:
                     stop = True
+                # Calls in one reply are a sequence ("queue it, then skip"): after a
+                # failure the rest no longer make sense.
+                if not ok or (action is not None and not action.ok):
+                    for skipped in calls[index + 1 :]:
+                        logger.info(f"[Agent] Skipped after a failure: {skipped['name']}")
+                        conversation.append(ToolMessage(
+                            "Not run: an earlier call in the same reply failed.",
+                            tool_call_id=skipped["id"],
+                            name=skipped["name"],
+                        ))
+                    break
             if stop:
                 break
 

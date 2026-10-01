@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -92,6 +93,17 @@ _VOICE_PROMPT_SUFFIX = (
     "misheard words, especially names and mixed Thai/English. Infer what was "
     "meant from context; ask for a repeat only if it is genuinely unclear."
 )
+
+_MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_BARE_URL = re.compile(r"https?://\S+")
+
+
+def _speakable(text: str) -> str:
+    """The text as it should be read aloud: links are never spoken."""
+    text = _MD_LINK.sub(r"\1", text)
+    text = _BARE_URL.sub("", text)
+    return re.sub(r"\s+", " ", text).strip()
+
 
 # Echo guard: a speaker without headphones has Yuuka's own voice coming back
 # through their mic. Anything captured while she was talking (plus a short
@@ -425,10 +437,14 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             await self._post_unspoken(session, text)
             return
 
+        spoken = _speakable(text)
+        if not spoken:
+            return
+
         try:
-            mp3_path = await synthesize_speech(text)
-            # The text rides along so the worker can still deliver the answer if
-            # it turns out it cannot play the audio.
+            mp3_path = await synthesize_speech(spoken)
+            # The original text, links included, rides along so the worker can
+            # still deliver the answer if it turns out it cannot play the audio.
             await session.queue.put((mp3_path, text))
             logger.debug(f"[AI Voice] Enqueued audio (queue size: {session.queue.qsize()})")
         except Exception as exc:

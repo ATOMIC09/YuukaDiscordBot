@@ -45,6 +45,12 @@ _FABRICATED_NOTE = (
     "wait for the real result, or answer without it."
 )
 
+_LAST_ROUND_NOTE = (
+    "[SYSTEM] No more tools this turn. Answer the user now, in your normal voice and their "
+    "language, using only the results above. If you could not get what they asked for, "
+    "say so briefly and why. Do not describe what you would do next."
+)
+
 
 def _cache_notice() -> str:
     from utils.web_search import get_all_cached_tocs
@@ -118,7 +124,11 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
     wrote = False
     try:
         for round_no in range(MAX_ROUNDS):
-            model = plain if round_no == MAX_ROUNDS - 1 else with_tools
+            last = round_no == MAX_ROUNDS - 1
+            model = plain if last else with_tools
+            if last:
+                # Without this the model plans its next tool call out loud as the reply.
+                conversation.append(HumanMessage(content=_LAST_ROUND_NOTE))
             logger.debug(f"[Agent] Round {round_no + 1}/{MAX_ROUNDS} | messages={len(conversation)}")
 
             reply: AIMessageChunk | None = None
@@ -132,7 +142,6 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
                     wrote = wrote or bool(text.strip())
                     yield ("content", text)
 
-            last = round_no == MAX_ROUNDS - 1
             calls = reply.tool_calls if reply is not None and not last else []
             if not calls:
                 # She wrote a tool's result herself instead of calling it: send her back

@@ -68,26 +68,29 @@ def _error_event(exc: Exception) -> tuple[str, Any]:
     return ("error", f"Unexpected Error: {exc}")
 
 
-async def _run_tool(tools: dict, call: dict, ctx: YuukaContext) -> ToolMessage:
+async def _run_tool(tools: dict, call: dict, ctx: YuukaContext) -> tuple[ToolMessage, bool]:
+    """Run one tool call. The flag is False when it failed or was refused."""
     name, call_id = call["name"], call["id"]
     tool = tools.get(name)
     if tool is None:
-        return ToolMessage(
+        message = ToolMessage(
             f"No such tool. Available: {', '.join(tools)}", tool_call_id=call_id, name=name
         )
+        return message, False
 
     try:
-        return await tool.ainvoke(
+        message = await tool.ainvoke(
             {"type": "tool_call", "id": call_id, "name": name, "args": {**call["args"], "ctx": ctx}}
         )
+        return message, True
     except (UserError, UserWarning) as exc:
-        return ToolMessage(f"{exc.title}: {exc.description}", tool_call_id=call_id, name=name)
+        return ToolMessage(f"{exc.title}: {exc.description}", tool_call_id=call_id, name=name), False
     except ValidationError as exc:
         logger.warning(f"[Agent] Bad arguments for '{name}': {exc}")
-        return ToolMessage("Invalid arguments for this tool.", tool_call_id=call_id, name=name)
+        return ToolMessage("Invalid arguments for this tool.", tool_call_id=call_id, name=name), False
     except Exception as exc:
         logger.exception(f"[Agent] Tool '{name}' failed: {exc}")
-        return ToolMessage("Tool failed.", tool_call_id=call_id, name=name)
+        return ToolMessage("Tool failed.", tool_call_id=call_id, name=name), False
 
 
 async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tuple[str, Any], None]:
@@ -127,12 +130,14 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
                 logger.info(f"[Agent] Tool call: {call['name']}({call['args']})")
                 yield ("status", status_line(call["name"], call["args"]))
 
-                result = await _run_tool(tools, call, ctx)
+                result, ok = await _run_tool(tools, call, ctx)
                 conversation.append(result)
 
                 if isinstance(result.artifact, ActionResult):
                     yield ("action", result.artifact)
-                if tools.get(call["name"]) is not None and tools[call["name"]].return_direct:
+                # A terminal tool ends the turn only when it worked; a refusal
+                # goes back to the model so she can explain it.
+                if ok and tools[call["name"]].return_direct:
                     stop = True
             if stop:
                 break

@@ -97,9 +97,18 @@ Rules:
 # is an answer, and starts streaming.
 _PREAMBLE_CHARS = 300
 
-_REPLY_LANGUAGE = (
-    "(Reply in the language the user wrote their request in, whatever language the "
-    "result above is in.)"
+# After a long tool result in mixed languages, gpt-oss drifts into a language
+# nobody used (Chinese) partway through a reply. Naming the language works better
+# than "the user's language".
+_THAI = re.compile("[\\u0e00-\\u0e7f]")  # the Thai block
+_REPLY_THAI = (
+    "(ตอบเป็นภาษาไทยเท่านั้น: reply in Thai only. Quoting messages as they were written is "
+    "fine, but every sentence of your own must be Thai. Never switch to Chinese or any "
+    "other language partway through.)"
+)
+_REPLY_SAME = (
+    "(Reply only in the language of the user's request, whatever language the results "
+    "above are in. Never switch to Chinese or any other language partway through.)"
 )
 
 
@@ -110,6 +119,20 @@ def _text(message: Any) -> str:
     return "".join(
         part.get("text", "") if isinstance(part, dict) else str(part) for part in content
     )
+
+
+def _reply_language(messages: Sequence[BaseMessage]) -> str:
+    """A language reminder for the end of the prompt, once tool results follow the request."""
+    read_results = False
+    for msg in reversed(messages):
+        if isinstance(msg, ToolMessage):
+            read_results = True
+        # The agent's own notes are HumanMessages too; they start with "[SYSTEM]".
+        elif isinstance(msg, HumanMessage) and not _text(msg).startswith("[SYSTEM]"):
+            if not read_results:
+                return ""
+            return _REPLY_THAI if _THAI.search(_text(msg)) else _REPLY_SAME
+    return ""
 
 
 def _call_text(call: dict[str, Any]) -> str:
@@ -134,10 +157,9 @@ def render_messages(messages: Sequence[BaseMessage], tools: list[dict]) -> list[
         else:
             pairs.append(("user", _text(msg)))
 
-    if messages and isinstance(messages[-1], ToolMessage):
-        # A long result in mixed languages, read last, can pull the reply into a
-        # language nobody used (gpt-oss drifts into Chinese).
-        pairs[-1] = (pairs[-1][0], f"{pairs[-1][1]}\n{_REPLY_LANGUAGE}")
+    reminder = _reply_language(messages)
+    if reminder:
+        pairs[-1] = (pairs[-1][0], f"{pairs[-1][1]}\n{reminder}")
 
     if tools:
         section = _TOOL_INSTRUCTIONS.format(
@@ -316,6 +338,13 @@ class ToolPromptChatModel(BaseChatModel):
                     break
             else:
                 block = buffer
+        except ValueError as exc:
+            # LangChain raises this when the stream carried no data at all: OpenRouter
+            # answered 200 and closed it empty (seen on the free endpoint). Treat it as
+            # an empty reply.
+            if "No generation chunks" not in str(exc):
+                raise
+            block = buffer
         finally:
             aclose = getattr(stream, "aclose", None)
             if aclose is not None:
@@ -341,6 +370,12 @@ class ToolPromptChatModel(BaseChatModel):
                 logger.debug(f"[Tools] Dropped text before a call: {held[:200]!r}")
         elif held + tail:
             yield await emit(held + tail)
+        elif holding:
+            # Nothing usable came back: an empty stream, or only an unreadable call.
+            # LangChain rejects a stream with no chunks, so send an empty one and let
+            # the agent decide.
+            logger.warning(f"[Tools] Model returned no usable reply: {block[:200]!r}")
+            yield ChatGenerationChunk(message=AIMessageChunk(content=""))
 
         if mode == "fake":
             logger.warning("[Tools] Model wrote its own tool response; cut it off")

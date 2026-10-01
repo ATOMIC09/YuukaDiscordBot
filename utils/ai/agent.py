@@ -52,6 +52,8 @@ _LAST_ROUND_NOTE = (
     "say so briefly and why. Do not describe what you would do next."
 )
 
+_EMPTY_REPLY = "หนูนึกคำตอบไม่ออกค่ะ เซนเซย์ลองถามใหม่อีกทีนะคะ (´・ω・`)"
+
 
 def _cache_notice() -> str:
     from utils.web_search import get_all_cached_tocs
@@ -126,6 +128,7 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
     linker = None if ctx.voice else ChannelLinker(ctx.channels_used)
 
     wrote = False
+    retried = False
     try:
         for round_no in range(MAX_ROUNDS):
             last = round_no == MAX_ROUNDS - 1
@@ -159,6 +162,15 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
                     conversation.append(AIMessage(content=reply.content))
                     conversation.append(HumanMessage(content=_FABRICATED_NOTE))
                     continue
+                # Nothing at all to show. Usually a one-off, so ask once more (the
+                # round still counts); a second empty reply is reported, not retried.
+                if not wrote and not (reply is not None and str(reply.content).strip()):
+                    if not retried and not last:
+                        retried = True
+                        logger.warning("[Agent] Empty reply; asking again")
+                        continue
+                    yield ("error", {"user": _EMPTY_REPLY, "dev": "The model returned an empty reply."})
+                    return
                 break
 
             conversation.append(AIMessage(content=reply.content, tool_calls=calls))

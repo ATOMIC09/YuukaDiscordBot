@@ -69,29 +69,58 @@ class CountdisCog(commands.Cog):
         # Must be in a voice channel
         if not ctx.author.voice or not ctx.author.voice.channel:
             raise UserError("ยังไม่ได้เข้าห้องเสียง", "เซนเซย์ต้องเข้าห้องเสียงก่อนนะคะ ถึงจะให้หนูเริ่มนับถอยหลังได้ (・`ω´・)")
-        
-        channel = ctx.author.voice.channel
 
         if timer <= 0:
             raise UserWarning("เวลาไม่ถูกต้อง", "เซนเซย์ซื้อนาฬิกาที่ไหนคะ เดี๋ยวหนูตามไปทุบ (╯°□°)╯︵ ┻━┻")
-        
+
+        async def respond(**kwargs):
+            await ctx.respond(**kwargs)
+            return await ctx.interaction.original_response()
+
+        reply_channel = ctx.channel if isinstance(ctx.channel, discord.abc.Messageable) else ctx
+        await self.start_countdown(
+            channel=ctx.author.voice.channel,
+            seconds=timer,
+            author=ctx.author,
+            reply_channel=reply_channel,
+            post=respond,
+        )
+
+    async def start_countdown(
+        self,
+        *,
+        channel: discord.VoiceChannel,
+        seconds: int,
+        author: discord.Member,
+        reply_channel: discord.abc.Messageable,
+        post=None,
+    ) -> None:
+        """Post the countdown embed and start the timer that disconnects `channel`.
+
+        `post(embed=..., view=...)` sends the embed and returns the message; it
+        defaults to `reply_channel.send`. The slash command passes its own so the
+        interaction gets answered. Raises UserWarning if this channel is already
+        counting down.
+        """
         if channel.id in self.active_countdowns:
             raise UserWarning("กำลังทำงานอยู่", "หนูกำลังนับถอยหลังของห้องนี้อยู่แล้วค่ะ! รอให้เสร็จก่อนนะคะเซนเซย์ (´･ω･`)?")
-            
-        self.active_countdowns.add(channel.id)
-        
-        target_timestamp = int(time.time()) + timer
-        
-        view = CountdisView(target_timestamp, channel, ctx.author.id)
-        
-        content = f"รับทราบค่ะ! เริ่มนับถอยหลังแล้วนะคะ ( • ̀ω•́ )\nตั้งเวลาไว้: **{format_countdown(timer)}**\nเหลือเวลา: <t:{target_timestamp}:R> (ตัดการเชื่อมต่อตอน <t:{target_timestamp}:T>)\n\n*ถ้าเซนเซย์ไม่อยากถูกเตะออก กดปุ่ม `ยกเว้นฉัน` ไว้ได้เลยค่ะ!*"
-        
-        await ctx.respond(embed=success_embed("กำลังนับถอยหลัง...", content), view=view)
-        original = await ctx.interaction.original_response()
 
-        reply_channel = ctx.channel if isinstance(ctx.channel, discord.abc.Messageable) else None
+        self.active_countdowns.add(channel.id)
+
+        target_timestamp = int(time.time()) + seconds
+
+        view = CountdisView(target_timestamp, channel, author.id)
+
+        content = f"รับทราบค่ะ! เริ่มนับถอยหลังแล้วนะคะ ( • ̀ω•́ )\nตั้งเวลาไว้: **{format_countdown(seconds)}**\nเหลือเวลา: <t:{target_timestamp}:R> (ตัดการเชื่อมต่อตอน <t:{target_timestamp}:T>)\n\n*ถ้าเซนเซย์ไม่อยากถูกเตะออก กดปุ่ม `ยกเว้นฉัน` ไว้ได้เลยค่ะ!*"
+
+        try:
+            sent = await (post or reply_channel.send)(embed=success_embed("กำลังนับถอยหลัง...", content), view=view)
+        except Exception:
+            self.active_countdowns.discard(channel.id)
+            raise
+
         get_partial = getattr(reply_channel, "get_partial_message", None)
-        message = get_partial(original.id) if get_partial else original
+        message = get_partial(sent.id) if get_partial else sent
 
         async def countdown_task():
             try:
@@ -130,7 +159,7 @@ class CountdisCog(commands.Cog):
                     summary = warning_embed("ว่างเปล่า...", "ไม่เห็นมีใครให้เตะออกเลยนี่คะ เซนเซย์หลอกหนูเหรอ! (,,#ﾟДﾟ)")
 
                 try:
-                    await (reply_channel.send(embed=summary) if reply_channel else ctx.send(embed=summary))
+                    await reply_channel.send(embed=summary)
                 except discord.HTTPException as e:
                     logger.error(f"Failed to send countdown summary for {channel.id}: {e}")
 

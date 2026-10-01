@@ -1,6 +1,6 @@
 """
 utils/ai_actions.py
-The bridge between an `[ACTION: ...]` tag from the LLM and a real bot command.
+The bridge between a command the model asked for and the real bot command.
 
 Why this exists
 ---------------
@@ -51,7 +51,6 @@ class ActionSpec:
     """One action the model may request."""
 
     command: str        # the slash command it stands in for, for the embed
-    description: str
     requires_cog: str = ""
 
 
@@ -69,17 +68,14 @@ class ActionResult:
 ACTIONS: dict[str, ActionSpec] = {
     "music_play": ActionSpec(
         command="/music play",
-        description="play or queue a song in the voice channel the user is in",
         requires_cog=_PLAYER_COG,
     ),
     "music_skip": ActionSpec(
         command="/music skip",
-        description="skip the song playing right now",
         requires_cog=_PLAYER_COG,
     ),
     "music_stop": ActionSpec(
         command="/music stop",
-        description="stop playback and clear the whole queue",
         requires_cog=_PLAYER_COG,
     ),
 }

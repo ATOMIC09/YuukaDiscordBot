@@ -6,14 +6,10 @@ Music control as tools. They run the same code as the /music commands through
 
 from __future__ import annotations
 
-from typing import Annotated
-
-from langchain_core.tools import InjectedToolArg, tool
+from langchain_core.tools import tool
 
 from utils import ai_actions
-from utils.ai.context import YuukaContext
-
-Ctx = Annotated[YuukaContext, InjectedToolArg]
+from utils.ai.context import Ctx, YuukaContext
 
 
 async def _run(ctx: YuukaContext, name: str, arg: str = "") -> tuple[str, ai_actions.ActionResult | None]:

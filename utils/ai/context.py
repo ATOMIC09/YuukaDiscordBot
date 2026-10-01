@@ -9,9 +9,10 @@ tool's schema and cannot fill it in.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Awaitable, Callable
+from typing import Annotated, Awaitable, Callable
 
 import discord
+from langchain_core.tools import InjectedToolArg
 
 
 @dataclass
@@ -28,3 +29,7 @@ class YuukaContext:
     # Text: flush the streamed reply so it lands before the command embed.
     # Voice: speak the extra line, then wait for queued speech to finish.
     before_action: Callable[[str], Awaitable[None]] | None = None
+
+
+# The type of a tool's `ctx` parameter: filled in by the agent, hidden from the model.
+Ctx = Annotated[YuukaContext, InjectedToolArg]

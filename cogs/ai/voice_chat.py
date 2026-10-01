@@ -95,7 +95,8 @@ _VOICE_PROMPT_SUFFIX = (
 )
 
 _MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
-_BARE_URL = re.compile(r"https?://\S+")
+# Includes Discord's <https://...> form, which tool results use for links.
+_BARE_URL = re.compile(r"<?https?://[^\s>]+>?")
 
 
 def _speakable(text: str) -> str:

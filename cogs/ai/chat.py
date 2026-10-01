@@ -157,7 +157,7 @@ class AIChatCog(commands.Cog, name="AI Chat"):
         )
         await ctx.respond(embed=build_embed(
             "🌸 เริ่มต้นการสนทนา",
-            "รับทราบค่ะ! หนูกำลังฟังทุกคนอยู่นะคะ (´｡• ᵕ •｡\`) \n\n"
+            "รับทราบค่ะ! หนูกำลังฟังทุกคนอยู่นะคะ (b ᵔ▽ᵔ)b \n\n"
             "หนูอ่านข้อความก่อนหน้านี้มาแล้วค่ะ ถ้าอยากคุยกับหนู อย่าลืม `@mention` เรียกหนูด้วยนะคะ!",
             COLOR_SUCCESS,
             fields=[ai_disclosure_field(config.openrouter_model)],

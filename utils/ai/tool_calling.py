@@ -91,6 +91,12 @@ Rules:
 - Never invent arguments the user did not give and no earlier tool result provided."""
 
 
+_REPLY_LANGUAGE = (
+    "(Reply in the language the user wrote their request in, whatever language the "
+    "result above is in.)"
+)
+
+
 def _text(message: Any) -> str:
     content = message.content
     if isinstance(content, str):
@@ -121,6 +127,11 @@ def render_messages(messages: Sequence[BaseMessage], tools: list[dict]) -> list[
             pairs.append(("user", f'<tool_response name="{name}">\n{_text(msg)}\n</tool_response>'))
         else:
             pairs.append(("user", _text(msg)))
+
+    if messages and isinstance(messages[-1], ToolMessage):
+        # A long result in mixed languages, read last, can pull the reply into a
+        # language nobody used (gpt-oss drifts into Chinese).
+        pairs[-1] = (pairs[-1][0], f"{pairs[-1][1]}\n{_REPLY_LANGUAGE}")
 
     if tools:
         section = _TOOL_INSTRUCTIONS.format(

@@ -26,6 +26,7 @@ class Config:
     openrouter_model: str
     openrouter_system_prompt: str
     max_history_length: int
+    read_messages_max: int
     tavily_api_key: str
     search_cache_ttl_minutes: int
     owner_id: int | None = None
@@ -106,6 +107,7 @@ class Config:
             )
 
         max_history_length = int(os.getenv("MAX_HISTORY_LENGTH", "50"))
+        read_messages_max = max(1, int(os.getenv("READ_MESSAGES_MAX", "30")))
 
         tavily_api_key = os.getenv("TAVILY_API_KEY", "")
         search_cache_ttl_minutes = int(os.getenv("SEARCH_CACHE_TTL_MINUTES", "30"))
@@ -135,6 +137,7 @@ class Config:
             openrouter_model=openrouter_model,
             openrouter_system_prompt=openrouter_system_prompt,
             max_history_length=max_history_length,
+            read_messages_max=read_messages_max,
             tavily_api_key=tavily_api_key,
             search_cache_ttl_minutes=search_cache_ttl_minutes,
             owner_id=owner_id,

@@ -12,6 +12,7 @@ from __future__ import annotations
 import discord
 from langchain_core.tools import tool
 
+from bot.config import config
 from bot.logger import logger
 from utils.ai.context import Ctx, YuukaContext
 from utils.ai.tools.resolve import resolve_text_channel
@@ -62,15 +63,17 @@ async def _history(channel, limit: int):
 
 
 @tool
-async def read_messages(channel: str, ctx: Ctx, limit: int = 50) -> str:
+async def read_messages(channel: str, ctx: Ctx, limit: int | None = None) -> str:
     """Read the most recent messages of a text channel in this server.
 
     `channel` is a channel name, mention or id. `limit` is how many recent
-    messages to read (1-100). Use it to answer questions about, or summarise,
-    what was said in a channel. Messages from bots are skipped.
+    messages to read; leave it out unless the user asked for a number. Use it
+    to answer questions about, or summarise, what was said in a channel.
+    Messages from bots are skipped.
     """
     target = await _readable_channel(ctx, channel)
-    limit = max(1, min(limit, 100))
+    # READ_MESSAGES_MAX caps it: every message read is prompt the free model pays for.
+    limit = max(1, min(limit or config.read_messages_max, config.read_messages_max))
 
     messages = [m async for m in _history(target, limit) if not m.author.bot]
     if not messages:

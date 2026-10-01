@@ -19,19 +19,31 @@ from __future__ import annotations
 from typing import Any, AsyncGenerator
 
 import openai
-from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage, convert_to_messages
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    HumanMessage,
+    ToolMessage,
+    convert_to_messages,
+)
 from pydantic import ValidationError
 
 from bot.logger import logger
 from utils.ai.context import YuukaContext
 from utils.ai.models import chat_model
-from utils.ai.tool_calling import ToolPromptChatModel
+from utils.ai.tool_calling import FABRICATED, ToolPromptChatModel
 from utils.ai.tools import status_line, tools_for
 from utils.ai_actions import ActionResult
 from utils.errors import UserError, UserWarning
 
 # Model calls per turn. The last one runs without tools so she always answers.
 MAX_ROUNDS = 4
+
+_FABRICATED_NOTE = (
+    "[SYSTEM] You wrote a <tool_response> yourself. Only the system writes those; what you "
+    "wrote is made up and was not shown. Call the tool with <tool_call>...</tool_call> and "
+    "wait for the real result, or answer without it."
+)
 
 
 def _cache_notice() -> str:
@@ -120,8 +132,15 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
                     wrote = wrote or bool(text.strip())
                     yield ("content", text)
 
-            calls = reply.tool_calls if reply is not None and round_no < MAX_ROUNDS - 1 else []
+            last = round_no == MAX_ROUNDS - 1
+            calls = reply.tool_calls if reply is not None and not last else []
             if not calls:
+                # She wrote a tool's result herself instead of calling it: send her back
+                # once (this round already counts) rather than answer from invented data.
+                if reply is not None and reply.additional_kwargs.get(FABRICATED) and not last:
+                    conversation.append(AIMessage(content=reply.content))
+                    conversation.append(HumanMessage(content=_FABRICATED_NOTE))
+                    continue
                 break
 
             conversation.append(AIMessage(content=reply.content, tool_calls=calls))

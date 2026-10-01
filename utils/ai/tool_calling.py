@@ -16,7 +16,9 @@ and some providers pass its special tokens through as text:
 
     <|start|>assistant<|channel|>commentary to=functions.web_search<|message|>{...}<|call|>
 
-That is parsed as a call too.
+That is parsed as a call too. A model may also write a <tool_response> itself
+instead of waiting for the real one; the stream is cut there and the reply is
+flagged with `FABRICATED` so the agent can send it back.
 
 Call text is never yielded as content: it must not reach Discord or TTS.
 """
@@ -56,6 +58,19 @@ _HARMONY_TOKEN = re.compile(r"<\|[a-z]+\|>")
 _HARMONY_RECIPIENT = re.compile(r"to=([\w.\-]+)")
 _HARMONY_FINAL = re.compile(r"<\|channel\|>\s*final\b.*?<\|message\|>(.*)", re.S)
 
+# Only we write tool responses. One from the model is invented.
+_FAKE_RESPONSE = "<tool_response"
+FABRICATED = "fabricated_tool_response"
+
+# Call and result markup in her earlier replies. A broken reply saved to history
+# (or reread from the channel) would otherwise teach the model to repeat it.
+_PROTOCOL = re.compile(
+    r"<tool_call>.*?(?:</tool_call>|$)"
+    r"|<tool_response\b.*?(?:</tool_response>|$)"
+    r"|<\|(?:start|channel|constrain|message)\|>.*?(?:<\|call\|>|$)",
+    re.S,
+)
+
 _TOOL_INSTRUCTIONS = """
 
 [TOOLS]
@@ -71,6 +86,7 @@ Use it to answer the user, or call another tool if you still need something.
 Rules:
 - Only use a tool when the user clearly asks for it or you truly need it. Talking about something is not the same as asking for it.
 - At most ONE call per reply, and it must be the last thing you write.
+- Never write a <tool_response> yourself, and never guess what a tool would return. Only the system sends results.
 - Never describe the call format or mention that you are using tools.
 - Never invent arguments the user did not give and no earlier tool result provided."""
 
@@ -96,7 +112,7 @@ def render_messages(messages: Sequence[BaseMessage], tools: list[dict]) -> list[
         if isinstance(msg, SystemMessage):
             pairs.append(("system", _text(msg)))
         elif isinstance(msg, AIMessage):
-            text = _text(msg)
+            text = _PROTOCOL.sub("", _text(msg)).strip()
             for call in msg.tool_calls:
                 text = f"{text}\n{_call_text(call)}".strip()
             pairs.append(("assistant", text))
@@ -183,7 +199,7 @@ def _harmony_final(raw: str) -> str:
 
 def _find_open(buffer: str) -> tuple[int, str | None]:
     """Where the earliest call opener starts, and which kind it is."""
-    found = [(buffer.find(_OPEN), "tag")]
+    found = [(buffer.find(_OPEN), "tag"), (buffer.find(_FAKE_RESPONSE), "fake")]
     found += [(buffer.find(token), "harmony") for token in _HARMONY_OPENERS]
     found = [(pos, kind) for pos, kind in found if pos != -1]
     return min(found) if found else (-1, None)
@@ -191,7 +207,7 @@ def _find_open(buffer: str) -> tuple[int, str | None]:
 
 def _partial_open_len(buffer: str) -> int:
     """Length of the longest buffer suffix that could still grow into an opener."""
-    openers = (_OPEN, *_HARMONY_OPENERS)
+    openers = (_OPEN, _FAKE_RESPONSE, *_HARMONY_OPENERS)
     for size in range(min(len(buffer), max(map(len, openers)) - 1), 0, -1):
         if any(opener.startswith(buffer[-size:]) for opener in openers):
             return size
@@ -238,7 +254,7 @@ class ToolPromptChatModel(BaseChatModel):
         stream = self.inner.astream(rendered, stop=stop, **kwargs)
 
         buffer = ""
-        mode: str | None = None  # "tag" or "harmony" once a call has started
+        mode: str | None = None  # "tag", "harmony" or "fake" once one has started
         call: dict[str, Any] | None = None
 
         async def emit(text: str):
@@ -263,6 +279,8 @@ class ToolPromptChatModel(BaseChatModel):
                     buffer = buffer[start + len(_OPEN) :] if mode == "tag" else buffer[start:]
                     if out:
                         yield await emit(out)
+                    if mode == "fake":
+                        break
 
                 close = _CLOSE if mode == "tag" else _HARMONY_CALL
                 end = buffer.find(close)
@@ -289,6 +307,11 @@ class ToolPromptChatModel(BaseChatModel):
                     yield await emit(final)
                 else:
                     logger.warning(f"[Tools] Dropped harmony block: {block[:200]!r}")
+        elif mode == "fake":
+            logger.warning("[Tools] Model wrote its own tool response; cut it off")
+            yield ChatGenerationChunk(
+                message=AIMessageChunk(content="", additional_kwargs={FABRICATED: True})
+            )
         elif buffer:
             yield await emit(buffer)
 

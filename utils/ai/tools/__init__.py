@@ -10,14 +10,22 @@ from typing import Callable
 from langchain_core.tools import BaseTool
 
 from utils.ai.context import YuukaContext
-from utils.ai.tools import discord_read, music, search
+from utils.ai.tools import discord_read, music, search, server
 
-_STATUS: dict[str, Callable[[dict], str]] = {**search.STATUS, **discord_read.STATUS, **music.STATUS}
+_STATUS: dict[str, Callable[[dict], str]] = {
+    **search.STATUS,
+    **discord_read.STATUS,
+    **server.STATUS,
+    **music.STATUS,
+}
 
 
 def tools_for(ctx: YuukaContext) -> list[BaseTool]:
     """Only the tools that can work this turn, which also keeps the prompt short."""
     tools: list[BaseTool] = [*search.TOOLS]
+
+    if ctx.guild:
+        tools += server.TOOLS
 
     if ctx.guild and ctx.requester:
         tools += discord_read.TOOLS

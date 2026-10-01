@@ -115,9 +115,18 @@ class ReminderScheduler:
         )
 
     async def attach_cancel_button(self, pending: Pending, embed: discord.Embed) -> None:
-        """Post the confirmation for `pending` with its cancel button."""
+        """Post the confirmation for `pending` with its cancel button.
+
+        If that fails, `pending` is cancelled: nobody was told it exists, and
+        Yuuka will say it could not be set.
+        """
         pending.view = CancelView(self, pending)
-        pending.message = await pending.channel.send(embed=embed, view=pending.view)
+        try:
+            pending.message = await pending.channel.send(embed=embed, view=pending.view)
+        except Exception:
+            pending.view.stop()
+            self.cancel(pending)
+            raise
 
     # ── ending ────────────────────────────────────────────────────────────
 

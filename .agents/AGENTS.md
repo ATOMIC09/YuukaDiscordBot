@@ -221,9 +221,12 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
 - **Echo guard**: segments overlapping Yuuka's own playback are dropped — a speaker without
   headphones has her voice coming back through their mic.
 - Spoken and typed input both funnel into `_respond()`, so the two paths cannot drift apart.
-- **Speaking around tools**: on each `status` event from `run_agent`, the sentence written so far is
-  spoken immediately (`spoken_upto`), so the room is not silent while a tool runs. `_speak` strips
-  links for TTS only; text fallbacks keep them. One `VoiceClient` is shared with music, so she
+- **Speaking around tools**: text the model writes right before a tool call is dropped
+  (`tool_calling.py`): gpt-oss fills that slot with its reasoning. So the room is quiet while a
+  tool runs, and a tool that ends the turn speaks its own line instead: `spoken_fallback` for
+  music, `before_action(text)` for reminders and confirmations. Anything already written is still
+  spoken on each `status` event (`spoken_upto`). `_speak` strips links for TTS only; text
+  fallbacks keep them. One `VoiceClient` is shared with music, so she
   cannot speak while a track plays and posts text instead (`_post_unspoken`).
 - **`announce(guild_id, text)`**: speaks results that arrive after a turn ends (confirmed actions,
   fired reminders); silent if music or her own speech holds the voice client.
@@ -322,7 +325,7 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 
 - **Provider**: [OpenRouter](https://openrouter.ai/) through LangChain core (`langchain-core`, `langchain-openai`). **No LangGraph** — do not add `langchain` or `langgraph`; the loop is hand-written.
 - **Agent loop**: `run_agent(history, ctx)` in `agent.py` — the model picks a tool, the result goes back, up to `MAX_ROUNDS` model calls (the last without tools). Yields `("status" | "content" | "action" | "error", payload)`. A `return_direct` tool ends the turn only if it succeeded; a refusal goes back to the model.
-- **No native tool calls**: the free model has none, so `ToolPromptChatModel` (`tool_calling.py`) describes tools in the prompt and parses `<tool_call>{...}</tool_call>` back into `AIMessage.tool_calls`. Call text never reaches Discord or TTS.
+- **No native tool calls**: the free model has none, so `ToolPromptChatModel` (`tool_calling.py`) describes tools in the prompt and parses `<tool_call>{...}</tool_call>` back into `AIMessage.tool_calls` (gpt-oss's own `<|channel|>…<|call|>` format too). Call text, and text written before a call, never reaches Discord or TTS. A `<tool_response>` the model writes itself is cut off and sent back once.
 - **Tools**: standard LangChain `@tool`s in `utils/ai/tools/`, chosen per turn by `tools_for(ctx)`. Per-turn Discord state is passed as `YuukaContext` (`Ctx` alias) via `InjectedToolArg`, so the model never sees it. Adding a tool: write it in a module there, export `TOOLS` and `STATUS`, and gate it in `tools_for`.
 
 | Module | Tools |

@@ -27,7 +27,7 @@ async def remind_me(minutes: int, text: str, ctx: Ctx) -> str:
     """
     scheduler = scheduler_for(ctx)
     if ctx.before_action is not None:
-        await ctx.before_action("")
+        await ctx.before_action("ได้ค่ะ เดี๋ยวหนูเตือนให้นะคะ" if ctx.voice else "")
 
     pending = scheduler.add_reminder(ctx.requester, ctx.channel, minutes, text)
     await scheduler.attach_cancel_button(
@@ -43,7 +43,7 @@ async def notify_when_joins_voice(member: str, ctx: Ctx, minutes: int = 60) -> s
     scheduler = scheduler_for(ctx)
     target = resolve_member(ctx, member)
     if ctx.before_action is not None:
-        await ctx.before_action("")
+        await ctx.before_action(f"ได้ค่ะ ถ้า {target.display_name} เข้ามาหนูจะบอกนะคะ" if ctx.voice else "")
 
     pending = scheduler.add_voice_watch(ctx.requester, ctx.channel, target, minutes)
     await scheduler.attach_cancel_button(

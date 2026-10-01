@@ -20,7 +20,8 @@ That is parsed as a call too. A model may also write a <tool_response> itself
 instead of waiting for the real one; the stream is cut there and the reply is
 flagged with `FABRICATED` so the agent can send it back.
 
-Call text is never yielded as content: it must not reach Discord or TTS.
+Call text is never yielded as content: it must not reach Discord or TTS. Nor is
+text the model writes before a call, which is usually its reasoning.
 """
 
 from __future__ import annotations
@@ -77,7 +78,7 @@ _TOOL_INSTRUCTIONS = """
 You can use tools. Available tools (JSON schema for each):
 {tools}
 
-To use a tool, reply with ONE short sentence in your normal voice, then the call, then nothing at all:
+To use a tool, reply with ONLY the call, with nothing before or after it:
 <tool_call>{{"name": "<tool name>", "arguments": {{...}}}}</tool_call>
 
 The result comes back as a message of the form <tool_response name="...">...</tool_response>.
@@ -85,11 +86,16 @@ Use it to answer the user, or call another tool if you still need something.
 
 Rules:
 - Only use a tool when the user clearly asks for it or you truly need it. Talking about something is not the same as asking for it.
-- At most ONE call per reply, and it must be the last thing you write.
+- At most ONE call per reply.
 - Never write a <tool_response> yourself, and never guess what a tool would return. Only the system sends results.
 - Never describe the call format or mention that you are using tools.
 - Never invent arguments the user did not give and no earlier tool result provided."""
 
+
+# Text before a call is never shown: gpt-oss fills it with its reasoning ("We need
+# to read the channel."). A reply that gets longer than this with no call in sight
+# is an answer, and starts streaming.
+_PREAMBLE_CHARS = 300
 
 _REPLY_LANGUAGE = (
     "(Reply in the language the user wrote their request in, whatever language the "
@@ -267,6 +273,9 @@ class ToolPromptChatModel(BaseChatModel):
         buffer = ""
         mode: str | None = None  # "tag", "harmony" or "fake" once one has started
         call: dict[str, Any] | None = None
+        # Text before a call is dropped (see _PREAMBLE_CHARS), so the start of a
+        # reply is held until it is long enough to be an answer.
+        held, holding = "", True
 
         async def emit(text: str):
             if run_manager:
@@ -282,14 +291,21 @@ class ToolPromptChatModel(BaseChatModel):
                     if mode is None:
                         keep = _partial_open_len(buffer)
                         out, buffer = buffer[: len(buffer) - keep], buffer[len(buffer) - keep :]
-                        if out:
-                            yield await emit(out)
-                        continue
-                    out = buffer[:start]
-                    # Harmony keeps its tokens: the recipient sits between them.
-                    buffer = buffer[start + len(_OPEN) :] if mode == "tag" else buffer[start:]
+                    else:
+                        out = buffer[:start]
+                        # Harmony keeps its tokens: the recipient sits between them.
+                        buffer = buffer[start + len(_OPEN) :] if mode == "tag" else buffer[start:]
+
+                    if holding:
+                        held += out
+                        if len(held) > _PREAMBLE_CHARS:
+                            out, held, holding = held, "", False
+                        else:
+                            out = ""
                     if out:
                         yield await emit(out)
+                    if mode is None:
+                        continue
                     if mode == "fake":
                         break
 
@@ -305,6 +321,7 @@ class ToolPromptChatModel(BaseChatModel):
             if aclose is not None:
                 await aclose()
 
+        tail = ""
         if mode == "tag":
             # An unclosed tag means the model stopped early; its JSON may still be whole.
             call = _parse_call(block) if block.strip() else None
@@ -313,18 +330,23 @@ class ToolPromptChatModel(BaseChatModel):
         elif mode == "harmony":
             call = _parse_harmony(block)
             if call is None:
-                final = _harmony_final(block)
-                if final:
-                    yield await emit(final)
-                else:
+                tail = _harmony_final(block)
+                if not tail:
                     logger.warning(f"[Tools] Dropped harmony block: {block[:200]!r}")
-        elif mode == "fake":
+        elif mode is None:
+            tail = buffer
+
+        if call is not None or mode == "fake":
+            if held.strip():
+                logger.debug(f"[Tools] Dropped text before a call: {held[:200]!r}")
+        elif held + tail:
+            yield await emit(held + tail)
+
+        if mode == "fake":
             logger.warning("[Tools] Model wrote its own tool response; cut it off")
             yield ChatGenerationChunk(
                 message=AIMessageChunk(content="", additional_kwargs={FABRICATED: True})
             )
-        elif buffer:
-            yield await emit(buffer)
 
         if call is not None:
             yield ChatGenerationChunk(

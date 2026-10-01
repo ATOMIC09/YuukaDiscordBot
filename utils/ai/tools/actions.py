@@ -3,8 +3,8 @@ utils/ai/tools/actions.py
 Actions that affect other people. The tool only proposes: it posts a
 confirmation and the requester decides (see `utils.ai.confirm`).
 
-Both tools end the turn (`return_direct`) with no ActionResult, so voice does
-not speak a second line on top of the one before the call.
+Both tools end the turn (`return_direct`) with no ActionResult: in voice, the
+line `_propose` speaks is the only acknowledgement.
 """
 
 from __future__ import annotations

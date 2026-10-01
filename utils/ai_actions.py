@@ -61,7 +61,8 @@ class ActionResult:
     ok: bool
     title: str
     detail: str
-    # Spoken when the model gave no acknowledgement of its own (it usually does).
+    # Spoken in voice when she wrote nothing herself (text before a tool call is
+    # dropped, so for a successful action that is the usual case).
     spoken_fallback: str = ""
 
 

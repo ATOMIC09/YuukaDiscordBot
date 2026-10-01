@@ -485,9 +485,9 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         spoken_upto = 0  # how much of full_response has already been spoken
         try:
             async def before_action(extra: str = "") -> None:
-                # The sentence before the tool call was spoken on its status
-                # event. Anything the tool adds goes next, and the track must
-                # not start until all of it has been said.
+                # Anything she said earlier in the turn went out on a status
+                # event. The tool's own line goes next, and the track must not
+                # start until all of it has been said.
                 if extra:
                     await self._speak(session, extra)
                 await self._await_speech(session)
@@ -517,9 +517,10 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                         elif msg_type == "content":
                             full_response += chunk
                         elif msg_type == "status":
-                            # A tool is about to run. Say what she has written
-                            # so far now, instead of leaving the room silent.
-                            # The status text itself is never spoken.
+                            # A tool is about to run. Say anything she has written
+                            # so far now. Text right before a call is dropped
+                            # upstream, so this is usually empty. The status
+                            # text itself is never spoken.
                             pending = full_response[spoken_upto:]
                             if pending.strip():
                                 await self._speak(session, pending)

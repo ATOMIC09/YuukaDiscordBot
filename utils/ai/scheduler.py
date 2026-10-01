@@ -103,7 +103,9 @@ class ReminderScheduler:
         minutes: int,
     ) -> Pending:
         self._check(user, minutes)
-        if target.voice and target.voice.channel:
+        # A channel the watcher cannot see counts as not in voice, as it does
+        # in their own Discord client.
+        if target.voice and target.voice.channel and target.voice.channel.permissions_for(user).view_channel:
             raise UserWarning(
                 "เขาอยู่ในห้องเสียงแล้วค่ะ",
                 f"{target.display_name} อยู่ในช่อง {target.voice.channel.name} อยู่แล้วนะคะ",
@@ -168,6 +170,8 @@ class ReminderScheduler:
                     continue
                 if pending.user.guild.id != member.guild.id:
                     continue
+                if not channel.permissions_for(pending.user).view_channel:
+                    continue  # never reveal a room the watcher cannot see; keep waiting
                 if pending.task and not pending.task.done():
                     pending.task.cancel()
                 self._remove(pending)

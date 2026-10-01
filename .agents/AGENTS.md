@@ -326,9 +326,9 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 | Module | Tools |
 |---|---|
 | `search.py` | `web_search` |
-| `discord_read.py` | `read_messages`, `search_messages` — permissions are the **requester's**, not the bot's |
+| `discord_read.py` | `read_messages`, `search_messages` — permissions are the **requester's**, not the bot's (private threads included) |
 | `music.py` | `music_play/skip/stop` (via `ai_actions.run_action`), `music_now_playing/queue/history/remove` |
-| `server.py` | `voice_members`, `user_info`, `server_info` |
+| `server.py` | `voice_members`, `user_info`, `server_info` — never show who is in a voice channel the requester cannot see |
 | `actions.py` | `voice_kick`, `voice_disconnect_timer` — propose only; `confirm.py` button (requester only) runs them |
 | `reminders.py` | `remind_me`, `notify_when_joins_voice` — timers/listeners in `scheduler.py`, **0 LLM requests** while waiting or firing |
 
@@ -460,4 +460,5 @@ git push origin main --tags
 - ❌ Do NOT remove the wake-word gate from `/ai voice` — without it the bot replies to every sentence spoken in the room
 - ❌ Do NOT install `langchain` or `langgraph` — `langchain` v1 pulls in LangGraph; use `langchain-core` / `langchain-openai` only
 - ❌ Do NOT let an AI tool act on other people without the `ConfirmActionView` button, and check the **requester's** permissions, never just the bot's
+- ❌ Do NOT let an AI tool find, list or name a channel the requester cannot see — resolve through `utils/ai/tools/resolve.py`, which treats hidden channels as nonexistent
 - ❌ Do NOT confuse `OLLAMA_*` env vars with actual Ollama — the LLM backend is now **OpenRouter**

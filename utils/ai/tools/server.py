@@ -3,7 +3,9 @@ utils/ai/tools/server.py
 Read-only questions about voice rooms, people and the server.
 
 These read straight from the guild's cached objects and return plain text for
-the model; they do not post the embeds of the matching slash commands.
+the model; they do not post the embeds of the matching slash commands. Like
+Discord itself, they never show who is in a voice channel the requester cannot
+see.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ async def voice_members(ctx: Ctx, channel: str | None = None) -> str:
     """List who is in a voice channel. Defaults to the voice channel the requester is in."""
     if channel:
         target = resolve_voice_channel(ctx, channel)
-    elif ctx.requester and ctx.requester.voice and ctx.requester.voice.channel:
+    elif ctx.requester.voice and ctx.requester.voice.channel:
         target = ctx.requester.voice.channel
     else:
         raise UserWarning("ไม่ได้ระบุห้องค่ะ", "เซนเซย์ไม่ได้อยู่ในห้องเสียง และไม่ได้บอกชื่อห้องมาด้วยนะคะ")
@@ -38,7 +40,11 @@ async def voice_members(ctx: Ctx, channel: str | None = None) -> str:
 async def user_info(member: str, ctx: Ctx) -> str:
     """Look up a server member by name, mention or id: account age, join date, top role, voice channel."""
     m = resolve_member(ctx, member)
-    voice = m.voice.channel.name if m.voice and m.voice.channel else "not in a voice channel"
+    in_voice = m.voice and m.voice.channel
+    if in_voice and m.voice.channel.permissions_for(ctx.requester).view_channel:
+        voice = m.voice.channel.name
+    else:
+        voice = "not in a voice channel"
     return (
         f"Display name: {m.display_name}. Username: {m.name}"
         f"{' (bot)' if m.bot else ''}. "

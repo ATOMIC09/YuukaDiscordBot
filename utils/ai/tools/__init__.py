@@ -26,11 +26,10 @@ def tools_for(ctx: YuukaContext) -> list[BaseTool]:
     """Only the tools that can work this turn, which also keeps the prompt short."""
     tools: list[BaseTool] = [*search.TOOLS]
 
-    if ctx.guild:
-        tools += server.TOOLS
-
     if ctx.guild and ctx.requester:
-        tools += discord_read.TOOLS
+        # What these return is filtered by what the requester can see, so
+        # there has to be one (a reaction reply has none).
+        tools += server.TOOLS + discord_read.TOOLS
 
     if ctx.guild and ctx.requester and ctx.bot.get_cog("PlayerCog") is not None:
         tools += music.TOOLS

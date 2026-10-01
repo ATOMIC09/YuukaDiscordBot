@@ -22,10 +22,11 @@ _MAX_LINE_CHARS = 500
 _MAX_MATCHES = 10
 
 
-def _readable_channel(ctx: YuukaContext, name: str) -> discord.abc.Messageable:
-    channel = resolve_text_channel(ctx, name)
-    perms = channel.permissions_for(ctx.requester)
-    if not (perms.view_channel and perms.read_message_history):
+async def _readable_channel(ctx: YuukaContext, name: str) -> discord.TextChannel | discord.Thread:
+    # Resolving already refuses anything the requester cannot see at all,
+    # private threads they are not in included.
+    channel = await resolve_text_channel(ctx, name)
+    if not channel.permissions_for(ctx.requester).read_message_history:
         # Say nothing about what the channel contains.
         raise UserWarning("อ่านช่องนั้นไม่ได้ค่ะ", "เซนเซย์ไม่มีสิทธิ์อ่านช่องนั้นนะคะ หนูเลยบอกอะไรไม่ได้ค่ะ")
     return channel
@@ -58,7 +59,7 @@ async def read_messages(channel: str, ctx: Ctx, limit: int = 50) -> str:
     messages to read (1-100). Use it to answer questions about, or summarise,
     what was said in a channel. Messages from bots are skipped.
     """
-    target = _readable_channel(ctx, channel)
+    target = await _readable_channel(ctx, channel)
     limit = max(1, min(limit, 100))
 
     messages = [m async for m in _history(target, limit) if not m.author.bot]
@@ -85,7 +86,7 @@ async def search_messages(query: str, channel: str, ctx: Ctx, limit: int = 500) 
     Case-insensitive substring match over the last `limit` messages (1-1000)
     of the channel. Returns up to 10 matches, newest first, with links.
     """
-    target = _readable_channel(ctx, channel)
+    target = await _readable_channel(ctx, channel)
     limit = max(1, min(limit, 1000))
     needle = query.casefold()
 

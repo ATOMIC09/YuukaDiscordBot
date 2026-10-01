@@ -1759,6 +1759,36 @@ class PlayerCog(commands.Cog):
             return state.forward_history[-1]
         return state.queue[0] if len(state.queue) > 0 else None
 
+    async def remove_from_queue(self, guild: discord.Guild, position: int) -> Track:
+        """Remove one upcoming track. `position` is 1-based, as the queue view shows it.
+
+        Raises UserError for a position that is not in the queue.
+        """
+        state = self.get_state(guild.id)
+        # The track prepared for crossfade is already out of `state.queue` but
+        # is still the first entry of the queue as users see it.
+        upcoming = ([state.crossfade_next] if state.crossfade_next else []) + list(state.queue)
+        if not 1 <= position <= len(upcoming):
+            raise UserError(
+                "ไม่มีเพลงในคิวนั้นค่ะ", f"คิวมีแค่ {len(upcoming)} เพลงนะคะ (´-ω-`)"
+            )
+
+        track = upcoming[position - 1]
+        if track is state.crossfade_next:
+            self._cancel_prepared_crossfade(state)
+
+        for index, queued in enumerate(state.queue):
+            if queued is track:
+                del state.queue[index]
+                break
+        else:
+            # Cancelling was refused because the crossfade is already audible.
+            raise UserError("เอาเพลงนี้ออกไม่ได้ค่ะ", "เพลงนี้กำลังจะเล่นต่อแล้วนะคะ (´-ω-`)")
+
+        if state.current:
+            await self._update_controller(state, self._build_player_embed(state.current, state))
+        return track
+
     @staticmethod
     def build_skip_embed(next_track: Track | None) -> discord.Embed:
         """The 'skipped, here is what is next' embed, shared by slash and AI paths."""

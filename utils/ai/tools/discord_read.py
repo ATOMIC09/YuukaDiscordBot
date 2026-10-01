@@ -29,6 +29,7 @@ async def _readable_channel(ctx: YuukaContext, name: str) -> discord.TextChannel
     if not channel.permissions_for(ctx.requester).read_message_history:
         # Say nothing about what the channel contains.
         raise UserWarning("อ่านช่องนั้นไม่ได้ค่ะ", "เซนเซย์ไม่มีสิทธิ์อ่านช่องนั้นนะคะ หนูเลยบอกอะไรไม่ได้ค่ะ")
+    ctx.channels_used.append(channel)
     return channel
 
 
@@ -43,8 +44,12 @@ def _line(message: discord.Message) -> str:
     return f"[{stamp}] {message.author.display_name}: {text} <{message.jump_url}>"
 
 
-def _source(channel: discord.TextChannel | discord.Thread) -> str:
-    # The mention renders as a clickable channel link in Discord.
+def _source(ctx: YuukaContext, channel: discord.TextChannel | discord.Thread) -> str:
+    # Spoken aloud, a mention would come out as its id digits: name it plainly.
+    if ctx.voice:
+        return f"#{channel.name}"
+    # The mention renders as a clickable channel link in Discord. A "#name" she
+    # writes instead is linked by utils.ai.linker.
     return f"{channel.mention} (#{channel.name}); cite it as {channel.mention} in your answer"
 
 
@@ -78,7 +83,7 @@ async def read_messages(channel: str, ctx: Ctx, limit: int = 50) -> str:
         dropped += 1
 
     logger.info(f"[AI Tools] read_messages #{target.name}: {len(lines)} messages for {ctx.requester}")
-    header = f"{_source(target)}, oldest first"
+    header = f"{_source(ctx, target)}, oldest first"
     if dropped:
         header += f" ({dropped} older messages left out to fit)"
     return header + "\n" + "\n".join(lines)
@@ -110,7 +115,7 @@ async def search_messages(query: str, channel: str, ctx: Ctx, limit: int = 500) 
     if not matches:
         return f"No message in #{target.name} contains '{query}' (checked {checked} messages)."
     return (
-        f"{len(matches)} match(es) in {_source(target)}, newest first:\n"
+        f"{len(matches)} match(es) in {_source(ctx, target)}, newest first:\n"
         + "\n".join(_line(m) for m in matches)
     )
 

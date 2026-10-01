@@ -30,6 +30,7 @@ from pydantic import ValidationError
 
 from bot.logger import logger
 from utils.ai.context import YuukaContext
+from utils.ai.linker import ChannelLinker
 from utils.ai.models import chat_model
 from utils.ai.tool_calling import FABRICATED, ToolPromptChatModel
 from utils.ai.tools import status_line, tools_for
@@ -121,6 +122,9 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
     plain = ToolPromptChatModel(inner=chat_model())
     with_tools = plain.bind_tools(list(tools.values())) if tools else plain
 
+    # Text only: a mention read aloud is just digits.
+    linker = None if ctx.voice else ChannelLinker(ctx.channels_used)
+
     wrote = False
     try:
         for round_no in range(MAX_ROUNDS):
@@ -140,7 +144,12 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
                     if separate and text.strip():
                         text, separate = "\n\n" + text.lstrip(), False
                     wrote = wrote or bool(text.strip())
-                    yield ("content", text)
+                    if linker is not None:
+                        text = linker.feed(text)
+                    if text:
+                        yield ("content", text)
+            if linker is not None and (rest := linker.flush()):
+                yield ("content", rest)
 
             calls = reply.tool_calls if reply is not None and not last else []
             if not calls:

@@ -8,7 +8,7 @@ tool's schema and cannot fill it in.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Awaitable, Callable
 
 import discord
@@ -29,6 +29,8 @@ class YuukaContext:
     # Text: flush the streamed reply so it lands before the command embed.
     # Voice: speak the extra line, then wait for queued speech to finish.
     before_action: Callable[[str], Awaitable[None]] | None = None
+    # Channels a tool read this turn; "#name" in her text reply links to them.
+    channels_used: list[discord.abc.GuildChannel] = field(default_factory=list)
 
 
 # The type of a tool's `ctx` parameter: filled in by the agent, hidden from the model.

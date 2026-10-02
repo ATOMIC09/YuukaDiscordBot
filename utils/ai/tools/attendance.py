@@ -35,10 +35,10 @@ def _voice_channel(ctx: YuukaContext, what: str) -> discord.VoiceChannel:
 
 
 async def _post(ctx: YuukaContext, report: Report, command: str, detail: str) -> None:
-    await ctx.channel.send(embed=report.embed, file=report.file)
+    message = await ctx.channel.send(embed=report.embed, file=report.file)
     await ai_actions.log_command(
         ctx.bot, guild=ctx.guild, channel=ctx.channel, member=ctx.requester,
-        command=command, ok=True, detail=detail,
+        command=command, ok=True, detail=detail, jump_url=message.jump_url,
     )
 
 

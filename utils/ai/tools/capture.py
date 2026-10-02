@@ -31,10 +31,12 @@ def _require_voice(ctx: YuukaContext, what: str) -> None:
         raise UserError("ยังไม่ได้เข้าห้องเสียง", f"เซนเซย์ต้องอยู่ในห้องเสียงก่อนนะคะ ถึงจะ{what}ได้")
 
 
-async def _log(ctx: YuukaContext, command: str, detail: str) -> None:
+async def _announce(ctx: YuukaContext, embed, command: str, detail: str = "") -> None:
+    """Post the embed that tells the room, and log the command with a link to it."""
+    message = await ctx.channel.send(embed=embed)
     await ai_actions.log_command(
         ctx.bot, guild=ctx.guild, channel=ctx.channel, member=ctx.requester,
-        command=command, ok=True, detail=detail,
+        command=command, ok=True, detail=detail, jump_url=message.jump_url,
     )
 
 
@@ -44,8 +46,7 @@ async def record_start(ctx: Ctx) -> str:
     cog = ctx.bot.get_cog(_RECORD_COG)
     _require_voice(ctx, "อัดเสียง")
     channel = await cog.begin_recording(ctx.guild, ctx.requester, ctx.channel)
-    await ctx.channel.send(embed=cog.started_embed(channel))
-    await _log(ctx, "/record start", channel.name)
+    await _announce(ctx, cog.started_embed(channel), "/record start", channel.name)
     return f"Recording started in {channel.name}."
 
 
@@ -54,14 +55,13 @@ async def record_stop(ctx: Ctx) -> str:
     """Run /record stop: stop the recording and post the audio files in the chat."""
     cog = ctx.bot.get_cog(_RECORD_COG)
     channel, audio_data = await cog.end_recording(ctx.guild)
-    await ctx.channel.send(embed=cog.stopped_embed())
+    await _announce(ctx, cog.stopped_embed(), "/record stop")
 
     # Encoding a long recording takes a while, and she should be free meanwhile.
     task = asyncio.create_task(cog.deliver_recording(ctx.guild.id, channel, audio_data))
     _delivering.add(task)
     task.add_done_callback(_delivering.discard)
 
-    await _log(ctx, "/record stop", "")
     return "Recording stopped. The audio files will be posted in the chat in a moment."
 
 
@@ -71,8 +71,7 @@ async def transcribe_start(ctx: Ctx) -> str:
     cog = ctx.bot.get_cog(_CAPTION_COG)
     _require_voice(ctx, "ถอดเสียง")
     channel = await cog.begin_captions(ctx.guild, ctx.requester, ctx.channel)
-    await ctx.channel.send(embed=cog.started_embed(channel, ctx.channel))
-    await _log(ctx, "/transcribe start", channel.name)
+    await _announce(ctx, cog.started_embed(channel, ctx.channel), "/transcribe start", channel.name)
     return f"Live captions started for {channel.name}."
 
 
@@ -81,8 +80,7 @@ async def transcribe_stop(ctx: Ctx) -> str:
     """Run /transcribe stop: stop the live captions."""
     cog = ctx.bot.get_cog(_CAPTION_COG)
     await cog.end_captions(ctx.guild)
-    await ctx.channel.send(embed=cog.stopped_embed())
-    await _log(ctx, "/transcribe stop", "")
+    await _announce(ctx, cog.stopped_embed(), "/transcribe stop")
     return "Live captions stopped."
 
 

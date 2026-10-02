@@ -35,14 +35,16 @@ _THINKING = "<a:ThinkingSpinning:1528490272588038284>"
 
 _ICONS = {"waiting": "⏳", "running": "🔄", "ok": "✅", "failed": "❌", "skipped": "➖"}
 
-# `<a:Name:id>` is the animated emoji and `<:Name:id>` is the same one shown still. Only the
-# step that is running (and the thinking line) should move: a finished step that keeps
-# spinning looks as if it were still working.
-_ANIMATED = re.compile(r"<a:(\w+:\d+)>")
+# Only the step that is running (and the thinking line) should move: a finished step that
+# keeps spinning looks as if it were still working. An animated emoji has no still form
+# (`<:Name:id>` is shown as the text ":Name:"), so a finished step swaps it for a plain
+# one. Every animated emoji used in tools/labels.py needs an entry here.
+_ANIMATED = re.compile(r"<a:(\w+):\d+>")
+_STILL = {"MagnifierGIF": "🔍", "AppleLoadingGIF": "📖"}
 
 
 def _still(text: str) -> str:
-    return _ANIMATED.sub(r"<:\1>", text)
+    return _ANIMATED.sub(lambda m: _STILL.get(m.group(1), "⚙️"), text)
 
 
 class TurnProgress:

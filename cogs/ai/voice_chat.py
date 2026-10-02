@@ -25,9 +25,9 @@ How speech reaches the LLM
    one exception is a bare "just her name" segment: step 1's silence-based
    cut means a natural pause before the actual sentence lands as its own
    segment, so that one case gets a short bridge (`_bridge_timeout`) that
-   waits briefly for the continuation. If nothing follows, it's dropped —
-   a bare name alone is far more often a stray acoustic hit than someone
-   deliberately calling her just to say hi.
+   waits briefly for the continuation. If nothing follows she answers
+   "ค่ะ เซนเซย์ หนูฟังอยู่นะคะ" (in text while a track plays, never pausing
+   it) and the caller's next utterance needs no wake word.
 5. The accepted text goes through the same LLM → TTS → playback path as a
    typed message.
 6. The reply comes from the agent loop (`utils.ai.run_agent`), which may call
@@ -94,6 +94,9 @@ _VOICE_PROMPT_SUFFIX = (
     "misheard words, especially names and mixed Thai/English. Infer what was "
     "meant from context; ask for a repeat only if it is genuinely unclear."
 )
+
+# Said when she is called by name and nothing follows.
+_LISTENING = "ค่ะ เซนเซย์ หนูฟังอยู่นะคะ"
 
 _MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 # Includes Discord's <https://...> form, which tool results use for links.
@@ -386,9 +389,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         # (the natural pause before the actual sentence, which the segmenter
         # cuts into its own segment). This bridges exactly one gap, not a
         # standing "awake" window: consumed above the moment a continuation
-        # lands. If nothing follows, it's dropped rather than acknowledged —
-        # a bare name with no question is far more often a stray acoustic
-        # hit than someone deliberately calling her just to say hi.
+        # lands. If nothing follows she says she is listening (see _bridge_timeout).
         session.pending_bridge[segment.user_id] = asyncio.create_task(
             self._bridge_timeout(session, segment.user_id, display),
             name=f"wake_bridge_{segment.guild_id}_{segment.user_id}",
@@ -397,13 +398,23 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
     async def _bridge_timeout(
         self, session: VoiceChatSession, user_id: int, display: str
     ) -> None:
-        """Drops the bare-name segment if no continuation arrives in time."""
+        """Nothing followed the bare name in time: say she is listening.
+
+        Waiting out the bridge first matters: speaking at once would put her voice
+        over the continuation, and the echo guard would drop it. The music is left
+        alone; while a track plays `_speak` posts the line as text instead."""
         try:
             await asyncio.sleep(config.stt_wake_bridge_window_s)
         except asyncio.CancelledError:
             return
         session.pending_bridge.pop(user_id, None)
-        logger.debug(f"[AI Voice] No continuation from {display} after bare wake word, dropping")
+        if session.busy:
+            return
+        logger.debug(f"[AI Voice] No continuation from {display} after bare wake word, acknowledging")
+
+        await self._speak(session, _LISTENING)
+        await self._await_speech(session)
+        session.awaiting_answer[user_id] = time.perf_counter() + config.stt_answer_window_s
 
     async def _announce_and_respond(
         self,

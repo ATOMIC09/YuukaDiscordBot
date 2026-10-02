@@ -210,9 +210,11 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
   silence, so "Yuuka, *(pause)*, what time is it" lands as two segments — the name alone, then the
   question. A bare-name segment starts a `STT_WAKE_BRIDGE_WINDOW_S`-long task
   (`_bridge_timeout`) waiting for exactly the next segment from that speaker; if it arrives, it's
-  transcribed and sent straight to the LLM with no acoustic/wake re-check. If nothing arrives, the
-  bare name is dropped silently — far more often a stray acoustic hit than a deliberate "hi". One
-  gap, one use — unlike the old follow-up window, it does not stay open after a reply.
+  transcribed and sent straight to the LLM with no acoustic/wake re-check. If nothing arrives, she
+  answers "ค่ะ เซนเซย์ หนูฟังอยู่นะคะ" (waiting out the bridge first, so her voice does not land on
+  top of a late continuation) and that speaker's next utterance needs no wake word (the answer
+  window below). While a track plays the line is posted as text and the music is never paused.
+  One gap, one use — unlike the old follow-up window, it does not stay open after a reply.
 - **Acoustic confidence relaxes the text threshold**: Whisper sometimes hears "ยูกะ" as "อยู่กับ"
   (a real, common word — scores 75, just under the default `STT_WAKE_THRESHOLD=80` on purpose, see
   utils/wake.py). When the acoustic score clears `STT_WAKE_ACOUSTIC_CONFIDENT_SCORE` (0.5), the

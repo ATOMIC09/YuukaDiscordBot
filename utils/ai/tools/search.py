@@ -18,6 +18,10 @@ async def web_search(query: str, result_index: int | None = None) -> str:
     again with the same `query` and that result's `result_index`; that costs
     nothing extra. Results from earlier searches are listed under
     [CACHED SEARCH RESULTS] in your instructions.
+
+    Read the table of contents first and answer from it when you can. Read each
+    `result_index` once, and each index is a different call: never repeat the same
+    call. Search again only with a genuinely different query.
     """
     return await _web_search(query, max_results=5, result_index=result_index)
 

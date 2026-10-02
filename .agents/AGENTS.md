@@ -323,7 +323,9 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
   rather than an artefact of where we searched. The default threshold of 80 sits in that gap.
   `STT_WAKE_HEAD_CHARS` can still restrict the search for a room noisy enough to need it.
 - Returns the utterance with the wake word **cut out wherever it sat**, so both
-  "ยูกะ ช่วยบอกเวลาหน่อย" and "ช่วยบอกเวลาหน่อยยูกะ" reach the LLM as "ช่วยบอกเวลาหน่อย".
+  "ยูกะ ช่วยบอกเวลาหน่อย" and "ช่วยบอกเวลาหน่อยยูกะ" reach the LLM as "ช่วยบอกเวลาหน่อย". A leftover of fewer than
+  3 characters is dropped (`_MIN_REMAINDER_CHARS`): the match ignores Thai marks, so a misheard
+  "โยกา" is cut as "ยกา" and leaves a stray "โ", which used to be sent to the LLM as the request.
 - **Japanese folds two ways.** Katakana maps onto hiragana by a fixed offset, and the 長音符 `ー`
   is spelled out as the vowel it lengthens, so ユーカ / ユウカ / ゆーか / ゆうか all normalise to
   ゆうか and one listed variant covers every spelling Whisper might choose. Without this a

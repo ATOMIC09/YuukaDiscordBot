@@ -81,6 +81,12 @@ _EDGE_JUNK = re.compile(r"^[\s,\.!?ๆฯ:;\-—…]+|[\s,:;\-—]+$")
 # Cutting a name out of the middle leaves a double space behind.
 _GAP = re.compile(r"\s{2,}")
 
+# What is left after the cut must be at least this many characters to count as
+# something said. The name is matched fuzzily and Thai marks are ignored, so a
+# misheard "โยกา" is cut as "ยกา" and leaves a stray "โ" behind; one or two
+# characters are never a request.
+_MIN_REMAINDER_CHARS = 3
+
 
 @dataclass(frozen=True)
 class WakeMatch:
@@ -228,5 +234,9 @@ def detect(
     cut_to = index_map[match_end] if match_end < len(index_map) else len(text)
     remainder = f"{text[:cut_from]} {text[cut_to:]}"
 
-    remainder = _GAP.sub(" ", remainder)
-    return WakeMatch(True, match_score, match_word, _EDGE_JUNK.sub("", remainder).strip())
+    remainder = _EDGE_JUNK.sub("", _GAP.sub(" ", remainder)).strip()
+    # Marks count (พัก has a mark); spaces and punctuation do not.
+    said = sum(1 for ch in remainder if not ch.isspace() and unicodedata.category(ch)[0] != "P")
+    if said < _MIN_REMAINDER_CHARS:
+        remainder = ""
+    return WakeMatch(True, match_score, match_word, remainder)

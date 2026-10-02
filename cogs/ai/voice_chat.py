@@ -99,6 +99,17 @@ _MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 # Includes Discord's <https://...> form, which tool results use for links.
 _BARE_URL = re.compile(r"<?https?://[^\s>]+>?")
 
+# Whether a reply ends by asking the speaker something. Thai marks a question with
+# คะ (a statement takes ค่ะ), but "นะคะ" softens a statement, so it does not count.
+_TRAILING_NOISE = re.compile(r"(?:\s|[.!…~。]|\([^)]*\))+$")
+_ASKS = re.compile(
+    r"(?:\?|？|(?<!นะ)คะ|ไหม|มั้ย|หรือเปล่า|เหรอ|หรอ|อะไร|ไหน|ใคร|ยังไง|เท่าไหร่|กี่[ก-๙]*)$"
+)
+
+
+def _asks_user(text: str) -> bool:
+    return bool(_ASKS.search(_TRAILING_NOISE.sub("", text.strip())))
+
 
 def _speakable(text: str) -> str:
     """The text as it should be read aloud: links are never spoken."""
@@ -150,6 +161,10 @@ class VoiceChatSession:
     # Only the requester's own voice counts. Entries are checked with `view.done`,
     # so a button press or a timeout needs no cleanup here.
     pending_confirms: dict[int, ConfirmActionView] = field(default_factory=dict)
+
+    # She just asked this person a question: user id → perf_counter deadline for
+    # the start of their answer. One use, like the bridge below.
+    awaiting_answer: dict[int, float] = field(default_factory=dict)
 
 
 class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
@@ -282,6 +297,20 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                 return
             if not result.text:
                 return
+
+        # Likewise for the answer to a question she just asked (a missing detail,
+        # which of two members). It belongs to that speaker alone and is used up by
+        # their next utterance, so it never turns into a standing "awake" state.
+        deadline = session.awaiting_answer.pop(segment.user_id, None)
+        if deadline is not None and segment.started_at <= deadline:
+            if result is None:
+                result = await transcribe_pcm(segment.pcm, display)
+            if result.text:
+                logger.info(f"[AI Voice] Answer to her question from {display}: {result.text}")
+                await self._announce_and_respond(
+                    segment.guild_id, session, display, result.text, member
+                )
+            return
 
         # A bare "just her name" segment leaves a short-lived bridge task
         # waiting for exactly this: the next segment from that same speaker.
@@ -578,6 +607,11 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                     # client is busy, and that includes her own earlier sentence.
                     await self._await_speech(session)
                 await self._speak(session, tail)
+
+            # The window opens when she stops talking, not when she starts.
+            if member is not None and _asks_user(full_response):
+                await self._await_speech(session)
+                session.awaiting_answer[member.id] = time.perf_counter() + config.stt_answer_window_s
         finally:
             session.busy = False
 

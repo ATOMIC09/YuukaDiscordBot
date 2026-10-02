@@ -72,6 +72,7 @@ class Config:
     stt_wake_threshold: int = 80       # rapidfuzz partial_ratio, 0-100
     stt_wake_head_chars: int = 0       # 0 = match the name anywhere; N = first N chars only
     stt_wake_bridge_window_s: float = 2.5
+    stt_answer_window_s: float = 15.0
     stt_wake_acoustic_confident_score: float = 0.5
     stt_wake_relaxed_threshold: int = 70
 
@@ -161,6 +162,7 @@ class Config:
             stt_wake_threshold=int(os.getenv("STT_WAKE_THRESHOLD", "80")),
             stt_wake_head_chars=int(os.getenv("STT_WAKE_HEAD_CHARS", "0")),
             stt_wake_bridge_window_s=float(os.getenv("STT_WAKE_BRIDGE_WINDOW_S", "2.5")),
+            stt_answer_window_s=float(os.getenv("STT_ANSWER_WINDOW_S", "15")),
             stt_wake_acoustic_confident_score=float(os.getenv("STT_WAKE_ACOUSTIC_CONFIDENT_SCORE", "0.5")),
             stt_wake_relaxed_threshold=int(os.getenv("STT_WAKE_RELAXED_THRESHOLD", "70")),
             stt_wake_acoustic_enabled=os.getenv("STT_WAKE_ACOUSTIC_ENABLED", "true").strip().lower()

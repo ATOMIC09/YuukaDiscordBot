@@ -228,6 +228,11 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
   spoken on each `status` event (`spoken_upto`). `_speak` strips links for TTS only; text
   fallbacks keep them. One `VoiceClient` is shared with music, so she
   cannot speak while a track plays and posts text instead (`_post_unspoken`).
+- **Answer to her question**: when a reply ends by asking something (`_asks_user`: a `?`, or Thai
+  `คะ` that is not `นะคะ`, or a question word at the end), that speaker's next utterance within
+  `STT_ANSWER_WINDOW_S` goes straight to the LLM with no wake word. The window opens when she
+  finishes speaking, belongs to that speaker alone and is used up by one utterance, so it is not
+  the follow-up window removed earlier; a reply that asks again opens a new one.
 - **Spoken confirmation**: after `voice_kick` / `voice_disconnect_timer` propose an action, the
   requester can say "ยืนยัน" or "ยกเลิก" instead of pressing the button. This is the one input heard
   without the wake word: only from the requester, only while their `ConfirmActionView` is open (60 s),

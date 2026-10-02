@@ -5,10 +5,14 @@ A confirmation step for actions that affect other people.
 Yuuka only proposes these (kick someone, start a disconnect timer). Nothing
 happens until the requester presses the button, and pressing it costs no LLM
 request: the stored action simply runs.
+
+In a voice session the requester can also answer out loud (`spoken_decision`);
+the voice cog hands that to `decide_by_voice`. Still no LLM request.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Awaitable, Callable
 
 import discord
@@ -18,6 +22,31 @@ from utils.embeds import error_embed, info_embed, success_embed, warning_embed
 from utils.errors import UserError, UserWarning
 
 _TIMEOUT_S = 60
+
+# A spoken answer is a short utterance. Anything longer is conversation that merely
+# contains one of these words ("ไม่รู้สิ ว่าจะเปิดเพลงอะไรดี"), so it is not an answer.
+_ANSWER_MAX_CHARS = 30
+_YES = re.compile(
+    r"ยืนยัน|ตกลง|โอเค|เอาเลย|ทำเลย|จัดไป|ได้เลย|ใช่|(?<![a-z])(?:ok|okay|yes|yep|confirm)(?![a-z])"
+)
+_NO = re.compile(
+    r"ยกเลิก|ไม่|อย่า|หยุด|เปลี่ยนใจ|(?<![a-z])(?:no|nope|cancel|stop)(?![a-z])"
+)
+
+
+def spoken_decision(text: str) -> bool | None:
+    """True to confirm, False to cancel, None when `text` is not an answer.
+
+    A "no" word wins over a "yes" word, so "ไม่ใช่" and "ไม่ได้" cancel: when it is
+    unclear, nothing should happen to anybody."""
+    text = re.sub(r"[\s.,!?。、…~]+", " ", text.lower()).strip()
+    if not text or len(text) > _ANSWER_MAX_CHARS:
+        return None
+    if _NO.search(text):
+        return False
+    if _YES.search(text):
+        return True
+    return None
 
 
 class ConfirmActionView(discord.ui.View):
@@ -56,6 +85,48 @@ class ConfirmActionView(discord.ui.View):
             child.disabled = True
         self.stop()
 
+    async def _perform(self) -> tuple[discord.Embed, str, str]:
+        """Run the action. Returns the embed to show, the result line when it worked,
+        and the reason when it did not."""
+        try:
+            if self.check:
+                self.check()
+            line = await self.action()
+            return success_embed("เรียบร้อยค่ะ", line), line, ""
+        except UserError as exc:
+            return error_embed(exc.title, exc.description), "", exc.description
+        except UserWarning as exc:
+            return warning_embed(exc.title, exc.description), "", exc.description
+        except Exception as exc:
+            logger.exception(f"[AI Confirm] Action failed: {exc}")
+            reason = "ทำไม่สำเร็จค่ะ เซนเซย์ลองอีกรอบนะคะ"
+            return error_embed("เกิดข้อผิดพลาด", reason), "", reason
+
+    async def _announce(self, text: str) -> None:
+        voice_cog = self.bot.get_cog("AI Voice Chat")
+        if text and voice_cog is not None:
+            await voice_cog.announce(self.guild.id, text)
+
+    async def decide_by_voice(self, confirmed: bool) -> None:
+        """The requester said yes or no out loud: same outcome as the button, and the
+        answer is spoken back because they may not be looking at the chat."""
+        if self.done:
+            return
+        self._close()
+        if confirmed:
+            embed, line, reason = await self._perform()
+            spoken = line or reason
+        else:
+            embed = warning_embed("ยกเลิกแล้วค่ะ", "ไม่ทำอะไรนะคะ (´-ω-`)")
+            spoken = "ยกเลิกแล้วค่ะ"
+
+        if self.message is not None:
+            try:
+                await self.message.edit(embed=embed, view=self)
+            except discord.HTTPException as exc:
+                logger.warning(f"[AI Confirm] Could not update the confirmation: {exc}")
+        await self._announce(spoken)
+
     @discord.ui.button(label="ยืนยัน", style=discord.ButtonStyle.success)
     async def confirm(self, button: discord.ui.Button, interaction: discord.Interaction) -> None:
         if self.done:
@@ -63,25 +134,9 @@ class ConfirmActionView(discord.ui.View):
         self._close()
         await interaction.response.defer()
 
-        line = ""
-        try:
-            if self.check:
-                self.check()
-            line = await self.action()
-            embed = success_embed("เรียบร้อยค่ะ", line)
-        except UserError as exc:
-            embed = error_embed(exc.title, exc.description)
-        except UserWarning as exc:
-            embed = warning_embed(exc.title, exc.description)
-        except Exception as exc:
-            logger.exception(f"[AI Confirm] Action failed: {exc}")
-            embed = error_embed("เกิดข้อผิดพลาด", "ทำไม่สำเร็จค่ะ เซนเซย์ลองอีกรอบนะคะ")
-
+        embed, line, _ = await self._perform()
         await interaction.edit_original_response(embed=embed, view=self)
-
-        voice_cog = self.bot.get_cog("AI Voice Chat")
-        if line and voice_cog is not None:
-            await voice_cog.announce(self.guild.id, line)
+        await self._announce(line)
 
     @discord.ui.button(label="ยกเลิก", style=discord.ButtonStyle.danger)
     async def cancel(self, button: discord.ui.Button, interaction: discord.Interaction) -> None:

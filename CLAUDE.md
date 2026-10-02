@@ -27,7 +27,8 @@ steps are in `.agents/DEVELOPMENT.md`. When a rule changes, update both files.
 - One `VoiceClient` per guild is shared by the music player and `/ai voice` speech.
 - AI agent: LangChain core only (never `langchain` or `langgraph`). Tools live in `utils/ai/tools/` and
   are offered by `tools_for`. Everything a tool finds or lists is filtered by what the requester can
-  see, and anything done to other people needs the confirm button.
+  see, and anything done to other people needs the confirm button (in a voice session the
+  requester may say yes/no out loud instead).
 - The free OpenRouter model allows few requests per day: never call the model in a loop or while
   waiting for something.
 - The production container is stateless: nothing saved at runtime survives a restart.

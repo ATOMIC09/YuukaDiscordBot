@@ -228,6 +228,12 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
   spoken on each `status` event (`spoken_upto`). `_speak` strips links for TTS only; text
   fallbacks keep them. One `VoiceClient` is shared with music, so she
   cannot speak while a track plays and posts text instead (`_post_unspoken`).
+- **Spoken confirmation**: after `voice_kick` / `voice_disconnect_timer` propose an action, the
+  requester can say "ยืนยัน" or "ยกเลิก" instead of pressing the button. This is the one input heard
+  without the wake word: only from the requester, only while their `ConfirmActionView` is open (60 s),
+  and only a short utterance (`spoken_decision` in `utils/ai/confirm.py`; a "no" word beats a "yes"
+  word). Anything else from them goes through the normal wake gate. It costs one STT request and no
+  LLM request; the outcome is spoken back via `announce`.
 - **`announce(guild_id, text)`**: speaks results that arrive after a turn ends (confirmed actions,
   fired reminders); silent if music or her own speech holds the voice client.
 

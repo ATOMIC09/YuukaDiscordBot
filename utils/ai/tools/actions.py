@@ -4,7 +4,8 @@ Actions that affect other people. The tool only proposes: it posts a
 confirmation and the requester decides (see `utils.ai.confirm`).
 
 Both tools end the turn (`return_direct`) with no ActionResult: in voice, the
-line `_propose` speaks is the only acknowledgement.
+line `_propose` speaks is the only acknowledgement. The requester then answers
+by button or, in a voice session, out loud (see `AIVoiceChatCog.expect_answer`).
 """
 
 from __future__ import annotations
@@ -33,12 +34,16 @@ def _require_move_members(ctx: YuukaContext) -> None:
 
 async def _propose(ctx: YuukaContext, title: str, body: str, action, check) -> str:
     if ctx.before_action is not None:
-        await ctx.before_action("กดยืนยันในแชทนะคะ" if ctx.voice else "")
+        await ctx.before_action("พูดว่ายืนยัน หรือกดปุ่มในแชทก็ได้นะคะ" if ctx.voice else "")
 
     view = ConfirmActionView(
         bot=ctx.bot, guild=ctx.guild, requester=ctx.requester, action=action, check=check
     )
     view.message = await ctx.channel.send(embed=info_embed(title, body), view=view)
+    if ctx.voice:
+        voice_cog = ctx.bot.get_cog("AI Voice Chat")
+        if voice_cog is not None:
+            voice_cog.expect_answer(ctx.guild.id, view)
     return WAITING
 
 

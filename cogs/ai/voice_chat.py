@@ -68,6 +68,7 @@ from utils.embeds import (
     error_embed,
     info_embed,
 )
+from utils.ai.confirm import ConfirmActionView, spoken_decision
 from utils.errors import UserError, UserWarning
 from utils.stt import ensure_loaded, model_description, transcribe_pcm
 from utils.tts import synthesize_speech
@@ -144,6 +145,11 @@ class VoiceChatSession:
     # Explaining it once per silent stretch is helpful; repeating it above every
     # reply is noise. Cleared again the moment she manages to speak out loud.
     text_fallback_announced: bool = False
+
+    # A proposed action waiting for its requester's spoken yes or no, by user id.
+    # Only the requester's own voice counts. Entries are checked with `view.done`,
+    # so a button press or a timeout needs no cleanup here.
+    pending_confirms: dict[int, ConfirmActionView] = field(default_factory=dict)
 
 
 class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
@@ -258,6 +264,25 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         user = member or self.bot.get_user(segment.user_id)
         display = user.display_name if user else f"Unknown ({segment.user_id})"
 
+        # A pending confirmation is the one thing heard without the wake word: the
+        # requester answering "ยืนยัน" or "ยกเลิก" to a proposal Yuuka just made. It
+        # is scoped to that speaker, ends with the 60 s button, and only a short
+        # yes/no utterance counts; anything else falls through to the normal gate.
+        result = None
+        view = session.pending_confirms.get(segment.user_id)
+        if view is not None and view.done:
+            session.pending_confirms.pop(segment.user_id, None)
+        elif view is not None:
+            result = await transcribe_pcm(segment.pcm, display)
+            decision = spoken_decision(result.text) if result.text else None
+            if decision is not None:
+                logger.info(f"[AI Voice] Spoken answer from {display}: {result.text!r} -> {decision}")
+                session.pending_confirms.pop(segment.user_id, None)
+                await view.decide_by_voice(decision)
+                return
+            if not result.text:
+                return
+
         # A bare "just her name" segment leaves a short-lived bridge task
         # waiting for exactly this: the next segment from that same speaker.
         # If one arrives in time, it's the rest of the sentence the pause
@@ -266,7 +291,8 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         bridge = session.pending_bridge.pop(segment.user_id, None)
         if bridge is not None:
             bridge.cancel()
-            result = await transcribe_pcm(segment.pcm, display)
+            if result is None:
+                result = await transcribe_pcm(segment.pcm, display)
             if not result.text:
                 return
             logger.info(f"[AI Voice] Bridged pause-continuation from {display}: {result.text}")
@@ -277,7 +303,8 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
 
         # Cheap pre-filter: is this worth transcribing at all? Runs on every
         # segment — there is no standing "awake" state that skips it.
-        heard, acoustic_score = await acoustic_wake.detect(segment.pcm)
+        # (Skipped when a pending confirmation already had it transcribed.)
+        heard, acoustic_score = (True, 0.0) if result is not None else await acoustic_wake.detect(segment.pcm)
         if not heard:
             logger.debug(
                 f"[AI Voice] No acoustic wake hit from {display} "
@@ -290,7 +317,8 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             f"(score {acoustic_score:.3f} >= {config.stt_wake_acoustic_threshold})"
         )
 
-        result = await transcribe_pcm(segment.pcm, display)
+        if result is None:
+            result = await transcribe_pcm(segment.pcm, display)
         if not result.text:
             return
 
@@ -556,6 +584,14 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
     # ──────────────────────────────────────────────────────────────────────
     # Public API — called by AIChatCog
     # ──────────────────────────────────────────────────────────────────────
+
+    def expect_answer(self, guild_id: int, view: ConfirmActionView) -> None:
+        """Let `view`'s requester confirm or cancel it by voice, no wake word needed.
+
+        Called by `utils.ai.tools.actions` right after it posts the buttons."""
+        session = self.active_sessions.get(guild_id)
+        if session is not None:
+            session.pending_confirms[view.requester.id] = view
 
     async def announce(self, guild_id: int, text: str) -> None:
         """Say `text` in this guild's voice session, if she is free to.

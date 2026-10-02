@@ -150,7 +150,8 @@ async def _music_skip(
     text_channel: Any,
 ) -> ActionResult:
     player = bot.get_cog(_PLAYER_COG)
-    next_track = await player.skip_current(guild)
+    # `arg` is the queue position to jump to ("" = just the next song).
+    next_track = await player.skip_current(guild, int(arg) if arg.isdigit() else None)
     detail = (
         f"เพลงต่อไปคือ [{next_track.title}]({next_track.original_url}) ค่ะ"
         if next_track

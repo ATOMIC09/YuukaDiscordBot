@@ -7,11 +7,16 @@ Music control as tools. They run the same code as the /music commands through
 from __future__ import annotations
 
 from langchain_core.tools import tool
+from rapidfuzz import fuzz
 
 from utils import ai_actions
 from utils.ai.context import Ctx, YuukaContext
+from utils.errors import UserError
 
 _MAX_LISTED = 25
+
+# Below this a spoken or typed name is not taken to be a queued title.
+_TITLE_MATCH_MIN = 75
 
 
 async def _run(ctx: YuukaContext, name: str, arg: str = "") -> tuple[str, ai_actions.ActionResult | None]:
@@ -41,10 +46,40 @@ async def music_play(query: str, ctx: Ctx):
     return await _run(ctx, "music_play", query)
 
 
+def _upcoming(ctx: YuukaContext) -> list:
+    """The queue as users see it: the track prepared for crossfade counts as first."""
+    state = ctx.bot.get_cog("PlayerCog").get_state(ctx.guild.id)
+    return ([state.crossfade_next] if state.crossfade_next else []) + list(state.queue)
+
+
+def _position_of(upcoming: list, name: str) -> int:
+    """1-based queue position of the track whose title best matches `name`."""
+    wanted = name.casefold().strip()
+    for index, track in enumerate(upcoming, start=1):
+        if wanted in track.title.casefold():
+            return index
+    scores = [fuzz.partial_ratio(wanted, t.title.casefold()) for t in upcoming]
+    if scores and max(scores) >= _TITLE_MATCH_MIN:
+        return scores.index(max(scores)) + 1
+    raise UserError(
+        "ไม่เจอเพลงนั้นในคิว",
+        f'ในคิวไม่มีเพลงที่ชื่อคล้าย "{name}" ค่ะ (ถ้าเซนเซย์อยากฟังเพลงนี้ ให้เปิดเพลงใหม่แทน)',
+    )
+
+
 @tool(return_direct=True, response_format="content_and_artifact")
-async def music_skip(ctx: Ctx):
-    """Skip the song playing right now."""
-    return await _run(ctx, "music_skip")
+async def music_skip(ctx: Ctx, position: int = 0, song: str = ""):
+    """Skip the song playing right now, or jump ahead in the queue.
+
+    With neither argument it skips to the next song. To jump ahead give `position`
+    (the number in the queue, 1 is the next song: "skip to song 3" is position 3) or
+    `song` (part of the title of a song already in the queue). Never give both.
+    """
+    if position and song:
+        raise UserError("ระบุมาสองอย่างค่ะ", "ให้ระบุแค่ลำดับหรือชื่อเพลงอย่างใดอย่างหนึ่งนะคะ")
+    if song:
+        position = _position_of(_upcoming(ctx), song)
+    return await _run(ctx, "music_skip", str(position) if position > 0 else "")
 
 
 @tool(return_direct=True, response_format="content_and_artifact")

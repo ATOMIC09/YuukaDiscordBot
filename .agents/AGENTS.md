@@ -348,7 +348,7 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 |---|---|
 | `search.py` | `web_search` |
 | `discord_read.py` | `read_messages`, `search_messages` — permissions are the **requester's**, not the bot's (private threads included). Channels they read go in `ctx.channels_used`, and `utils/ai/linker.py` turns her `#name` for them into a clickable `<#id>` (text only; a mention read aloud is digits) |
-| `music.py` | `music_play/skip/stop` (via `ai_actions.run_action`), `music_now_playing/queue/history/remove` |
+| `music.py` | `music_play/skip/stop` (via `ai_actions.run_action`; `music_skip` takes a queue `position` or a `song` name, like `/music skip <position>`), `music_now_playing/queue/history/remove` |
 | `server.py` | `voice_members`, `user_info`, `server_info` — never show who is in a voice channel the requester cannot see |
 | `actions.py` | `voice_kick`, `voice_disconnect_timer` — propose only; `confirm.py` button (requester only) runs them |
 | `reminders.py` | `remind_me`, `notify_when_joins_voice` — timers/listeners in `scheduler.py`, **0 LLM requests** while waiting or firing |

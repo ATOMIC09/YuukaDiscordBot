@@ -245,6 +245,7 @@ class AIChatCog(commands.Cog, name="AI Chat"):
                 active_msg = None
                 current_chunk_text = ""
                 full_response = ""
+                done: list[dict] = []
                 last_edit = time.time()
                 error_occurred = False
 
@@ -294,6 +295,8 @@ class AIChatCog(commands.Cog, name="AI Chat"):
                         else:
                             await active_msg.edit(content=current_chunk_text or None, embed=error_embed("AI Error", user_msg))
                         break
+                    elif msg_type == "done":
+                        done.extend(chunk)
                     elif msg_type == "content":
                         current_chunk_text += chunk
                         full_response += chunk
@@ -324,6 +327,10 @@ class AIChatCog(commands.Cog, name="AI Chat"):
                     except discord.HTTPException:
                         pass
 
+                # What she did goes in too: an action-only turn has no text, and a
+                # history with the request but not the answer gets it done again.
+                if not error_occurred:
+                    history.extend(done)
                 if full_response and not full_response.startswith("❌"):
                     history.append({"role": "assistant", "content": full_response})
 

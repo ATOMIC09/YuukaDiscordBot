@@ -550,6 +550,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
 
         session.busy = True
         full_response = ""
+        done: list[dict] = []  # what tools did this turn, for the history
         spoken_upto = 0  # how much of full_response has already been spoken
         try:
             async def before_action(extra: str = "") -> None:
@@ -584,6 +585,8 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                             return
                         elif msg_type == "content":
                             full_response += chunk
+                        elif msg_type == "done":
+                            done.extend(chunk)
                         elif msg_type == "status":
                             # A tool is about to run. Say anything she has written
                             # so far now. Text right before a call is dropped
@@ -604,8 +607,12 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                 await session.text_channel.send(embed=error_embed("AI Error", str(exc)))
                 return
 
+            # An action-only turn has no text but still happened: without it in the
+            # history the request looks unanswered and gets done again.
+            session.history.extend(done)
             if not full_response:
-                logger.warning(f"[AI Voice] Empty response in guild {guild_id}")
+                if not done:
+                    logger.warning(f"[AI Voice] Empty response in guild {guild_id}")
                 return
 
             logger.debug(f"[AI Voice] LLM response ({len(full_response)} chars): {full_response}")

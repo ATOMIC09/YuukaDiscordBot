@@ -11,6 +11,8 @@ messages) are all LangChain core.
     ("status", str)             a tool is about to run
     ("content", str)            a chunk of her reply
     ("action", ActionResult)    a bot command ran
+    ("done", list[dict])        a tool that ends the turn succeeded: its call and result, as
+                                history entries (the turn has no text to record otherwise)
     ("error", dict | str)       generation failed; nothing follows
 """
 
@@ -192,6 +194,17 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
                 # goes back to the model so she can explain it.
                 if ok and tools[call["name"]].return_direct:
                     stop = True
+                    # Such a turn writes no text, so without this the history would hold
+                    # the request and nothing after it, and the model would do it again
+                    # on the next message. Kept as a real call and result, the format she
+                    # is prompted with: any other note she copies into her replies
+                    # instead of calling the tool.
+                    yield ("done", [
+                        {"role": "assistant", "content": "", "tool_calls": [
+                            {"name": call["name"], "args": call["args"], "id": call["id"], "type": "tool_call"}
+                        ]},
+                        {"role": "tool", "content": str(result.content), "tool_call_id": call["id"], "name": call["name"]},
+                    ])
                 # Calls in one reply are a sequence ("queue it, then skip"): after a
                 # failure the rest no longer make sense.
                 if not ok or (action is not None and not action.ok):

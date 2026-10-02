@@ -38,3 +38,6 @@ wakeword_training/data/
 wakeword_training/output/
 wakeword_training/logs/
 wakeword_training/.venv/
+
+# Claude Code local settings
+.claude/

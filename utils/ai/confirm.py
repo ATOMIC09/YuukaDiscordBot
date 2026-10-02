@@ -18,6 +18,7 @@ from typing import Awaitable, Callable
 import discord
 
 from bot.logger import logger
+from utils import ai_actions
 from utils.embeds import error_embed, info_embed, success_embed, warning_embed
 from utils.errors import UserError, UserWarning
 
@@ -58,6 +59,7 @@ class ConfirmActionView(discord.ui.View):
         requester: discord.Member,
         action: Callable[[], Awaitable[str]],
         check: Callable[[], None] | None = None,
+        command: str = "",
     ) -> None:
         """`action` does the work and returns a one-line result; it may raise
         UserError/UserWarning to refuse. `check` is run again on confirm, since
@@ -68,6 +70,7 @@ class ConfirmActionView(discord.ui.View):
         self.requester = requester
         self.action = action
         self.check = check
+        self.command = command  # for the command log, e.g. "/kick @name"
         self.message: discord.Message | None = None
         self.done = False
 
@@ -92,15 +95,33 @@ class ConfirmActionView(discord.ui.View):
             if self.check:
                 self.check()
             line = await self.action()
+            await self._log(True, line)
             return success_embed("เรียบร้อยค่ะ", line), line, ""
         except UserError as exc:
+            await self._log(False, exc.description)
             return error_embed(exc.title, exc.description), "", exc.description
         except UserWarning as exc:
+            await self._log(False, exc.description)
             return warning_embed(exc.title, exc.description), "", exc.description
         except Exception as exc:
             logger.exception(f"[AI Confirm] Action failed: {exc}")
             reason = "ทำไม่สำเร็จค่ะ เซนเซย์ลองอีกรอบนะคะ"
+            await self._log(False, reason)
             return error_embed("เกิดข้อผิดพลาด", reason), "", reason
+
+    async def _log(self, ok: bool, detail: str) -> None:
+        """The command log gets it too: it was confirmed, so it was a command someone ran."""
+        if self.command:
+            await ai_actions.log_command(
+                self.bot,
+                guild=self.guild,
+                channel=self.message.channel if self.message is not None else None,
+                member=self.requester,
+                command=self.command,
+                ok=ok,
+                detail=detail,
+                jump_url=self.message.jump_url if self.message is not None else None,
+            )
 
     async def _announce(self, text: str) -> None:
         voice_cog = self.bot.get_cog("AI Voice Chat")

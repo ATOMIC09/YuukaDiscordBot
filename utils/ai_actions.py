@@ -209,6 +209,33 @@ def _target_channel(bot: discord.Bot, guild: discord.Guild, fallback: Any) -> An
     if player is not None:
         state = player.get_state(guild.id)
         if state.text_channel is not None:
+async def log_command(
+    bot: discord.Bot,
+    *,
+    guild: discord.Guild | None,
+    channel: Any,
+    member: discord.abc.User,
+    command: str,
+    ok: bool,
+    detail: str = "",
+    jump_url: str | None = None,
+) -> None:
+    """Put a command Yuuka ran into the command log, as a slash command would be.
+
+    A command she runs has no interaction, so the log cog never sees it. Never raises:
+    a missing log channel must not undo what already happened."""
+    log_cog = bot.get_cog("CommandLogCog")
+    if log_cog is None:
+        return
+    try:
+        await log_cog.log_ai_command(
+            guild=guild, channel=channel, member=member, command=command,
+            ok=ok, detail=detail, jump_url=jump_url,
+        )
+    except Exception as exc:
+        logger.warning(f"[AI Action] Could not log '{command}': {exc}")
+
+
             return state.text_channel
     return fallback
 
@@ -301,3 +328,13 @@ async def run_action(
         logger.warning(f"[AI Action] Could not post the result embed: {exc}")
 
     return result
+    await log_command(
+        bot,
+        guild=guild,
+        channel=channel,
+        member=member,
+        command=f"{spec.command} {arg}".strip(),
+        ok=result.ok,
+        detail=result.detail,
+        jump_url=(notice.jump_url if notice is not None else None),
+    )

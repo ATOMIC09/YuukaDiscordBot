@@ -168,3 +168,7 @@ TOOLS = [music_play, music_skip, music_stop, music_now_playing, music_queue, mus
 
 # The command embed already tells the user what is happening.
 STATUS: dict = {}
+    await ai_actions.log_command(
+        ctx.bot, guild=ctx.guild, channel=ctx.channel, member=ctx.requester,
+        command=f"/music remove position={position}", ok=True, detail=track.title,
+    )

@@ -32,12 +32,13 @@ def _require_move_members(ctx: YuukaContext) -> None:
         raise UserWarning("ทำให้ไม่ได้ค่ะ", "เซนเซย์ไม่มีสิทธิ์ย้ายสมาชิกในห้องเสียงนะคะ")
 
 
-async def _propose(ctx: YuukaContext, title: str, body: str, action, check) -> str:
+async def _propose(ctx: YuukaContext, title: str, body: str, action, check, command: str) -> str:
     if ctx.before_action is not None:
         await ctx.before_action("พูดว่ายืนยัน หรือกดปุ่มในแชทก็ได้นะคะ" if ctx.voice else "")
 
     view = ConfirmActionView(
-        bot=ctx.bot, guild=ctx.guild, requester=ctx.requester, action=action, check=check
+        bot=ctx.bot, guild=ctx.guild, requester=ctx.requester, action=action, check=check,
+        command=command,
     )
     view.message = await ctx.channel.send(embed=info_embed(title, body), view=view)
     if ctx.voice:
@@ -74,6 +75,7 @@ async def voice_kick(member: str, ctx: Ctx) -> str:
         f"เซนเซย์ต้องการให้หนูเตะ {target.mention} ออกจากช่อง `{target.voice.channel.name}` ใช่มั้ยคะ?",
         kick,
         lambda: _require_move_members(ctx),
+        f"/kick member={target.display_name}",
     )
 
 
@@ -112,6 +114,7 @@ async def voice_disconnect_timer(seconds: int, ctx: Ctx) -> str:
         f"เซนเซย์ต้องการให้หนูตัดทุกคนออกจากช่อง `{channel.name}` ในอีก **{format_countdown(seconds)}** ใช่มั้ยคะ?",
         start,
         lambda: _require_move_members(ctx),
+        f"/countdis channel={channel.name} seconds={seconds}",
     )
 
 

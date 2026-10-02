@@ -158,6 +158,67 @@ class CommandLogCog(commands.Cog):
             if hasattr(ctx.bot, "command_extras"):
                 ctx.bot.command_extras.pop(ctx.interaction.id, None)
 
+    async def log_ai_command(
+        self,
+        *,
+        guild: discord.Guild | None,
+        channel: discord.abc.Messageable | None,
+        member: discord.abc.User,
+        command: str,
+        ok: bool,
+        detail: str = "",
+        jump_url: str | None = None,
+    ) -> None:
+        """Log a command Yuuka ran for someone. It has no interaction, so
+        `on_application_command` never sees it; this posts the same kind of embed."""
+        log_channel = self.get_log_channel()
+        if not log_channel:
+            return
+
+        embed = discord.Embed(
+            title=f"{SUCCESS_EMOJI if ok else REJECT_EMOJI} Command Execution",
+            description="**Run by Yuuka (AI) on the user's request**",
+            color=COLOR_SUCCESS if ok else COLOR_ERROR,
+        )
+        embed.set_author(
+            name=str(member),
+            icon_url=member.display_avatar.url if member.display_avatar else None,
+        )
+        embed.add_field(
+            name="เซิร์ฟเวอร์",
+            value=f"`{guild.name}`\n({guild.id})" if guild else "`Direct Message`",
+            inline=True,
+        )
+        category = getattr(channel, "category", None)
+        embed.add_field(
+            name="หมวดหมู่",
+            value=f"`{category.name}`\n({category.id})" if category else "`None`",
+            inline=True,
+        )
+        embed.add_field(
+            name="ช่อง",
+            value=(
+                f"{channel.mention}\n({channel.id})" if hasattr(channel, "mention") else "Unknown"
+            ),
+            inline=True,
+        )
+        embed.add_field(name="ผู้เขียน", value=f"{member.mention} ({member.id})", inline=True)
+        embed.add_field(name="คำสั่ง", value=f"```\n{command[:900]}\n```", inline=True)
+        if detail:
+            embed.add_field(
+                name="ผลลัพธ์" if ok else "Error", value=f"```\n{detail[:900]}\n```", inline=False
+            )
+        embed.timestamp = discord.utils.utcnow()
+
+        view = None
+        if jump_url:
+            view = discord.ui.View()
+            view.add_item(discord.ui.Button(label="Go to Message", url=jump_url, style=discord.ButtonStyle.link))
+        try:
+            await log_channel.send(embed=embed, view=view)
+        except Exception as e:
+            logger.error(f"Failed to send AI command log: {e}")
+
     @commands.Cog.listener()
     async def on_application_command(self, ctx: discord.ApplicationContext):
         channel = self.get_log_channel()

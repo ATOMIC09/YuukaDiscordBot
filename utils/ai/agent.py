@@ -52,6 +52,11 @@ _LAST_ROUND_NOTE = (
     "[SYSTEM] No more tools this turn. Answer the user now, in your normal voice and their "
     "language, using only the results above. If you could not get what they asked for, "
     "say so briefly and why. Do not describe what you would do next."
+_RETRY_NOTE = (
+    "[SYSTEM] Your last reply had no usable tool call and no answer. Either write the tool "
+    "call now, exactly as <tool_call>{...}</tool_call> with valid JSON, or answer the user directly."
+)
+
 )
 
 _EMPTY_REPLY = "หนูนึกคำตอบไม่ออกค่ะ เซนเซย์ลองถามใหม่อีกทีนะคะ (´・ω・`)"
@@ -173,6 +178,7 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
                     if not retried and not last:
                         retried = True
                         logger.warning("[Agent] Empty reply; asking again")
+                        conversation.append(HumanMessage(content=_RETRY_NOTE))
                         continue
                     yield ("error", {"user": _EMPTY_REPLY, "dev": "The model returned an empty reply."})
                     return

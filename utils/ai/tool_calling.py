@@ -58,6 +58,9 @@ _HARMONY_CALL = "<|call|>"
 _HARMONY_TOKEN = re.compile(r"<\|[a-z]+\|>")
 _HARMONY_RECIPIENT = re.compile(r"to=([\w.\-]+)")
 _HARMONY_FINAL = re.compile(r"<\|channel\|>\s*final\b.*?<\|message\|>(.*)", re.S)
+# gpt-oss sometimes wraps the call in our tags inside a harmony block, and may escape the
+# slash of the closing one (<\/tool_call>), which also leaves its JSON a brace short.
+_STRAY_TAG = re.compile(r"<\\?/?tool_call>")
 
 # Only we write tool responses. One from the model is invented.
 _FAKE_RESPONSE = "<tool_response"
@@ -259,6 +262,7 @@ def _bare_call(text: str, names: set[str]) -> dict[str, Any] | None:
         return call if call is not None and call["name"] in names else None
     return None
 
+    raw = _STRAY_TAG.sub("", raw)
 
 def _parse_harmony(raw: str) -> dict[str, Any] | None:
     """Read a call out of a harmony block, or None if it holds no usable call."""

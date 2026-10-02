@@ -329,6 +329,9 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 - **One `VoiceClient` per guild is shared with `/ai voice`.** `vc.play()` raises while something is
   playing, so Yuuka can't speak during a track (she posts text instead), and a track must not start
   while she is speaking (`AIVoiceChatCog._await_speech`).
+  The line she speaks after an action races the track's stream lookup, so `_play_next_async` also
+  waits (up to 30 s) for the client to go quiet before `play()`; without it the track was dropped
+  with "Already playing audio".
 - The track prepared for crossfade (`state.crossfade_next`) is out of `state.queue` but still shown as
   queue position 1; count it when indexing the queue the way users see it.
 

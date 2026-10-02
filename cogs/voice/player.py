@@ -77,6 +77,7 @@ BUFFER_SECONDS = 5.0
 PREFILL_SECONDS = 1.0
 CROSSFADE_SECONDS = 7.0
 CROSSFADE_BUFFER_SECONDS = BUFFER_SECONDS
+_VOICE_BUSY_WAIT_STEPS = 300  # 0.1 s each: the longest a track waits for her to stop speaking
 CROSSFADE_STARTUP_MAX_WAIT_SECONDS = 20.0
 CROSSFADE_STARTUP_POLL_SECONDS = 0.25
 CROSSFADE_PRELOAD_LEAD_SECONDS = CROSSFADE_BUFFER_SECONDS + PREFILL_SECONDS
@@ -1537,6 +1538,14 @@ class PlayerCog(commands.Cog):
                 if e:
                     logger.error(f"Player error in guild {guild_id}: {e}")
                 self.bot.loop.create_task(self._play_next_async(guild_id))
+
+            # /ai voice shares this client. When she is mid-sentence (her "ได้ค่ะ เดี๋ยว
+            # หนูเปิดเพลงให้" races the stream lookup) play() would raise and the track
+            # would be dropped, so let her finish.
+            for _ in range(_VOICE_BUSY_WAIT_STEPS):
+                if not state.voice_client.is_playing():
+                    break
+                await asyncio.sleep(0.1)
 
             state.voice_client.play(persistent_source, after=after_playing)
             state.active_audio_source = persistent_source

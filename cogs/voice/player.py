@@ -67,6 +67,9 @@ ffmpeg_options = {
 
 ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
 
+# How many results a name search asks for, so a channel at the top does not hide the song.
+_SEARCH_RESULTS = 5
+
 FRAME_MS = 20
 PCM_FRAME_BYTES = 3840  # 20 ms of 48 kHz, 16-bit, stereo PCM
 PCM_DTYPE = "<i2"  # what ffmpeg's `-f s16le` writes, regardless of host endianness
@@ -1613,8 +1616,10 @@ class PlayerCog(commands.Cog):
                 "เซนเซย์อยู่คนละห้องกับหนูนะคะ มาหาหนูก่อนน้า (・`ω´・)",
             )
 
-        # ytsearch1 if not URL (faster search)
-        search = query if query.startswith(("http://", "https://")) else f"ytsearch1:{query}"
+        # A name search can rank a channel or playlist first ("YOASOBI" gives the artist's
+        # channel), which is not a track. Ask for a few results and take the first video.
+        is_url = query.startswith(("http://", "https://"))
+        search = query if is_url else f"ytsearch{_SEARCH_RESULTS}:{query}"
 
         try:
             data = await self._extract_info(search, download=False)
@@ -1634,6 +1639,11 @@ class PlayerCog(commands.Cog):
         if 'entries' in data:
             entries = list(data['entries'])
             is_playlist = True
+            if not is_url:
+                video = next((e for e in entries if e and e.get('ie_key') in (None, 'Youtube')), None)
+                entries = [video] if video else []
+                if not video:
+                    return EnqueueResult(False, "หาเพลงไม่เจอค่ะ", "ผลการค้นหาไม่มีวิดีโอเลยค่ะ ลองบอกชื่อเพลงให้ชัดขึ้นนะคะ (╥﹏╥)")
 
         added_count = 0
         added: list[Track] = []

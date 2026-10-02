@@ -33,7 +33,9 @@ async def _run(ctx: YuukaContext, name: str, arg: str = "") -> tuple[str, ai_act
     )
     if result is None:
         return "That command does not exist.", None
-    return result.title, result
+    # The title alone ("เปิดเพลงให้แล้วค่ะ") says nothing about which song, and this
+    # is also what lands in her history.
+    return f"{result.title} — {result.detail}", result
 
 
 @tool(return_direct=True, response_format="content_and_artifact")
@@ -74,6 +76,8 @@ async def music_skip(ctx: Ctx, position: int = 0, song: str = ""):
     With neither argument it skips to the next song. To jump ahead give `position`
     (the number in the queue, 1 is the next song: "skip to song 3" is position 3) or
     `song` (part of the title of a song already in the queue). Never give both.
+    When the user says "that song" or "the one you just added", pass its title from the
+    earlier [result] or tool result as `song`: a plain skip is only for "skip" on its own.
     """
     if position and song:
         raise UserError("ระบุมาสองอย่างค่ะ", "ให้ระบุแค่ลำดับหรือชื่อเพลงอย่างใดอย่างหนึ่งนะคะ")

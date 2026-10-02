@@ -440,6 +440,7 @@ class EnqueueResult:
     added: int = 0
     is_playlist: bool = False
     first_track: "Track | None" = None
+    tracks: "list[Track]" = dataclasses.field(default_factory=list)  # everything added
 
 
 class AudioState:
@@ -1622,6 +1623,7 @@ class PlayerCog(commands.Cog):
             is_playlist = True
 
         added_count = 0
+        added: list[Track] = []
         first_track = None
 
         for entry in entries:
@@ -1660,6 +1662,7 @@ class PlayerCog(commands.Cog):
                 channel_follower_count=channel_follower_count
             )
             state.queue.append(track)
+            added.append(track)
             if not first_track:
                 first_track = track
             added_count += 1
@@ -1675,7 +1678,7 @@ class PlayerCog(commands.Cog):
         await self.begin_playback(guild, voice_channel)
 
         return EnqueueResult(
-            True, added=added_count, is_playlist=is_playlist, first_track=first_track
+            True, added=added_count, is_playlist=is_playlist, first_track=first_track, tracks=added
         )
 
     async def begin_playback(self, guild: discord.Guild, voice_channel: discord.VoiceChannel) -> None:

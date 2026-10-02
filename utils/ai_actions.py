@@ -45,6 +45,9 @@ from utils.errors import UserError, UserWarning
 
 _PLAYER_COG = "PlayerCog"
 
+# How many titles an embed names when a playlist was added.
+_ADDED_LISTED = 5
+
 
 @dataclass(frozen=True)
 class ActionSpec:
@@ -128,11 +131,17 @@ async def _music_play(
             spoken_fallback="ขอโทษค่ะ หนูหาเพลงนั้นไม่เจอเลย",
         )
 
-    if result.is_playlist:
-        detail = f"เพิ่ม Playlist ({result.added} เพลง) ลงคิวแล้วค่ะ"
-    else:
+    # A search comes back as a one-entry "playlist", so the count decides, not the flag.
+    if result.added == 1:
         track = result.first_track
         detail = f"เพิ่ม [{track.title}]({track.original_url}) ลงคิวแล้วค่ะ"
+    else:
+        shown = result.tracks[:_ADDED_LISTED]
+        lines = "\n".join(f"• [{t.title}]({t.original_url})" for t in shown)
+        more = result.added - len(shown)
+        if more > 0:
+            lines += f"\n…และอีก {more} เพลง"
+        detail = f"เพิ่ม Playlist ({result.added} เพลง) ลงคิวแล้วค่ะ\n{lines}"
 
     return ActionResult(
         True,

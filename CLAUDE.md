@@ -44,6 +44,8 @@ that was not done.
 ## Git
 
 - Work on `yuuka-v3`. Don't push or tag unless asked.
+- Don't commit until the user has tested the change and says so, small fixes included. Report what
+  changed and how to test it, then wait. Passing fake-based tests is not the user's test.
 - Commit messages: `type(scope): summary` (types `feat`, `fix`, `refactor`, `chore`, `docs`; scopes such
   as `ai`, `voice`, `music`, `wake`, `deps`), plus a short body only if it helps: one or two lines, a
   human has to review it. Never a long description.

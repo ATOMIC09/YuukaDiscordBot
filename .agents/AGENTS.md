@@ -445,6 +445,8 @@ There is no test suite. Before committing:
 
 ### Commits
 - Work happens on `yuuka-v3` (the default branch). Don't push or tag unless asked.
+- Don't commit until the user has tested the change and says so, small fixes included. Report what
+  changed and how to test it, then wait.
 - Format: `type(scope): summary`. Types: `feat`, `fix`, `refactor`, `chore`, `docs`. Scopes in use: `ai`,
   `voice`, `music`, `wake`, `deps`. Lowercase, imperative, no trailing period, about 60 characters.
 - Body optional: one or two short lines on what changed and why; a human has to review it, so never a

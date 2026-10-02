@@ -219,10 +219,18 @@ def _load_json(raw: str) -> Any:
     try:
         return json.loads(raw)
     except ValueError:
-        try:
-            return parse_partial_json(raw)
-        except Exception:
-            return None
+        pass
+    # A whole call followed by junk: an extra "}" or half a closing tag ("</tool_call}").
+    # The first value is the call.
+    try:
+        data, _ = json.JSONDecoder().raw_decode(raw)
+        return data
+    except ValueError:
+        pass
+    try:
+        return parse_partial_json(raw)
+    except Exception:
+        return None
 
 
 def _to_call(data: Any) -> dict[str, Any] | None:
@@ -349,6 +357,7 @@ class ToolPromptChatModel(BaseChatModel):
         buffer = block = ""
         mode: str | None = None  # "tag", "harmony" or "fake" while one is open
         calls: list[dict[str, Any]] = []
+        unreadable = False  # a call was written but could not be read
         # Text before a call is dropped (see _PREAMBLE_CHARS), so the start of a
         # reply is held until it is long enough to be an answer.
         held, holding = "", True
@@ -401,6 +410,7 @@ class ToolPromptChatModel(BaseChatModel):
                         break
                     call = _parse_call(block)
                     if call is None:
+                        unreadable = True
                         logger.warning(f"[Tools] Dropped unreadable tool call: {block[:200]!r}")
                     else:
                         calls.append(call)
@@ -429,6 +439,7 @@ class ToolPromptChatModel(BaseChatModel):
             # An unclosed tag means the model stopped early; its JSON may still be whole.
             call = _parse_call(block)
             if call is None:
+                unreadable = True
                 logger.warning(f"[Tools] Dropped unreadable tool call: {block[:200]!r}")
             else:
                 calls.append(call)
@@ -455,6 +466,12 @@ class ToolPromptChatModel(BaseChatModel):
         if calls or fabricated:
             if held.strip():
                 logger.debug(f"[Tools] Dropped text before a call: {held[:200]!r}")
+        elif unreadable:
+            # The words before an unreadable call announce what it would have done ("the
+            # song is ready"). Shown, they claim something that never happened, so the
+            # reply is empty and the agent asks again.
+            logger.warning(f"[Tools] Unreadable call, dropped the text before it: {(held + tail)[:200]!r}")
+            yield ChatGenerationChunk(message=AIMessageChunk(content=""))
         elif held + tail and holding and tools and _LEAKED_REASONING.match((held + tail).strip()):
             # Sent as an empty reply, which the agent retries once.
             logger.warning(f"[Tools] Reasoning without a call; dropped: {(held + tail)[:200]!r}")

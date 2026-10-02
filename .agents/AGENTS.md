@@ -71,6 +71,7 @@ YuukaDiscordBot/
 │   ├── wake.py               # Fuzzy text wake-word gate
 │   ├── wake_acoustic.py      # Acoustic wake-word pre-filter (model in models/)
 │   ├── tts.py                # Edge TTS → temp MP3
+│   ├── chime.py              # Wake / "done" earcons for /ai voice (synthesised in memory)
 │   ├── audio.py              # PCM helpers
 │   ├── image.py              # Image effects for /image
 │   └── video.py              # ffmpeg helpers for /imgaudio
@@ -203,18 +204,34 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
 ### AI Voice Chat — `cogs/ai/voice_chat.py`
 - Segment → `utils.stt` → `utils.wake` gate → LLM → TTS → playback.
 - **The wake gate is load-bearing.** Without it Yuuka replies to every sentence spoken in the room.
-- **No follow-up window** (two narrow exceptions below: a pending confirmation, and the answer to a question she just asked) — every utterance needs the wake word, every time, so it's never
-  ambiguous whether she's listening. (An earlier version kept a speaker "awake" for a few seconds
-  after a hit; removed because it confused people about when they still needed to say her name.)
-- **Pause bridge, not a follow-up window**: `utils.voice_hub` cuts a segment on ~800ms of packet
-  silence, so "Yuuka, *(pause)*, what time is it" lands as two segments — the name alone, then the
-  question. A bare-name segment starts a `STT_WAKE_BRIDGE_WINDOW_S`-long task
-  (`_bridge_timeout`) waiting for exactly the next segment from that speaker; if it arrives, it's
-  transcribed and sent straight to the LLM with no acoustic/wake re-check. If nothing arrives, she
-  answers "ค่ะ เซนเซย์ หนูฟังอยู่นะคะ" (waiting out the bridge first, so her voice does not land on
-  top of a late continuation) and that speaker's next utterance needs no wake word (the answer
-  window below). While a track plays the line is posted as text and the music is never paused.
-  One gap, one use — unlike the old follow-up window, it does not stay open after a reply.
+- **No standing follow-up window** (the exceptions below: a pending confirmation, the answer to a
+  question she just asked, and the listening window after a bare wake word) — every request needs
+  the wake word. (An earlier version kept a speaker "awake" for a few seconds after a hit; removed
+  because it confused people about when they still needed to say her name.)
+- **Chime, then listen (Assistant style)**: the moment her name is recognised she plays a short
+  chime (`utils/chime.py`: synthesised in memory, `discord.PCMAudio`, so nothing sits in front of
+  it — no TTS, no ffmpeg), and a bare name opens a listening window (`_start_listening`,
+  `STT_LISTEN_WINDOW_S`) for that speaker's next utterance, which goes straight to the LLM with no
+  acoustic/wake re-check. The window is `session.awaiting_answer` (the same one-use entry as the
+  answer window below); `session.listening` holds a task that plays the closing chime if the window
+  ran out unused. A cough (empty transcript) does not use it up, and a sentence that started before
+  the deadline still counts. This also covers "Yuuka, *(pause)*, what time is it": `voice_hub` cuts
+  a segment on ~800ms of packet silence, so the name and the question arrive as two segments.
+- **Chime timing**: a segment is only known at its end (`STT_SILENCE_MS`), so the chime cannot beat
+  that. When the acoustic score is `>= STT_WAKE_ACOUSTIC_CONFIDENT_SCORE` it sounds *before* STT and
+  opens the window at once (people talk as soon as they hear it, possibly while the first segment
+  is still being transcribed); if the transcript then is not her name the window is taken back
+  (`_stop_listening`) and that one chime was a false alarm — except when the segment is at most
+  `_NAME_ONLY_MAX_S` (1.6 s), where a transcript that does not look like her name is taken as
+  Whisper mishearing it (ヨーカ, ヨガ) and counts as a bare wake word; a longer segment has to match
+  as text. Below the confident score the chime waits for the text match. The chime starts with
+  150 ms of silence, because clients clip the opening of a short sound that arrives with the
+  speaking signal; every call logs `[Chime] … playing` or why it was skipped. The chime never interrupts music or her own speech (one `VoiceClient`): while a track plays
+  a short text notice (`delete_after` the window) stands in.
+- **The chime means "I am listening for you"**, so it also sounds whenever she waits for an answer:
+  after a reply that asks a question (the answer window, `STT_ANSWER_WINDOW_S`, same closing chime
+  if unused) and when a `voice_kick` / `voice_disconnect_timer` confirmation is posted (`expect_answer`).
+  Both run after her line has finished, so the voice client is free.
 - **Acoustic confidence relaxes the text threshold**: Whisper sometimes hears "ยูกะ" as "อยู่กับ"
   (a real, common word — scores 75, just under the default `STT_WAKE_THRESHOLD=80` on purpose, see
   utils/wake.py). When the acoustic score clears `STT_WAKE_ACOUSTIC_CONFIDENT_SCORE` (0.5), the

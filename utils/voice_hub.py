@@ -261,6 +261,12 @@ class SegmentingSink(discord.sinks.Sink):
         self._dispatch_tasks.add(task)
         task.add_done_callback(self._dispatch_tasks.discard)
 
+    def speaking_since(self, user_id: int) -> float | None:
+        """perf_counter of the first packet of this user's open utterance, if any."""
+        with self._lock:
+            utterance = self._utterances.get(user_id)
+            return utterance.started_at if utterance else None
+
     def adopt_timeline_from(self, other: "SegmentingSink") -> None:
         """Continue `other`'s recording instead of starting from zero.
 
@@ -414,6 +420,11 @@ class VoiceHub:
     def sink_for(self, guild_id: int) -> SegmentingSink | None:
         recorder = self._recorders.get(guild_id)
         return recorder.sink if recorder else None
+
+    def speaking_since(self, guild_id: int, user_id: int) -> float | None:
+        """perf_counter of the first packet of this user's open utterance, if any."""
+        sink = self.sink_for(guild_id)
+        return sink.speaking_since(user_id) if sink else None
 
     def has_subscriber(self, guild_id: int, key: str) -> bool:
         recorder = self._recorders.get(guild_id)

@@ -20,14 +20,16 @@ How speech reaches the LLM
    Thai/English code-switching this server actually speaks.
 4. `utils.wake` decides whether Yuuka was addressed. **This gate is the whole
    point**: without it she replies to every sentence anyone says in the room.
-   There is no follow-up window — every utterance needs the wake word, on
-   purpose, so it is never ambiguous whether she is listening right now. The
-   one exception is a bare "just her name" segment: step 1's silence-based
-   cut means a natural pause before the actual sentence lands as its own
-   segment, so that one case gets a short bridge (`_bridge_timeout`) that
-   waits briefly for the continuation. If nothing follows she answers
-   "ค่ะ เซนเซย์ หนูฟังอยู่นะคะ" (in text while a track plays, never pausing
-   it) and the caller's next utterance needs no wake word.
+   There is no standing follow-up window — every utterance needs the wake
+   word, on purpose. What she does is answer it Assistant-style: the moment
+   her name is recognised she plays a short chime (`utils.chime`), and if
+   nothing but her name was said she listens to that speaker's *next*
+   utterance (`_start_listening`), with no wake word, for
+   `STT_LISTEN_WINDOW_S`. The chime is the cue that she is listening, so it
+   is never ambiguous. A confident acoustic score chimes before STT has
+   finished; otherwise the chime waits for the text match. While a track
+   plays the chime cannot sound (one VoiceClient), so a short text notice
+   stands in and the music is never paused.
 5. The accepted text goes through the same LLM → TTS → playback path as a
    typed message.
 6. The reply comes from the agent loop (`utils.ai.run_agent`), which may call
@@ -59,7 +61,7 @@ from discord.ext import commands
 
 from bot.config import config
 from bot.logger import logger
-from utils import wake
+from utils import chime, wake
 from utils.ai import YuukaContext, run_agent
 from utils.embeds import (
     ai_disclosure_field,
@@ -95,8 +97,8 @@ _VOICE_PROMPT_SUFFIX = (
     "meant from context; ask for a repeat only if it is genuinely unclear."
 )
 
-# Said when she is called by name and nothing follows.
-_LISTENING = "ค่ะ เซนเซย์ หนูฟังอยู่นะคะ"
+# Stands in for the chime when a track holds the voice client.
+_LISTENING_NOTICE = "-# (๑•̀ᴗ•́)و หนูฟังอยู่ค่ะ เซนเซย์ พูดได้เลยน้า"
 
 _MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 # Includes Discord's <https://...> form, which tool results use for links.
@@ -126,6 +128,13 @@ def _speakable(text: str) -> str:
 # tail) is discarded rather than transcribed.
 _ECHO_TAIL_S = 0.4
 
+# A segment this short is the name alone ("Yuuka." takes about a second). When the
+# acoustic model is confident about it, a transcript that does not look like her
+# name is Whisper mishearing it (ヨーカ, ヨガ), not a different word, so it still
+# counts as a bare wake word. A longer segment has to match as text: nothing says
+# which part of a sentence was the name.
+_NAME_ONLY_MAX_S = 1.6
+
 # Upper bound on waiting for queued speech to finish playing. Only reached when
 # the audio worker has died, which must not wedge the turn forever.
 _SPEECH_DRAIN_TIMEOUT_S = 60.0
@@ -150,10 +159,10 @@ class VoiceChatSession:
     # thought gets their words remembered, not answered twice over.
     busy: bool = False
 
-    # A bare "just her name" segment starts a short-lived task here while it
-    # waits for a possible continuation (see _on_segment). Not a standing
-    # "awake" window — consumed or expired within one bridge.
-    pending_bridge: dict[int, asyncio.Task] = field(default_factory=dict)
+    # Speakers she is listening to after their bare wake word, by user id. The
+    # window itself is `awaiting_answer`; this task only sounds the closing chime
+    # if it runs out unused (see _start_listening).
+    listening: dict[int, asyncio.Task] = field(default_factory=dict)
 
     # Whether the room has already been told she is typing instead of speaking.
     # Explaining it once per silent stretch is helpful; repeating it above every
@@ -166,7 +175,8 @@ class VoiceChatSession:
     pending_confirms: dict[int, ConfirmActionView] = field(default_factory=dict)
 
     # She just asked this person a question: user id → perf_counter deadline for
-    # the start of their answer. One use, like the bridge below.
+    # the start of their answer. One use. Also the listening window after a bare
+    # wake word.
     awaiting_answer: dict[int, float] = field(default_factory=dict)
 
 
@@ -301,33 +311,22 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             if not result.text:
                 return
 
-        # Likewise for the answer to a question she just asked (a missing detail,
-        # which of two members). It belongs to that speaker alone and is used up by
-        # their next utterance, so it never turns into a standing "awake" state.
+        # Likewise for what she is waiting to hear from this speaker: the answer to
+        # a question she just asked (a missing detail, which of two members), or
+        # the request after a bare wake word (see _start_listening). It belongs to
+        # that speaker alone and is used up by their next utterance, so it never
+        # turns into a standing "awake" state.
         deadline = session.awaiting_answer.pop(segment.user_id, None)
         if deadline is not None and segment.started_at <= deadline:
             if result is None:
                 result = await transcribe_pcm(segment.pcm, display)
-            if result.text:
-                logger.info(f"[AI Voice] Answer to her question from {display}: {result.text}")
-                await self._announce_and_respond(
-                    segment.guild_id, session, display, result.text, member
-                )
-            return
-
-        # A bare "just her name" segment leaves a short-lived bridge task
-        # waiting for exactly this: the next segment from that same speaker.
-        # If one arrives in time, it's the rest of the sentence the pause
-        # split off — skip the acoustic/wake gates entirely and treat the
-        # whole transcript as the prompt.
-        bridge = session.pending_bridge.pop(segment.user_id, None)
-        if bridge is not None:
-            bridge.cancel()
-            if result is None:
-                result = await transcribe_pcm(segment.pcm, display)
             if not result.text:
+                # A cough or a breath must not use up the window.
+                if time.perf_counter() < deadline:
+                    session.awaiting_answer.setdefault(segment.user_id, deadline)
                 return
-            logger.info(f"[AI Voice] Bridged pause-continuation from {display}: {result.text}")
+            self._cancel_listening(session, segment.user_id)
+            logger.info(f"[AI Voice] Heard {display} while listening: {result.text}")
             await self._announce_and_respond(
                 segment.guild_id, session, display, result.text, member
             )
@@ -349,9 +348,21 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             f"(score {acoustic_score:.3f} >= {config.stt_wake_acoustic_threshold})"
         )
 
+        # Sure enough to answer before STT has even started: chime now, and open the
+        # listening window at once. Whoever hears the chime starts talking straight
+        # away, and that speech can reach us while this segment is still being
+        # transcribed. If the transcript then says it was not her name, the window
+        # is taken back below. Otherwise the chime waits for the text match.
+        early_deadline: float | None = None
+        early_chimed = False
+        if acoustic_score >= config.stt_wake_acoustic_confident_score:
+            early_deadline = self._start_listening(session, segment.user_id, display)
+            early_chimed = chime.play(session.voice_client, "wake")
+
         if result is None:
             result = await transcribe_pcm(segment.pcm, display)
         if not result.text:
+            self._stop_listening(session, segment.user_id, early_deadline)
             return
 
         text_threshold = config.stt_wake_threshold
@@ -371,6 +382,19 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                 f"[AI Voice] No wake word from {display} "
                 f"(best {match.score:.0f} vs {match.word or '—'}, threshold {text_threshold}): {result.text}"
             )
+            if early_deadline is not None and segment.duration <= _NAME_ONLY_MAX_S:
+                # The model was sure and the chime has gone: keep the window it
+                # opened rather than leave the speaker with a chime and nothing.
+                logger.info(
+                    f"[AI Voice] Taking {result.text!r} as a misheard name from {display} "
+                    f"(acoustic {acoustic_score:.3f}, {segment.duration:.1f}s)"
+                )
+                if not early_chimed:
+                    asyncio.create_task(
+                        self._post_listening_notice(session, config.stt_listen_window_s)
+                    )
+                return
+            self._stop_listening(session, segment.user_id, early_deadline)
             return
 
         logger.info(
@@ -379,42 +403,97 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         )
 
         if match.remainder:
+            # The request came with her name, so there is nothing left to listen for.
+            self._stop_listening(session, segment.user_id, early_deadline)
+            if early_deadline is None:
+                chime.play(session.voice_client, "wake")
             await self._announce_and_respond(
                 segment.guild_id, session, display, match.remainder, member,
                 heard=result.text,
             )
             return
 
-        # Just her name and nothing else — wait briefly for a continuation
-        # (the natural pause before the actual sentence, which the segmenter
-        # cuts into its own segment). This bridges exactly one gap, not a
-        # standing "awake" window: consumed above the moment a continuation
-        # lands. If nothing follows she says she is listening (see _bridge_timeout).
-        session.pending_bridge[segment.user_id] = asyncio.create_task(
-            self._bridge_timeout(session, segment.user_id, display),
-            name=f"wake_bridge_{segment.guild_id}_{segment.user_id}",
+        # Just her name and nothing else: she listens for the next thing this
+        # speaker says. Already open if the early chime opened it.
+        if early_deadline is None:
+            self._start_listening(
+                session, segment.user_id, display, chimed=chime.play(session.voice_client, "wake")
+            )
+        elif not early_chimed:
+            asyncio.create_task(self._post_listening_notice(session, config.stt_listen_window_s))
+
+    def _start_listening(
+        self,
+        session: VoiceChatSession,
+        user_id: int,
+        display: str,
+        *,
+        chimed: bool = True,
+        window: float | None = None,
+    ) -> float:
+        """Open the no-wake-word window for `user_id`'s next utterance.
+
+        Returns its deadline, which `_stop_listening` uses to take back this window
+        and not a newer one. `chimed=False` means the chime could not sound (a track
+        holds the voice client), so a text notice says she is listening instead."""
+        window = config.stt_listen_window_s if window is None else window
+        deadline = time.perf_counter() + window
+        session.awaiting_answer[user_id] = deadline
+        self._cancel_listening(session, user_id)
+        session.listening[user_id] = asyncio.create_task(
+            self._listen_expiry(session, user_id, deadline),
+            name=f"listen_{session.text_channel.guild.id}_{user_id}",
         )
+        logger.debug(f"[AI Voice] Listening to {display} for {window:.0f}s")
 
-    async def _bridge_timeout(
-        self, session: VoiceChatSession, user_id: int, display: str
-    ) -> None:
-        """Nothing followed the bare name in time: say she is listening.
+        if not chimed:
+            asyncio.create_task(self._post_listening_notice(session, window))
+        return deadline
 
-        Waiting out the bridge first matters: speaking at once would put her voice
-        over the continuation, and the echo guard would drop it. The music is left
-        alone; while a track plays `_speak` posts the line as text instead."""
+    async def _post_listening_notice(self, session: VoiceChatSession, window: float) -> None:
         try:
-            await asyncio.sleep(config.stt_wake_bridge_window_s)
+            await session.text_channel.send(_LISTENING_NOTICE, delete_after=window)
+        except discord.HTTPException:
+            pass
+
+    def _cancel_listening(self, session: VoiceChatSession, user_id: int) -> None:
+        task = session.listening.pop(user_id, None)
+        if task is not None:
+            task.cancel()
+
+    def _stop_listening(
+        self, session: VoiceChatSession, user_id: int, deadline: float | None
+    ) -> None:
+        """Take back the window `_start_listening` opened early, if it is still the
+        speaker's current one. No sound: the chime has already gone."""
+        if deadline is None or session.awaiting_answer.get(user_id) != deadline:
+            return
+        session.awaiting_answer.pop(user_id, None)
+        self._cancel_listening(session, user_id)
+
+    async def _listen_expiry(
+        self, session: VoiceChatSession, user_id: int, deadline: float
+    ) -> None:
+        """Sound the closing chime if the window ran out without a word.
+
+        `awaiting_answer` stays the authority on whether the window is still open;
+        this only decides whether to say it has closed. Silent when the window was
+        used (the entry is gone) or when the speaker is mid-sentence, in which case
+        that sentence still counts, because it started before the deadline."""
+        try:
+            await asyncio.sleep(max(0.0, deadline - time.perf_counter()))
         except asyncio.CancelledError:
             return
-        session.pending_bridge.pop(user_id, None)
-        if session.busy:
+        if session.listening.get(user_id) is asyncio.current_task():
+            session.listening.pop(user_id, None)
+        if session.awaiting_answer.get(user_id) != deadline:
             return
-        logger.debug(f"[AI Voice] No continuation from {display} after bare wake word, acknowledging")
-
-        await self._speak(session, _LISTENING)
-        await self._await_speech(session)
-        session.awaiting_answer[user_id] = time.perf_counter() + config.stt_answer_window_s
+        started = voice_hub.speaking_since(session.text_channel.guild.id, user_id)
+        if started is not None and started <= deadline:
+            return
+        session.awaiting_answer.pop(user_id, None)
+        logger.debug(f"[AI Voice] Listening window for user {user_id} closed unused")
+        chime.play(session.voice_client, "done")
 
     async def _announce_and_respond(
         self,
@@ -629,7 +708,13 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             # The window opens when she stops talking, not when she starts.
             if member is not None and _asks_user(full_response):
                 await self._await_speech(session)
-                session.awaiting_answer[member.id] = time.perf_counter() + config.stt_answer_window_s
+                self._start_listening(
+                    session,
+                    member.id,
+                    speaker,
+                    window=config.stt_answer_window_s,
+                    chimed=chime.play(session.voice_client, "wake"),
+                )
         finally:
             session.busy = False
 
@@ -644,6 +729,9 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         session = self.active_sessions.get(guild_id)
         if session is not None:
             session.pending_confirms[view.requester.id] = view
+            # She has just said "say yes or press the button": the chime says she is
+            # listening for it. Her line is already over (`before_action` waits).
+            chime.play(session.voice_client, "wake")
 
     async def announce(self, guild_id: int, text: str) -> None:
         """Say `text` in this guild's voice session, if she is free to.
@@ -762,7 +850,8 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             how = (
                 f"พูดชื่อหนู ({wake_list}) ตรงไหนของประโยคก็ได้ค่ะ "
                 "เช่น *«ยูกะ ตอนนี้กี่โมงแล้ว»* หรือ *«แล้วอีกแบบคืออะไรล่ะยูกะ»*\n"
-                "ต้องเรียกชื่อหนูทุกครั้งที่อยากคุยนะคะ หนูไม่ได้ฟังต่อเนื่องหลังตอบแล้วค่ะ\n"
+                "ถ้าเรียกแค่ชื่อหนู หนูจะ *ติ๊ง* ให้ได้ยินแล้วฟังต่ออีกประโยคเลยค่ะ พูดคำสั่งตามได้เลยน้า "
+                "แต่หลังตอบแล้วต้องเรียกชื่อหนูใหม่นะคะ\n"
                 f"หรือจะ `@mention` ในช่อง **{ctx.channel.name}** ก็ได้ค่ะ!\n\n"
                 "🎵 สั่งเปิดเพลงด้วยเสียงได้ด้วยนะคะ เช่น *«ยูกะ เปิดเพลง YOASOBI ให้หน่อย»* "
                 "หนูจะเรียก `/music` ให้เอง แล้วบอกในช่องนี้ว่าใช้คำสั่งอะไรไปค่ะ\n"
@@ -801,7 +890,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         session = self.active_sessions.pop(guild_id)
         voice_hub.unsubscribe(guild_id, _HUB_KEY)
 
-        for task in session.pending_bridge.values():
+        for task in session.listening.values():
             task.cancel()
 
         # Cancel the audio worker
@@ -882,7 +971,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                 logger.info(f"[AI Voice] Bot disconnected from voice in guild {guild_id}. Cleaning up.")
                 session = self.active_sessions.pop(guild_id)
                 voice_hub.unsubscribe(guild_id, _HUB_KEY)
-                for task in session.pending_bridge.values():
+                for task in session.listening.values():
                     task.cancel()
                 if session.worker and not session.worker.done():
                     session.worker.cancel()

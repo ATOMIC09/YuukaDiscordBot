@@ -44,7 +44,7 @@ async def _propose(ctx: YuukaContext, title: str, body: str, action, check) -> s
 
 @tool(return_direct=True)
 async def voice_kick(member: str, ctx: Ctx) -> str:
-    """Disconnect a member from their voice channel, after the requester confirms with a button."""
+    """Run the /kick command: disconnect a member from their voice channel, after the requester confirms with a button."""
     _require_move_members(ctx)
     target = resolve_member(ctx, member)
 
@@ -74,8 +74,10 @@ async def voice_kick(member: str, ctx: Ctx) -> str:
 
 @tool(return_direct=True)
 async def voice_disconnect_timer(seconds: int, ctx: Ctx) -> str:
-    """Start a countdown that disconnects everyone in the requester's voice channel when it ends.
+    """Run the /countdis command: a countdown that disconnects everyone in the requester's voice channel when it ends.
 
+    Use it whenever the user mentions "countdis", "countdown", "นับถอยหลัง", "เค้าดิส" or "เค้าท์ดิส"
+    (all spellings of the same command), or asks to disconnect everyone from voice after a delay.
     `seconds` is the length of the countdown in seconds (10 minutes = 600).
     The requester confirms with a button first.
     """

@@ -36,10 +36,12 @@ def tools_for(ctx: YuukaContext) -> list[BaseTool]:
         # Waiting only makes sense between actions, and music is where they chain.
         tools += music.TOOLS + wait.TOOLS
 
-    if ctx.guild and actions.can_move_members(ctx):
+    if ctx.guild and ctx.requester:
+        # Offered even when the requester could not use them (no permission, not in
+        # voice): the tool refuses with the reason and the model relays it. Hiding
+        # them left the model with nothing to call, so she claimed to have done it.
         tools.append(actions.voice_kick)
-        in_voice = ctx.requester.voice and ctx.requester.voice.channel
-        if in_voice and ctx.bot.get_cog("CountdisCog") is not None:
+        if ctx.bot.get_cog("CountdisCog") is not None:
             tools.append(actions.voice_disconnect_timer)
 
     if ctx.guild and ctx.requester and reminders.scheduler_for(ctx) is not None:

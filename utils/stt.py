@@ -357,6 +357,11 @@ _LANGUAGE_NAMES = {
     "french": "fr", "german": "de", "portuguese": "pt", "italian": "it",
 }
 
+# What Whisper reports when it mishears a short Thai phrase (a song title, say). If Thai
+# is on the shortlist, an off-list answer from this set is retried as Thai rather than
+# as the first listed language, which turned the audio into romanised noise.
+_THAI_LOOKALIKES = {"vi", "id", "ms", "lo", "km", "my"}
+
 _allowed_languages_cache: list[str] | None = None
 
 
@@ -482,7 +487,8 @@ async def _transcribe_groq(audio: np.ndarray, force: str = "") -> Transcript | N
     STT_LANGUAGE cannot be enforced up front the way it can locally. Instead
     the answer is checked afterwards, and an off-list one is re-requested with
     `force` set to the first configured language — the shortlist doubles as a
-    priority order for exactly this case.
+    priority order for exactly this case. The exception is a Thai-sounding
+    answer (`_THAI_LOOKALIKES`), which is retried as Thai when Thai is listed.
     """
     import aiohttp
 
@@ -526,11 +532,11 @@ async def _transcribe_groq(audio: np.ndarray, force: str = "") -> Transcript | N
     language = _normalize_language(payload.get("language") or "")
 
     if not force and allowed and language and language not in allowed:
+        retry = "th" if language in _THAI_LOOKALIKES and "th" in allowed else allowed[0]
         logger.debug(
-            f"[STT] Groq answered in '{language}', outside {allowed} — "
-            f"retrying as '{allowed[0]}'"
+            f"[STT] Groq answered in '{language}', outside {allowed} — retrying as '{retry}'"
         )
-        return await _transcribe_groq(audio, force=allowed[0])
+        return await _transcribe_groq(audio, force=retry)
 
     if text.lower() in _HALLUCINATIONS:
         logger.debug(f"[STT] Dropped likely hallucination: {text!r}")

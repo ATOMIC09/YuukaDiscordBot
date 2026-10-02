@@ -380,6 +380,7 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 | `server.py` | `voice_members`, `user_info`, `server_info` — never show who is in a voice channel the requester cannot see |
 | `actions.py` | `voice_kick`, `voice_disconnect_timer` — propose only; the `confirm.py` button (requester only) or the requester's spoken yes/no runs them. Offered to anyone in a guild: a missing permission or not being in voice is refused by the tool, because hiding it made the model claim success without calling anything |
 | `attendance.py` | `attendance`, `absent` — the `/attendance` and `/absent` reports (`utils/attendance.py`, shared with the commands), posted with their CSV and logged. Read-only, so no confirm button; refused with the reason when the requester is not in a voice channel. Tool results name at most 40 people, the embed and CSV have everyone |
+| `capture.py` | `record_start/stop`, `transcribe_start/stop` — the `/record` and `/transcribe` commands, through the same `begin_*`/`end_*` methods as the slash commands. No confirmation (deliberate); starting also posts the command's "started" embed so the room can see it. `/record stop`'s files are delivered in a background task |
 | `reminders.py` | `remind_me`, `notify_when_joins_voice` — timers/listeners in `scheduler.py`, **0 LLM requests** while waiting or firing |
 
 - **Token budget** (free model: 20 RPM, 50/day without credits): a plain chat is 1 request, a tool turn 2, worst case `AGENT_MAX_ROUNDS`. Button presses, reminders and watches never call the model.
@@ -472,6 +473,6 @@ There is no test suite. Before committing:
 - ❌ Do NOT peak-normalise STT audio — it amplifies room tone on quiet segments and makes Whisper hallucinate
 - ❌ Do NOT remove the wake-word gate from `/ai voice` — without it the bot replies to every sentence spoken in the room
 - ❌ Do NOT install `langchain` or `langgraph` — `langchain` v1 pulls in LangGraph; use `langchain-core` / `langchain-openai` only
-- ❌ Do NOT let an AI tool act on other people without the `ConfirmActionView` (its button, or the requester's own spoken yes/no), and check the **requester's** permissions, never just the bot's
+- ❌ Do NOT let an AI tool act on other people without the `ConfirmActionView` (its button, or the requester's own spoken yes/no), and check the **requester's** permissions, never just the bot's. The one deliberate exception is starting `/record` and `/transcribe` (`capture.py`): no confirmation, but the "started" embed is always posted
 - ❌ Do NOT let an AI tool find, list or name a channel the requester cannot see — resolve through `utils/ai/tools/resolve.py`, which treats hidden channels as nonexistent
 - ❌ Do NOT use `OLLAMA_*` env vars — nothing reads them; the LLM settings are `OPENROUTER_*`

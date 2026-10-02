@@ -10,7 +10,7 @@ from typing import Callable
 from langchain_core.tools import BaseTool
 
 from utils.ai.context import YuukaContext
-from utils.ai.tools import actions, attendance, discord_read, music, reminders, search, server, wait
+from utils.ai.tools import actions, attendance, capture, discord_read, music, reminders, search, server, wait
 
 _STATUS: dict[str, Callable[[dict], str]] = {
     **search.STATUS,
@@ -19,6 +19,7 @@ _STATUS: dict[str, Callable[[dict], str]] = {
     **music.STATUS,
     **actions.STATUS,
     **attendance.STATUS,
+    **capture.STATUS,
     **reminders.STATUS,
     **wait.STATUS,
 }
@@ -49,6 +50,14 @@ def tools_for(ctx: YuukaContext) -> list[BaseTool]:
         # Like the kick tool: offered to anyone, and refused with the reason when the
         # requester is not in a voice channel.
         tools += attendance.TOOLS
+
+    if ctx.guild and ctx.requester:
+        # Starting one proposes and asks for confirmation; both refuse with the reason
+        # when the requester is not in a voice channel.
+        if ctx.bot.get_cog(capture.RECORD_COG) is not None:
+            tools += capture.RECORD_TOOLS
+        if ctx.bot.get_cog(capture.CAPTION_COG) is not None:
+            tools += capture.CAPTION_TOOLS
 
     if ctx.guild and ctx.requester and reminders.scheduler_for(ctx) is not None:
         tools += reminders.TOOLS

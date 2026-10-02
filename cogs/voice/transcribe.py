@@ -67,23 +67,40 @@ class STTCog(commands.Cog, name="Realtime STT"):
             logger.error(f"[STT] Failed to post caption in guild {segment.guild_id}: {exc}")
 
     # ------------------------------------------------------------------
-    # Slash commands
+    # Start / stop — shared by the slash commands and the AI tools
+    # (`utils/ai/tools/capture.py`), so a refusal is worded once.
     # ------------------------------------------------------------------
 
-    transcribe = discord.SlashCommandGroup("transcribe", "🎙️ คำสั่งถอดเสียงแบบเรียลไทม์")
+    def is_active(self, guild_id: int) -> bool:
+        return guild_id in self._sessions
 
-    @transcribe.command(name="start", description="🎙️ เข้าห้องเสียงและเริ่มถอดเสียงแบบเรียลไทม์")
-    async def transcribe_start(self, ctx: discord.ApplicationContext) -> None:
-        """Start live captioning the invoker's voice channel."""
-        await ctx.defer()
+    @staticmethod
+    def started_embed(voice_channel: discord.VoiceChannel, text_channel: discord.abc.GuildChannel) -> discord.Embed:
+        return info_embed(
+            "🔴 เริ่มถอดเสียงแล้วค่ะ",
+            f"หนูกำลังฟังทุกคนในห้อง **{voice_channel.name}** อยู่นะคะ 🎧\n"
+            f"หนูจะพิมพ์สิ่งที่ได้ยินลงในช่อง **{text_channel.name}** ให้ค่า\n\n"
+            "ใช้ `/transcribe stop` เมื่อต้องการหยุดน้า",
+        )
 
-        if not ctx.author.voice or not ctx.author.voice.channel:
+    @staticmethod
+    def stopped_embed() -> discord.Embed:
+        return success_embed(
+            "⏹️ หยุดถอดเสียงแล้วค่ะ",
+            "หนูหยุดถอดเสียงแล้วนะคะ ขอบคุณที่เรียกใช้หนูน้า (´• ω •`) ♡",
+        )
+
+    async def begin_captions(
+        self, guild: discord.Guild, member: discord.Member, text_channel: discord.TextChannel
+    ) -> discord.VoiceChannel:
+        """Join `member`'s voice channel and caption it into `text_channel`."""
+        if not member.voice or not member.voice.channel:
             raise UserError(
                 "ยังไม่ได้เข้าห้องเสียงค่ะ",
                 "เข้าห้องเสียงก่อนนะคะ แล้วค่อยเรียกหนูมาน้า (・`ω´・)",
             )
 
-        guild_id = ctx.guild.id
+        guild_id = guild.id
 
         if guild_id in self._sessions:
             raise UserWarning(
@@ -99,8 +116,8 @@ class STTCog(commands.Cog, name="Realtime STT"):
                 "หนูโหลดโมเดลถอดเสียงไม่สำเร็จค่ะ (´-ω-`) ลองดู log ของบอทนะคะ",
             )
 
-        voice_channel = ctx.author.voice.channel
-        voice_client: discord.VoiceClient | None = ctx.guild.voice_client
+        voice_channel = member.voice.channel
+        voice_client: discord.VoiceClient | None = guild.voice_client
 
         if voice_client is None:
             try:
@@ -114,26 +131,17 @@ class STTCog(commands.Cog, name="Realtime STT"):
         elif voice_client.channel != voice_channel:
             await voice_client.move_to(voice_channel)
 
-        self._sessions[guild_id] = ctx.channel
+        self._sessions[guild_id] = text_channel
         voice_hub.subscribe(voice_client, _HUB_KEY, on_segment=self._on_segment)
 
         logger.info(
             f"Started live captions in guild {guild_id}, channel '{voice_channel.name}' "
             f"using {model_description()}"
         )
-        await ctx.respond(embed=info_embed(
-            "🔴 เริ่มถอดเสียงแล้วค่ะ",
-            f"หนูกำลังฟังทุกคนในห้อง **{voice_channel.name}** อยู่นะคะ 🎧\n"
-            f"หนูจะพิมพ์สิ่งที่ได้ยินลงในช่อง **{ctx.channel.name}** ให้ค่า\n\n"
-            "ใช้ `/transcribe stop` เมื่อต้องการหยุดน้า",
-        ))
+        return voice_channel
 
-    @transcribe.command(name="stop", description="⏹️ หยุดการถอดเสียงแบบเรียลไทม์")
-    async def transcribe_stop(self, ctx: discord.ApplicationContext) -> None:
-        """Stop captioning and clean up."""
-        await ctx.defer()
-
-        guild_id = ctx.guild.id
+    async def end_captions(self, guild: discord.Guild) -> None:
+        guild_id = guild.id
 
         if guild_id not in self._sessions:
             raise UserWarning(
@@ -143,13 +151,29 @@ class STTCog(commands.Cog, name="Realtime STT"):
 
         self._sessions.pop(guild_id, None)
         voice_hub.unsubscribe(guild_id, _HUB_KEY)
-        await voice_hub.release_voice(ctx.guild)
+        await voice_hub.release_voice(guild)
 
         logger.info(f"Stopped live captions in guild {guild_id}")
-        await ctx.respond(embed=success_embed(
-            "⏹️ หยุดถอดเสียงแล้วค่ะ",
-            "หนูหยุดถอดเสียงแล้วนะคะ ขอบคุณที่เรียกใช้หนูน้า (´• ω •`) ♡",
-        ))
+
+    # ------------------------------------------------------------------
+    # Slash commands
+    # ------------------------------------------------------------------
+
+    transcribe = discord.SlashCommandGroup("transcribe", "🎙️ คำสั่งถอดเสียงแบบเรียลไทม์")
+
+    @transcribe.command(name="start", description="🎙️ เข้าห้องเสียงและเริ่มถอดเสียงแบบเรียลไทม์")
+    async def transcribe_start(self, ctx: discord.ApplicationContext) -> None:
+        """Start live captioning the invoker's voice channel."""
+        await ctx.defer()
+        voice_channel = await self.begin_captions(ctx.guild, ctx.author, ctx.channel)
+        await ctx.respond(embed=self.started_embed(voice_channel, ctx.channel))
+
+    @transcribe.command(name="stop", description="⏹️ หยุดการถอดเสียงแบบเรียลไทม์")
+    async def transcribe_stop(self, ctx: discord.ApplicationContext) -> None:
+        """Stop captioning and clean up."""
+        await ctx.defer()
+        await self.end_captions(ctx.guild)
+        await ctx.respond(embed=self.stopped_embed())
 
     # ------------------------------------------------------------------
     # Cleanup

@@ -152,7 +152,7 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
         # guild_id → text channel that /record start was invoked in
         self._sessions: dict[int, discord.TextChannel] = {}
 
-    async def _deliver_recording(
+    async def deliver_recording(
         self,
         guild_id: int,
         channel: discord.TextChannel,
@@ -251,23 +251,39 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
             await channel.send(embed=error_msg_embed)
 
     # ------------------------------------------------------------------
-    # Slash commands
+    # Start / stop — shared by the slash commands and the AI tools
+    # (`utils/ai/tools/capture.py`), so a refusal is worded once.
     # ------------------------------------------------------------------
 
-    record = discord.SlashCommandGroup("record", "🎧 คำสั่งบันทึกเสียงในห้องเสียง")
+    def is_recording(self, guild_id: int) -> bool:
+        return guild_id in self._sessions
 
-    @record.command(name="start", description="🔴 เข้าห้องเสียงและเริ่มบันทึกเสียง")
-    async def record_start(self, ctx: discord.ApplicationContext) -> None:
-        """Start recording audio from the invoker's voice channel."""
-        await ctx.defer()
+    @staticmethod
+    def started_embed(voice_channel: discord.VoiceChannel) -> discord.Embed:
+        return info_embed(
+            "🔴 เริ่มอัดเสียงแล้วค่ะ",
+            f"หนูเข้ามาแล้วค่ะ! ตอนนี้กำลังตั้งใจฟังทุกคนอยู่ในห้อง **{voice_channel.name}** น้า 🎧\n\n"
+            "ถ้าคุยกันเสร็จแล้ว อย่าลืมใช้คำสั่ง `/record stop` นะคะ!",
+        )
 
-        if not ctx.author.voice or not ctx.author.voice.channel:
+    @staticmethod
+    def stopped_embed() -> discord.Embed:
+        return info_embed(
+            "⏹️ หยุดอัดเสียงแล้วค่ะ",
+            "หนูหยุดอัดเสียงแล้วค่ะ! ขอเวลาประมวลผลแป๊บนึงนะคะ เดี๋ยวหนูส่งไฟล์ให้ค่า (´• ω •`) ♡",
+        )
+
+    async def begin_recording(
+        self, guild: discord.Guild, member: discord.Member, text_channel: discord.TextChannel
+    ) -> discord.VoiceChannel:
+        """Join `member`'s voice channel and start recording it. Returns that channel."""
+        if not member.voice or not member.voice.channel:
             raise UserError(
                 "ยังไม่ได้เข้าห้องเสียงค่ะ",
                 "เซนเซย์ยังไม่ได้เข้าห้องเสียงเลยนะคะ เข้าห้องก่อนแล้วค่อยเรียกหนูน้า (・`ω´・)",
             )
 
-        guild_id = ctx.guild.id
+        guild_id = guild.id
 
         if guild_id in self._sessions:
             raise UserWarning(
@@ -275,8 +291,8 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
                 "หนูกำลังอัดเสียงอยู่ที่ห้องอื่นนะคะ ต้องให้หนูหยุดอัดก่อนน้า ลองใช้คำสั่ง `/record stop` ดูนะคะ (｡>﹏<)",
             )
 
-        voice_channel = ctx.author.voice.channel
-        voice_client: discord.VoiceClient | None = ctx.guild.voice_client
+        voice_channel = member.voice.channel
+        voice_client: discord.VoiceClient | None = guild.voice_client
 
         if voice_client is None:
             try:
@@ -293,21 +309,15 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
         # The hub owns the sink — /transcribe and /ai voice can be listening to
         # the same VoiceClient, which only supports one sink between them.
         voice_hub.subscribe(voice_client, _HUB_KEY, want_timeline=True)
-        self._sessions[guild_id] = ctx.channel
+        self._sessions[guild_id] = text_channel
 
         logger.info(f"Started recording in guild {guild_id}, channel '{voice_channel.name}'")
-        await ctx.respond(embed=info_embed(
-            "🔴 เริ่มอัดเสียงแล้วค่ะ",
-            f"หนูเข้ามาแล้วค่ะ! ตอนนี้กำลังตั้งใจฟังทุกคนอยู่ในห้อง **{voice_channel.name}** น้า 🎧\n\n"
-            "ถ้าคุยกันเสร็จแล้ว อย่าลืมใช้คำสั่ง `/record stop` นะคะ!",
-        ))
+        return voice_channel
 
-    @record.command(name="stop", description="⏹️ หยุดบันทึกเสียงและส่งไฟล์เสียงที่บันทึกไว้")
-    async def record_stop(self, ctx: discord.ApplicationContext) -> None:
-        """Stop recording and post the captured audio."""
-        await ctx.defer()
-
-        guild_id = ctx.guild.id
+    async def end_recording(self, guild: discord.Guild) -> tuple[discord.TextChannel, dict]:
+        """Stop recording. Returns the text channel and the captured audio, which
+        `deliver_recording` turns into files (slow, so the caller decides when)."""
+        guild_id = guild.id
 
         if guild_id not in self._sessions:
             raise UserWarning(
@@ -324,15 +334,31 @@ class ListenerCog(commands.Cog, name="Voice Listener"):
         voice_hub.unsubscribe(guild_id, _HUB_KEY)
         # Safe before the file is delivered — the audio is already snapshotted,
         # and rendering it has nothing to do with being in the channel.
-        await voice_hub.release_voice(ctx.guild)
+        await voice_hub.release_voice(guild)
 
         logger.info(f"Stopped recording in guild {guild_id}")
-        await ctx.respond(embed=info_embed(
-            "⏹️ หยุดอัดเสียงแล้วค่ะ",
-            "หนูหยุดอัดเสียงแล้วค่ะ! ขอเวลาประมวลผลแป๊บนึงนะคะ เดี๋ยวหนูส่งไฟล์ให้ค่า (´• ω •`) ♡",
-        ))
+        return channel, audio_data
 
-        await self._deliver_recording(guild_id, channel, audio_data)
+    # ------------------------------------------------------------------
+    # Slash commands
+    # ------------------------------------------------------------------
+
+    record = discord.SlashCommandGroup("record", "🎧 คำสั่งบันทึกเสียงในห้องเสียง")
+
+    @record.command(name="start", description="🔴 เข้าห้องเสียงและเริ่มบันทึกเสียง")
+    async def record_start(self, ctx: discord.ApplicationContext) -> None:
+        """Start recording audio from the invoker's voice channel."""
+        await ctx.defer()
+        voice_channel = await self.begin_recording(ctx.guild, ctx.author, ctx.channel)
+        await ctx.respond(embed=self.started_embed(voice_channel))
+
+    @record.command(name="stop", description="⏹️ หยุดบันทึกเสียงและส่งไฟล์เสียงที่บันทึกไว้")
+    async def record_stop(self, ctx: discord.ApplicationContext) -> None:
+        """Stop recording and post the captured audio."""
+        await ctx.defer()
+        channel, audio_data = await self.end_recording(ctx.guild)
+        await ctx.respond(embed=self.stopped_embed())
+        await self.deliver_recording(ctx.guild.id, channel, audio_data)
 
     # ------------------------------------------------------------------
     # Cleanup

@@ -36,8 +36,44 @@ class _YtdlLogger:
         logger.warning(f"[yt-dlp] {msg}")
 
     def error(self, msg: str):
+        # Kept so the player can say why a track would not load (see `_hydrate_track`).
+        self.last_error = msg
         logger.error(f"[yt-dlp] {msg}")
 
+    last_error: str = ""
+
+
+class TrackUnavailable(RuntimeError):
+    """A track cannot be played; `reason` is what to tell the user, in Yuuka's words."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+# (what yt-dlp says, what to tell the user). First match wins.
+_FAILURE_REASONS = (
+    ("confirm your age", "วิดีโอนี้จำกัดอายุ ต้องล็อกอิน YouTube ถึงจะดูได้ หนูเล่นให้ไม่ได้ค่ะ"),
+    ("private video", "วิดีโอนี้เป็นส่วนตัวค่ะ"),
+    ("members-only", "วิดีโอนี้สำหรับสมาชิกช่องเท่านั้นค่ะ"),
+    ("in your country", "วิดีโอนี้ถูกบล็อกในประเทศของหนูค่ะ"),
+    ("blocked it", "วิดีโอนี้ถูกบล็อกโดยเจ้าของค่ะ"),
+    ("copyright", "วิดีโอนี้ถูกถอดเพราะลิขสิทธิ์ค่ะ"),
+    ("live event will begin", "ไลฟ์นี้ยังไม่เริ่มค่ะ"),
+    ("unavailable", "วิดีโอนี้ใช้งานไม่ได้แล้วค่ะ อาจถูกลบหรือถูกปิดไว้"),
+)
+
+
+def explain_failure(message: str) -> str:
+    """A reason a person can read for a yt-dlp error message."""
+    lowered = message.lower()
+    for needle, reason in _FAILURE_REASONS:
+        if needle in lowered:
+            return reason
+    return "ดึงข้อมูลเพลงนี้จาก YouTube ไม่สำเร็จค่ะ"
+
+
+_ytdl_logger = _YtdlLogger()
 
 ytdl_format_options = {
     'format': 'bestaudio/best',
@@ -55,7 +91,7 @@ ytdl_format_options = {
     'logtostderr': False,
     'quiet': True,
     'no_warnings': False,
-    'logger': _YtdlLogger(),
+    'logger': _ytdl_logger,
     'default_search': 'auto',
     'source_address': '0.0.0.0',
 }
@@ -1062,9 +1098,10 @@ class PlayerCog(commands.Cog):
         if track.stream_url:
             return True
 
+        _ytdl_logger.last_error = ""
         data = await self._extract_info(track.original_url, download=False)
         if not data:
-            raise RuntimeError("No data returned by yt-dlp (video might be unavailable).")
+            raise TrackUnavailable(explain_failure(_ytdl_logger.last_error))
 
         track.stream_url = data.get("url")
         track.title = data.get("title", track.title)
@@ -1426,6 +1463,23 @@ class PlayerCog(commands.Cog):
         if state.text_channel:
             await self._update_controller(state, self._build_player_embed(next_track, state))
 
+    async def _report_unplayable(self, state: AudioState, track: Track, reason: str) -> None:
+        """Tell the channel (and the voice room, if she is free) that a track was skipped.
+
+        Without this the track just vanishes: she has already said she is playing it,
+        and the only trace is a line in the log."""
+        if state.text_channel is not None:
+            try:
+                await state.text_channel.send(embed=error_embed(
+                    "เล่นเพลงนี้ไม่ได้ค่ะ",
+                    f"**{track.title}**\n{reason}\nหนูข้ามไปให้แล้วนะคะ (´-ω-`)",
+                ))
+            except discord.HTTPException as exc:
+                logger.warning(f"[Player] Could not post the skipped-track notice: {exc}")
+        voice_cog = self.bot.get_cog("AI Voice Chat")
+        if voice_cog is not None:
+            await voice_cog.announce(state.guild_id, reason)
+
     async def _play_next_async(self, guild_id: int, auto_send: bool = True):
         state = self.get_state(guild_id)
         if not state.voice_client or not state.voice_client.is_connected():
@@ -1519,12 +1573,15 @@ class PlayerCog(commands.Cog):
                 await self._hydrate_track(track)
             except Exception as e:
                 logger.error(f"Error extracting stream url for {track.original_url}: {e}")
+                reason = e.reason if isinstance(e, TrackUnavailable) else explain_failure(str(e))
+                await self._report_unplayable(state, track, reason)
                 # Skip to next if failed
                 self.bot.loop.create_task(self._play_next_async(guild_id))
                 return
 
         if not track.stream_url:
             logger.warning(f"Could not find stream URL for {track.title}, skipping.")
+            await self._report_unplayable(state, track, explain_failure(""))
             self.bot.loop.create_task(self._play_next_async(guild_id))
             return
 

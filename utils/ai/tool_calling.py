@@ -118,6 +118,16 @@ _REPLY_SAME = (
 )
 
 
+# gpt-oss sometimes stops after its reasoning ("We need to output tool call.") without
+# writing the call. Only English that opens like reasoning or names a tool call counts;
+# her replies are in the user's language.
+_LEAKED_REASONING = re.compile(
+    r"^(?=[\x00-\x7f]*$)(?:.*\btool[ _]?calls?\b|(?:we|i) (?:need|should|must|have) to\b"
+    r"|let'?s\b|the user (?:wants|asks|says|is asking)\b|need to\b)",
+    re.I | re.S,
+)
+
+
 def _final_rule(names: Sequence[str]) -> str:
     """Which tools end the turn: anything the user asked for after them must already be in the reply."""
     if not names:
@@ -442,6 +452,10 @@ class ToolPromptChatModel(BaseChatModel):
         if calls or fabricated:
             if held.strip():
                 logger.debug(f"[Tools] Dropped text before a call: {held[:200]!r}")
+        elif held + tail and holding and tools and _LEAKED_REASONING.match((held + tail).strip()):
+            # Sent as an empty reply, which the agent retries once.
+            logger.warning(f"[Tools] Reasoning without a call; dropped: {(held + tail)[:200]!r}")
+            yield ChatGenerationChunk(message=AIMessageChunk(content=""))
         elif held + tail:
             yield await emit(held + tail)
         elif holding:

@@ -30,6 +30,7 @@ from langchain_core.messages import (
 )
 from pydantic import ValidationError
 
+from bot.config import config
 from bot.logger import logger
 from utils.ai.context import YuukaContext
 from utils.ai.linker import ChannelLinker
@@ -38,9 +39,6 @@ from utils.ai.tool_calling import FABRICATED, ToolPromptChatModel
 from utils.ai.tools import music, status_line, tools_for
 from utils.ai_actions import ActionResult
 from utils.errors import UserError, UserWarning
-
-# Model calls per turn. The last one runs without tools so she always answers.
-MAX_ROUNDS = 4
 
 _FABRICATED_NOTE = (
     "[SYSTEM] You wrote a <tool_response> yourself. Only the system writes those; what you "
@@ -52,11 +50,11 @@ _LAST_ROUND_NOTE = (
     "[SYSTEM] No more tools this turn. Answer the user now, in your normal voice and their "
     "language, using only the results above. If you could not get what they asked for, "
     "say so briefly and why. Do not describe what you would do next."
+)
+
 _RETRY_NOTE = (
     "[SYSTEM] Your last reply had no usable tool call and no answer. Either write the tool "
     "call now, exactly as <tool_call>{...}</tool_call> with valid JSON, or answer the user directly."
-)
-
 )
 
 _EMPTY_REPLY = "หนูนึกคำตอบไม่ออกค่ะ เซนเซย์ลองถามใหม่อีกทีนะคะ (´・ω・`)"
@@ -140,13 +138,15 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
     wrote = False
     retried = False
     try:
-        for round_no in range(MAX_ROUNDS):
-            last = round_no == MAX_ROUNDS - 1
+        # The last round runs without tools so she always answers.
+        max_rounds = config.agent_max_rounds
+        for round_no in range(max_rounds):
+            last = round_no == max_rounds - 1
             model = plain if last else with_tools
             if last:
                 # Without this the model plans its next tool call out loud as the reply.
                 conversation.append(HumanMessage(content=_LAST_ROUND_NOTE))
-            logger.debug(f"[Agent] Round {round_no + 1}/{MAX_ROUNDS} | messages={len(conversation)}")
+            logger.debug(f"[Agent] Round {round_no + 1}/{max_rounds} | messages={len(conversation)}")
 
             reply: AIMessageChunk | None = None
             separate = wrote

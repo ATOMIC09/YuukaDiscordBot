@@ -46,6 +46,7 @@ from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langchain_core.utils.json import parse_partial_json
 
+from bot.config import config
 from bot.logger import logger
 
 _OPEN = "<tool_call>"
@@ -57,10 +58,10 @@ _HARMONY_OPENERS = ("<|start|>", "<|channel|>", "<|constrain|>", "<|message|>", 
 _HARMONY_CALL = "<|call|>"
 _HARMONY_TOKEN = re.compile(r"<\|[a-z]+\|>")
 _HARMONY_RECIPIENT = re.compile(r"to=([\w.\-]+)")
-_HARMONY_FINAL = re.compile(r"<\|channel\|>\s*final\b.*?<\|message\|>(.*)", re.S)
 # gpt-oss sometimes wraps the call in our tags inside a harmony block, and may escape the
 # slash of the closing one (<\/tool_call>), which also leaves its JSON a brace short.
 _STRAY_TAG = re.compile(r"<\\?/?tool_call>")
+_HARMONY_FINAL = re.compile(r"<\|channel\|>\s*final\b.*?<\|message\|>(.*)", re.S)
 
 # Only we write tool responses. One from the model is invented.
 _FAKE_RESPONSE = "<tool_response"
@@ -102,10 +103,6 @@ Rules:
 # to read the channel."). A reply that gets longer than this with no call in sight
 # is an answer, and starts streaming.
 _PREAMBLE_CHARS = 300
-
-# Calls one reply may make ("play it, queue Beat It, wait 10 s, skip"). Reading stops
-# at the last, so a model that keeps going cannot run a long list.
-_MAX_CALLS = 5
 
 # After a long tool result in mixed languages, gpt-oss drifts into a language
 # nobody used (Chinese) partway through a reply. Naming the language works better
@@ -197,7 +194,7 @@ def render_messages(
     if tools:
         section = _TOOL_INSTRUCTIONS.format(
             tools="\n".join(json.dumps(t["function"], ensure_ascii=False) for t in tools),
-            max_calls=_MAX_CALLS,
+            max_calls=config.agent_max_tool_calls,
             final=_final_rule(final_tools),
         )
         if pairs and pairs[0][0] == "system":
@@ -262,10 +259,10 @@ def _bare_call(text: str, names: set[str]) -> dict[str, Any] | None:
         return call if call is not None and call["name"] in names else None
     return None
 
-    raw = _STRAY_TAG.sub("", raw)
 
 def _parse_harmony(raw: str) -> dict[str, Any] | None:
     """Read a call out of a harmony block, or None if it holds no usable call."""
+    raw = _STRAY_TAG.sub("", raw)
     # The call follows the last recipient; anything before it may be reasoning.
     recipients = list(_HARMONY_RECIPIENT.finditer(raw))
     recipient = recipients[-1] if recipients else None
@@ -408,7 +405,8 @@ class ToolPromptChatModel(BaseChatModel):
                     else:
                         calls.append(call)
                     mode = None
-                    if len(calls) == _MAX_CALLS:
+                    # Reading stops at the last, so a model that keeps going cannot run more.
+                    if len(calls) == config.agent_max_tool_calls:
                         done = True
                 if done:
                     break

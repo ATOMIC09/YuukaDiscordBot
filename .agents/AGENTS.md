@@ -340,7 +340,7 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 ## LLM Backend — `utils/ai/`
 
 - **Provider**: [OpenRouter](https://openrouter.ai/) through LangChain core (`langchain-core`, `langchain-openai`). **No LangGraph** — do not add `langchain` or `langgraph`; the loop is hand-written.
-- **Agent loop**: `run_agent(history, ctx)` in `agent.py` — the model picks a tool, the result goes back, up to `MAX_ROUNDS` model calls (the last without tools). Yields `("status" | "content" | "action" | "error", payload)`. A `return_direct` tool ends the turn only if it succeeded; a refusal goes back to the model. One reply may hold up to 5 calls ("queue it, wait 10 s, then skip"; `wait` pauses without calling the model), run in order; after a failure the rest are skipped.
+- **Agent loop**: `run_agent(history, ctx)` in `agent.py` — the model picks a tool, the result goes back, up to `AGENT_MAX_ROUNDS` model calls (the last without tools). Yields `("status" | "content" | "action" | "error", payload)`. A `return_direct` tool ends the turn only if it succeeded; a refusal goes back to the model. One reply may hold up to `AGENT_MAX_TOOL_CALLS` calls ("queue it, wait 10 s, then skip"; `wait` pauses without calling the model), run in order; after a failure the rest are skipped.
 - **No native tool calls**: the free model has none, so `ToolPromptChatModel` (`tool_calling.py`) describes tools in the prompt and parses `<tool_call>{...}</tool_call>` back into `AIMessage.tool_calls` (gpt-oss's own `<|channel|>…<|call|>` format too). Call text, and text written before a call, never reaches Discord or TTS. A `<tool_response>` the model writes itself is cut off and sent back once.
 - **Tools**: standard LangChain `@tool`s in `utils/ai/tools/`, chosen per turn by `tools_for(ctx)`. Per-turn Discord state is passed as `YuukaContext` (`Ctx` alias) via `InjectedToolArg`, so the model never sees it. Adding a tool: write it in a module there, export `TOOLS` and `STATUS`, and gate it in `tools_for`.
 
@@ -353,7 +353,7 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 | `actions.py` | `voice_kick`, `voice_disconnect_timer` — propose only; `confirm.py` button (requester only) runs them |
 | `reminders.py` | `remind_me`, `notify_when_joins_voice` — timers/listeners in `scheduler.py`, **0 LLM requests** while waiting or firing |
 
-- **Token budget** (free model: 20 RPM, 50/day without credits): a plain chat is 1 request, a tool turn 2, worst case `MAX_ROUNDS`. Button presses, reminders and watches never call the model.
+- **Token budget** (free model: 20 RPM, 50/day without credits): a plain chat is 1 request, a tool turn 2, worst case `AGENT_MAX_ROUNDS`. Button presses, reminders and watches never call the model.
 - **State**: nothing is persisted (stateless Docker container); pending reminders are lost on restart by design.
 - **History squashing**: consecutive messages with the same `role` are merged (required by some instruct models).
 

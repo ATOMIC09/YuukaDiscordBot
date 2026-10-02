@@ -251,6 +251,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
 
                 source = discord.FFmpegPCMAudio(mp3_path)
                 vc.play(source, after=_after)
+                chime.mark_warm(vc)
 
                 await play_done.wait()
 
@@ -833,6 +834,10 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
 
         if stt_ready:
             voice_hub.subscribe(voice_client, _HUB_KEY, on_segment=self._on_segment)
+
+        # Open the audio stream now: the first sound on a fresh connection is
+        # otherwise clipped on the listeners' side, and the first chime would be it.
+        chime.warm_up(voice_client)
 
         return session, stt_ready
 

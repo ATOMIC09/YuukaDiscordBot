@@ -231,8 +231,10 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
   window with a fresh signal (`_relisten`) and never reaches the LLM; a name followed by words is
   cut out of the request.
 - **The chime itself**: starts with 150 ms of silence, because clients clip the opening of a short
-  sound that arrives with the speaking signal; every call logs `[Chime] … playing` or why it was
-  skipped. It never interrupts music or her own speech (one `VoiceClient`): while a track plays a
+  sound that arrives with the speaking signal. The first sound on a fresh connection is clipped
+  even more (a chime was inaudible until her first spoken reply), so `_open_session` plays 400 ms of
+  silence to open the stream (`chime.warm_up`), and a client that has sent no audio yet (`_WARM`)
+  gets a 600 ms lead-in once. Every call logs `[Chime] … playing` or why it was skipped. It never interrupts music or her own speech (one `VoiceClient`): while a track plays a
   short text notice stands in, posted at the same moment, deleted when the window closes.
 - **The chime means "I am listening for you"**, so it also sounds whenever she waits for an answer:
   after a reply that asks a question (the answer window, `STT_ANSWER_WINDOW_S`, same closing chime

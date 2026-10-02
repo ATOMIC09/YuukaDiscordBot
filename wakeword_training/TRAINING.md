@@ -258,7 +258,7 @@ and memoises scores.
 
 Two caveats on absolute numbers: each row's threshold is set by the top-N negative clips (`#FP`),
 so rank on rows where N is in the hundreds; and every figure is per isolated 2-second clip, while
-deployment slides a 2s window at 1s stride and takes the max, raising both recall and false
+deployment scores every 80 ms hop of a segment and takes the max, raising both recall and false
 accepts. Use it to compare models, not to predict deployed rates.
 
 **Training-progress chart** — `{model_name}_metrics.json` has the data, no built-in plot:

@@ -35,8 +35,8 @@ Two caveats on the absolute numbers:
 * Each row's threshold is set by the top-N negative clips, where N is printed
   as `#FP`. At small N the threshold rides on a handful of samples, so the
   bootstrap interval is wide. Rank models on rows with N in the hundreds.
-* Every figure is per isolated 2-second clip. Deployment slides a 2s window at
-  1s stride across a segment and takes the max (`_predict_max`), which raises
+* Every figure is per isolated 2-second clip. Deployment scores every 80 ms hop
+  across a segment and takes the max (`_predict_max`), which raises
   both recall and false accepts. Use this to compare models, not to predict
   absolute deployed rates.
 

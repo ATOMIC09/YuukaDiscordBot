@@ -16,14 +16,22 @@ The threshold that buys those numbers is model-specific, not a constant, so
 re-derive it with wakeword_training/compare_models.py after any promotion —
 the same number means a different operating point on a different model.
 
-Why a sliding window
----------------------
-WakeWordModel.predict() only looks at the tail ~2 seconds of whatever chunk
-it is given (it keeps the last 16 embeddings, taken at an 8-frame stride), so
-handing it a whole long utterance in one call would miss a wake word spoken at
-the start. utils/wake.py's text match has no such limit (head_chars=0 by
-default matches anywhere in the utterance), so a segment is windowed across
-its full length here too rather than just checking the tail.
+Why every 80 ms hop
+--------------------
+The classifier reads the last 16 speech embeddings (~2 s), and it was trained
+on clips with the word at the *end* of that window (speech ends at 1.7-2.0 s of
+2.0 s). It scores high only when the word sits at the window's trailing edge,
+and drops fast when it sits earlier. openWakeWord therefore scores every 80 ms
+hop. An earlier version of this module scored 2 s windows at a 1 s stride, so
+a word was seen at the right offset only by luck: on synthetic "Yuuka, <speech>"
+segments that gave a median 0.05 against 0.23 at 80 ms, and a "miss" there is
+a silent drop of a real summon.
+
+Scoring every hop is cheap here: the mel spectrogram and the embeddings are
+computed once for the whole segment, and only the small classifier runs per hop
+(the same 76-frame window / 8-frame stride WakeWordModel.predict uses). This
+reaches into WakeWordModel's private frontends, because its public predict()
+only returns the tail window; recheck it after a livekit-wakeword upgrade.
 """
 
 from __future__ import annotations
@@ -38,10 +46,8 @@ from bot.logger import logger
 from utils.audio import pcm_to_mono16k
 
 _SAMPLE_RATE = 16_000
-_WINDOW_S = 2.0
-_STRIDE_S = 1.0
-_WINDOW_SAMPLES = int(_WINDOW_S * _SAMPLE_RATE)
-_STRIDE_SAMPLES = int(_STRIDE_S * _SAMPLE_RATE)
+_MIN_SAMPLES = 2 * _SAMPLE_RATE  # 16 embeddings need about 2 s of audio
+_MIN_EMBEDDINGS = 16  # classifier input length
 
 
 class AcousticWakeDetector:
@@ -89,32 +95,29 @@ class AcousticWakeDetector:
         except Exception as exc:
             logger.warning(f"[Wake Acoustic] Failed to load model: {exc}")
 
-    @staticmethod
-    def _windows(audio: np.ndarray) -> list[np.ndarray]:
-        if audio.size < _WINDOW_SAMPLES:
-            pad = _WINDOW_SAMPLES - audio.size
-            return [np.pad(audio, (pad, 0))]
-
-        windows = []
-        start = 0
-        while start + _WINDOW_SAMPLES <= audio.size:
-            windows.append(audio[start : start + _WINDOW_SAMPLES])
-            start += _STRIDE_SAMPLES
-
-        # The stride loop above may not land exactly on the tail — make sure
-        # the last WINDOW_SAMPLES of the segment always gets its own check.
-        tail_start = audio.size - _WINDOW_SAMPLES
-        if tail_start % _STRIDE_SAMPLES != 0:
-            windows.append(audio[tail_start:])
-        return windows
-
-    def _predict_max(self, windows: list[np.ndarray]) -> float:
+    def _predict_max(self, audio: np.ndarray) -> float:
+        """Best classifier score over every 16-embedding window of ``audio``."""
         assert self._model is not None
+        model = self._model
+
+        if audio.size < _MIN_SAMPLES:
+            # Left-pad so the word, which ends the segment, stays at the end.
+            audio = np.pad(audio, (_MIN_SAMPLES - audio.size, 0))
+
+        mel = model._mel_frontend(audio)
+        embeddings = model._speech_embedding.extract_embeddings(mel)[0]
+        if embeddings.shape[0] < _MIN_EMBEDDINGS:
+            return 0.0
+
+        n = embeddings.shape[0] - _MIN_EMBEDDINGS + 1
+        batch = np.stack(
+            [embeddings[i : i + _MIN_EMBEDDINGS] for i in range(n)], axis=0
+        ).astype(np.float32)
+
         best = 0.0
-        for window in windows:
-            scores = self._model.predict(window)
-            if scores:
-                best = max(best, max(scores.values()))
+        for session, input_name in model._classifiers.values():
+            out = session.run(None, {input_name: batch})[0]
+            best = max(best, float(np.max(out[:, 0])))
         return best
 
     async def detect(self, pcm: bytes) -> tuple[bool, float]:
@@ -132,8 +135,7 @@ class AcousticWakeDetector:
         if audio.size == 0:
             return False, 0.0
 
-        windows = self._windows(audio)
-        score = await asyncio.to_thread(self._predict_max, windows)
+        score = await asyncio.to_thread(self._predict_max, audio)
         return score >= config.stt_wake_acoustic_threshold, score
 
 

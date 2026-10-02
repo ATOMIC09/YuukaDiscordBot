@@ -1478,6 +1478,7 @@ class PlayerCog(commands.Cog):
             state.queue.insert(1, state.forward_history.pop())
 
         if len(state.queue) == 0:
+            logger.info(f"[Player] Queue empty in guild {guild_id}: nothing left to play")
             state.current = None
             # The source that just ended is finished; keeping the handle would
             # leave `/volume` and the crossfade guards pointing at a dead mixer.
@@ -1537,7 +1538,17 @@ class PlayerCog(commands.Cog):
             # before Discord starts pulling frames on its strict 20ms clock.
             await asyncio.get_event_loop().run_in_executor(self._executor, buffered_source.wait_ready)
 
+            started = self.bot.loop.time()
+
             def after_playing(e):
+                # Why a track stopped is otherwise invisible: ffmpeg's own errors go to the
+                # console, not the log. A track that ends long before its duration is a
+                # stream that died, not a skip.
+                played = self.bot.loop.time() - started
+                logger.info(
+                    f"[Player] Track ended in guild {guild_id}: '{track.title}' after {played:.0f}s "
+                    f"of {track.duration or '?'}s (error={e!r}, skip_request={state.skip_request})"
+                )
                 if e:
                     logger.error(f"Player error in guild {guild_id}: {e}")
                 self.bot.loop.create_task(self._play_next_async(guild_id))
@@ -1708,6 +1719,7 @@ class PlayerCog(commands.Cog):
 
     async def stop_playback(self, guild: discord.Guild) -> None:
         """Clear the queue and stop the current track. Safe when nothing is playing."""
+        logger.info(f"[Player] Stop requested in guild {guild.id}")
         state = self.get_state(guild.id)
         self._clear_crossfade(state)
         state.queue.clear()

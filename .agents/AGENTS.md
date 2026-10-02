@@ -217,17 +217,22 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
   ran out unused. A cough (empty transcript) does not use it up, and a sentence that started before
   the deadline still counts. This also covers "Yuuka, *(pause)*, what time is it": `voice_hub` cuts
   a segment on ~800ms of packet silence, so the name and the question arrive as two segments.
-- **Chime timing**: a segment is only known at its end (`STT_SILENCE_MS`), so the chime cannot beat
-  that. When the acoustic score is `>= STT_WAKE_ACOUSTIC_CONFIDENT_SCORE` it sounds *before* STT and
-  opens the window at once (people talk as soon as they hear it, possibly while the first segment
-  is still being transcribed); if the transcript then is not her name the window is taken back
-  (`_stop_listening`) and that one chime was a false alarm — except when the segment is at most
-  `_NAME_ONLY_MAX_S` (1.6 s), where a transcript that does not look like her name is taken as
-  Whisper mishearing it (ヨーカ, ヨガ) and counts as a bare wake word; a longer segment has to match
-  as text. Below the confident score the chime waits for the text match. The chime starts with
-  150 ms of silence, because clients clip the opening of a short sound that arrives with the
-  speaking signal; every call logs `[Chime] … playing` or why it was skipped. The chime never interrupts music or her own speech (one `VoiceClient`): while a track plays
-  a short text notice (`delete_after` the window) stands in.
+- **Signal on the gate, before STT**: a segment is only known at its end (`STT_SILENCE_MS`), so
+  nothing can beat that. But the moment the acoustic gate passes (`STT_WAKE_ACOUSTIC_THRESHOLD`) she
+  gives the signal and opens the listening window, without waiting for STT: people talk as soon as
+  they hear it, possibly while the first segment is still being transcribed. If the transcript is
+  not her name the window and notice are taken back (`_stop_listening`) and that signal was a false
+  alarm — except when the acoustic score is `>= STT_WAKE_ACOUSTIC_CONFIDENT_SCORE` and the segment
+  is at most `_NAME_ONLY_MAX_S` (1.6 s): then a transcript that does not look like her name is
+  taken as Whisper mishearing it (ヨーカ, ヨガ) and counts as a bare wake word.
+- **Her name while listening** (spamming it because nothing seemed to happen) is not the request:
+  a short segment the model is confident about, or a transcript that is just her name, restarts the
+  window with a fresh signal (`_relisten`) and never reaches the LLM; a name followed by words is
+  cut out of the request.
+- **The chime itself**: starts with 150 ms of silence, because clients clip the opening of a short
+  sound that arrives with the speaking signal; every call logs `[Chime] … playing` or why it was
+  skipped. It never interrupts music or her own speech (one `VoiceClient`): while a track plays a
+  short text notice stands in, posted at the same moment, deleted when the window closes.
 - **The chime means "I am listening for you"**, so it also sounds whenever she waits for an answer:
   after a reply that asks a question (the answer window, `STT_ANSWER_WINDOW_S`, same closing chime
   if unused) and when a `voice_kick` / `voice_disconnect_timer` confirmation is posted (`expect_answer`).

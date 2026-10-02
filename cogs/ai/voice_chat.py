@@ -26,10 +26,11 @@ How speech reaches the LLM
    nothing but her name was said she listens to that speaker's *next*
    utterance (`_start_listening`), with no wake word, for
    `STT_LISTEN_WINDOW_S`. The chime is the cue that she is listening, so it
-   is never ambiguous. A confident acoustic score chimes before STT has
-   finished; otherwise the chime waits for the text match. While a track
-   plays the chime cannot sound (one VoiceClient), so a short text notice
-   stands in and the music is never paused.
+   is never ambiguous. It sounds as soon as the acoustic gate passes, before
+   STT has finished, and is taken back if the transcript is not her name.
+   While a track plays the chime cannot sound (one VoiceClient), so a short
+   text notice stands in, posted at the same moment, and the music is never
+   paused.
 5. The accepted text goes through the same LLM → TTS → playback path as a
    typed message.
 6. The reply comes from the agent loop (`utils.ai.run_agent`), which may call
@@ -163,6 +164,10 @@ class VoiceChatSession:
     # window itself is `awaiting_answer`; this task only sounds the closing chime
     # if it runs out unused (see _start_listening).
     listening: dict[int, asyncio.Task] = field(default_factory=dict)
+
+    # The "she is listening" text notice per speaker, while a track keeps the chime
+    # from sounding; removed again when the window closes.
+    notices: dict[int, discord.Message] = field(default_factory=dict)
 
     # Whether the room has already been told she is typing instead of speaking.
     # Explaining it once per silent stretch is helpful; repeating it above every
@@ -318,6 +323,14 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         # turns into a standing "awake" state.
         deadline = session.awaiting_answer.pop(segment.user_id, None)
         if deadline is not None and segment.started_at <= deadline:
+            # Her name again ("Yuuka" repeated because nothing seemed to happen) is
+            # not the request: say she is listening once more, and skip STT.
+            if result is None and segment.duration <= _NAME_ONLY_MAX_S:
+                _, name_score = await acoustic_wake.detect(segment.pcm)
+                if name_score >= config.stt_wake_acoustic_confident_score:
+                    logger.info(f"[AI Voice] {display} said her name again (acoustic {name_score:.3f})")
+                    self._relisten(session, segment.user_id, display)
+                    return
             if result is None:
                 result = await transcribe_pcm(segment.pcm, display)
             if not result.text:
@@ -325,10 +338,23 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                 if time.perf_counter() < deadline:
                     session.awaiting_answer.setdefault(segment.user_id, deadline)
                 return
+            text = result.text
+            again = wake.detect(
+                text,
+                config.stt_wake_words,
+                threshold=config.stt_wake_relaxed_threshold,
+                head_chars=config.stt_wake_head_chars,
+            )
+            if again and not again.remainder:
+                logger.info(f"[AI Voice] {display} said her name again: {text!r}")
+                self._relisten(session, segment.user_id, display)
+                return
+            if again:
+                text = again.remainder  # the name is addressing, not content
             self._cancel_listening(session, segment.user_id)
-            logger.info(f"[AI Voice] Heard {display} while listening: {result.text}")
+            logger.info(f"[AI Voice] Heard {display} while listening: {text}")
             await self._announce_and_respond(
-                segment.guild_id, session, display, result.text, member
+                segment.guild_id, session, display, text, member, heard=result.text
             )
             return
 
@@ -348,16 +374,17 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             f"(score {acoustic_score:.3f} >= {config.stt_wake_acoustic_threshold})"
         )
 
-        # Sure enough to answer before STT has even started: chime now, and open the
-        # listening window at once. Whoever hears the chime starts talking straight
-        # away, and that speech can reach us while this segment is still being
-        # transcribed. If the transcript then says it was not her name, the window
-        # is taken back below. Otherwise the chime waits for the text match.
+        # The gate passed, so tell the speaker now, before STT: the chime, or the text
+        # notice when a track holds the voice client. Whoever gets the signal starts
+        # talking straight away, and that speech can reach us while this segment is
+        # still being transcribed, so the listening window opens at once too. If the
+        # transcript then says it was not her name, both are taken back below.
+        # (Not for a segment already transcribed for a pending confirmation.)
         early_deadline: float | None = None
-        early_chimed = False
-        if acoustic_score >= config.stt_wake_acoustic_confident_score:
-            early_deadline = self._start_listening(session, segment.user_id, display)
-            early_chimed = chime.play(session.voice_client, "wake")
+        if result is None:
+            early_deadline = self._start_listening(
+                session, segment.user_id, display, chimed=chime.play(session.voice_client, "wake")
+            )
 
         if result is None:
             result = await transcribe_pcm(segment.pcm, display)
@@ -382,17 +409,17 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                 f"[AI Voice] No wake word from {display} "
                 f"(best {match.score:.0f} vs {match.word or '—'}, threshold {text_threshold}): {result.text}"
             )
-            if early_deadline is not None and segment.duration <= _NAME_ONLY_MAX_S:
-                # The model was sure and the chime has gone: keep the window it
+            if (
+                early_deadline is not None
+                and acoustic_score >= config.stt_wake_acoustic_confident_score
+                and segment.duration <= _NAME_ONLY_MAX_S
+            ):
+                # The model was sure and the signal has gone: keep the window it
                 # opened rather than leave the speaker with a chime and nothing.
                 logger.info(
                     f"[AI Voice] Taking {result.text!r} as a misheard name from {display} "
                     f"(acoustic {acoustic_score:.3f}, {segment.duration:.1f}s)"
                 )
-                if not early_chimed:
-                    asyncio.create_task(
-                        self._post_listening_notice(session, config.stt_listen_window_s)
-                    )
                 return
             self._stop_listening(session, segment.user_id, early_deadline)
             return
@@ -414,13 +441,12 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             return
 
         # Just her name and nothing else: she listens for the next thing this
-        # speaker says. Already open if the early chime opened it.
+        # speaker says. Already open, with its signal given, unless this segment
+        # reached here through a pending confirmation.
         if early_deadline is None:
             self._start_listening(
                 session, segment.user_id, display, chimed=chime.play(session.voice_client, "wake")
             )
-        elif not early_chimed:
-            asyncio.create_task(self._post_listening_notice(session, config.stt_listen_window_s))
 
     def _start_listening(
         self,
@@ -447,19 +473,41 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         logger.debug(f"[AI Voice] Listening to {display} for {window:.0f}s")
 
         if not chimed:
-            asyncio.create_task(self._post_listening_notice(session, window))
+            asyncio.create_task(self._post_listening_notice(session, user_id, window))
         return deadline
 
-    async def _post_listening_notice(self, session: VoiceChatSession, window: float) -> None:
+    def _relisten(self, session: VoiceChatSession, user_id: int, display: str) -> None:
+        """She was called again while listening: signal again and restart the window."""
+        self._start_listening(
+            session, user_id, display, chimed=chime.play(session.voice_client, "wake")
+        )
+
+    async def _post_listening_notice(
+        self, session: VoiceChatSession, user_id: int, window: float
+    ) -> None:
         try:
-            await session.text_channel.send(_LISTENING_NOTICE, delete_after=window)
+            message = await session.text_channel.send(_LISTENING_NOTICE, delete_after=window)
         except discord.HTTPException:
-            pass
+            return
+        session.notices[user_id] = message
+
+    def _drop_notice(self, session: VoiceChatSession, user_id: int) -> None:
+        message = session.notices.pop(user_id, None)
+        if message is not None:
+            asyncio.create_task(self._delete_quietly(message))
+
+    @staticmethod
+    async def _delete_quietly(message: discord.Message) -> None:
+        try:
+            await message.delete()
+        except discord.HTTPException:
+            pass  # already gone (delete_after) or not ours to delete
 
     def _cancel_listening(self, session: VoiceChatSession, user_id: int) -> None:
         task = session.listening.pop(user_id, None)
         if task is not None:
             task.cancel()
+        self._drop_notice(session, user_id)
 
     def _stop_listening(
         self, session: VoiceChatSession, user_id: int, deadline: float | None

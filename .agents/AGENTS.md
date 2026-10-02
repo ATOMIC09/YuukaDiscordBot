@@ -61,6 +61,7 @@ YuukaDiscordBot/
 │
 ├── utils/
 │   ├── ai/                   # The agent: agent.py, tool_calling.py, models.py, context.py, confirm.py, scheduler.py, tools/
+│   ├── attendance.py         # /attendance and /absent report builders (shared by the cog and the agent tools)
 │   ├── ai_actions.py         # Runs /music commands for the agent, posts their embeds and logs them (log_command)
 │   ├── web_search.py         # Tavily search with an in-memory TTL cache
 │   ├── embeds.py             # Embed factories (success/error/info/warning)
@@ -376,6 +377,7 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 | `music.py` | `music_play/skip/stop` (via `ai_actions.run_action`; `music_skip` takes a queue `position` or a `song` name, like `/music skip <position>`), `music_now_playing/queue/history/remove` |
 | `server.py` | `voice_members`, `user_info`, `server_info` — never show who is in a voice channel the requester cannot see |
 | `actions.py` | `voice_kick`, `voice_disconnect_timer` — propose only; the `confirm.py` button (requester only) or the requester's spoken yes/no runs them. Offered to anyone in a guild: a missing permission or not being in voice is refused by the tool, because hiding it made the model claim success without calling anything |
+| `attendance.py` | `attendance`, `absent` — the `/attendance` and `/absent` reports (`utils/attendance.py`, shared with the commands), posted with their CSV and logged. Read-only, so no confirm button; refused with the reason when the requester is not in a voice channel. Tool results name at most 40 people, the embed and CSV have everyone |
 | `reminders.py` | `remind_me`, `notify_when_joins_voice` — timers/listeners in `scheduler.py`, **0 LLM requests** while waiting or firing |
 
 - **Token budget** (free model: 20 RPM, 50/day without credits): a plain chat is 1 request, a tool turn 2, worst case `AGENT_MAX_ROUNDS`. Button presses, reminders and watches never call the model.

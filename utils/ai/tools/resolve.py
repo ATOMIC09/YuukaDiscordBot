@@ -144,6 +144,34 @@ def resolve_member(ctx: YuukaContext, text: str) -> discord.Member:
     raise UserWarning("หาคนนั้นไม่เจอค่ะ", f"ไม่มีสมาชิกชื่อ '{raw}' ในเซิร์ฟเวอร์นี้นะคะ.{hint}")
 
 
+_ROLE_MENTION = re.compile(r"^<@&(\d+)>$")
+
+
+def resolve_role(ctx: YuukaContext, text: str) -> discord.Role:
+    """A role of the requester's guild, by mention, id or name."""
+    guild = ctx.guild
+    raw = text.strip()
+
+    match = _ROLE_MENTION.match(raw)
+    if match or raw.isdigit():
+        role = guild.get_role(int(match.group(1) if match else raw))
+        if role:
+            return role
+
+    wanted = raw.lstrip("@").strip().casefold()
+    exact = [r for r in guild.roles if r.name.lstrip("@").casefold() == wanted]
+    found = exact or [r for r in guild.roles if wanted and wanted in r.name.casefold()]
+    if len(found) == 1:
+        return found[0]
+    if found:
+        listed = ", ".join(r.name for r in found[:5])
+        raise UserWarning("หลายยศชื่อคล้ายกันค่ะ", f"'{raw}' ตรงกับหลายยศ: {listed} ช่วยระบุให้ชัดขึ้นหน่อยนะคะ")
+
+    close = difflib.get_close_matches(wanted, [r.name.casefold() for r in guild.roles], n=3, cutoff=0.5)
+    hint = f" ใกล้เคียง: {', '.join(close)}" if close else ""
+    raise UserWarning("หายศนั้นไม่เจอค่ะ", f"ไม่มียศชื่อ '{raw}' ในเซิร์ฟเวอร์นี้นะคะ.{hint}")
+
+
 def resolve_voice_channel(ctx: YuukaContext, text: str) -> discord.VoiceChannel:
     """A voice channel the requester can see, by mention, id or name."""
     visible = [c for c in ctx.guild.voice_channels if c.permissions_for(ctx.requester).view_channel]

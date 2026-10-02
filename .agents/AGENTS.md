@@ -54,14 +54,14 @@ YuukaDiscordBot/
 │   │   ├── image.py          # /image pet|resize|scale|qr + Deepfry/Grayscale/Wide/Image Info message commands
 │   │   ├── imgaudio.py       # /imgaudio — video from the channel's latest image and audio
 │   │   ├── feedback.py       # /feedback → FEEDBACK_CHANNEL_ID
-│   │   ├── logging.py        # Logs every command to LOG_CHANNEL_ID
+│   │   ├── logging.py        # Logs every command to LOG_CHANNEL_ID, including ones Yuuka runs (log_ai_command)
 │   │   ├── admin.py          # /reload (owner only)
 │   │   └── send.py           # /send (owner only)
 │   └── moderation/           # Empty placeholder package
 │
 ├── utils/
 │   ├── ai/                   # The agent: agent.py, tool_calling.py, models.py, context.py, confirm.py, scheduler.py, tools/
-│   ├── ai_actions.py         # Runs /music commands for the agent and posts their embeds
+│   ├── ai_actions.py         # Runs /music commands for the agent, posts their embeds and logs them (log_command)
 │   ├── web_search.py         # Tavily search with an in-memory TTL cache
 │   ├── embeds.py             # Embed factories (success/error/info/warning)
 │   ├── errors.py             # UserError / UserWarning + global command error handler
@@ -152,7 +152,7 @@ def setup(bot: discord.Bot):
 ## AI Chat Architecture — `cogs/ai/chat.py`
 
 - **Slash commands**: `/ai chat` (start session), `/ai stop` (stop session)
-- **Activation**: `/ai chat` activates Yuuka in the current channel. She reads recent history for context, then listens passively.
+- **Activation**: `/ai chat` activates Yuuka in the current channel. She reads recent history for context (her own embeds come in as one `[result] …` line each; the static session-start embeds are just "เริ่มการสนทนา"), then listens passively.
 - **Response trigger**: Yuuka only generates a reply when she is `@mentioned` in an active channel.
 - **State**: `AIChatCog.active_channels` is a dict mapping `channel_id → list[dict]` (OpenAI-format message history).
 - **History pruning**: capped at `MAX_HISTORY_LENGTH` messages (default 50); the system prompt is always kept.
@@ -203,7 +203,7 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
 ### AI Voice Chat — `cogs/ai/voice_chat.py`
 - Segment → `utils.stt` → `utils.wake` gate → LLM → TTS → playback.
 - **The wake gate is load-bearing.** Without it Yuuka replies to every sentence spoken in the room.
-- **No follow-up window** — every utterance needs the wake word, every time, so it's never
+- **No follow-up window** (two narrow exceptions below: a pending confirmation, and the answer to a question she just asked) — every utterance needs the wake word, every time, so it's never
   ambiguous whether she's listening. (An earlier version kept a speaker "awake" for a few seconds
   after a hit; removed because it confused people about when they still needed to say her name.)
 - **Pause bridge, not a follow-up window**: `utils.voice_hub` cuts a segment on ~800ms of packet
@@ -265,6 +265,9 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 
 - Audio is sent as 16 kHz mono WAV to Groq's OpenAI-compatible
   `/openai/v1/audio/transcriptions`. A few hundred KB per utterance — no need to compress.
+- **Language shortlist** (`STT_LANGUAGE`): Groq takes one language, so an answer outside the list is re-requested once
+  with the first listed language forced, except a Thai-sounding one (vi, id, ms, lo, km, my) when `th` is listed:
+  a short Thai phrase is often misdetected as those, and forcing English on it gave romanised noise.
 - `_transcribe_groq()` returns `None` for *transport* failure vs an empty `Transcript` for
   "no speech", so the caller only falls back in the former case.
 - Local fallback: `STT_MODEL=auto` → `small` on CPU, `large-v3-turbo` on CUDA. Set
@@ -340,8 +343,8 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 ## LLM Backend — `utils/ai/`
 
 - **Provider**: [OpenRouter](https://openrouter.ai/) through LangChain core (`langchain-core`, `langchain-openai`). **No LangGraph** — do not add `langchain` or `langgraph`; the loop is hand-written.
-- **Agent loop**: `run_agent(history, ctx)` in `agent.py` — the model picks a tool, the result goes back, up to `AGENT_MAX_ROUNDS` model calls (the last without tools). Yields `("status" | "content" | "action" | "error", payload)`. A `return_direct` tool ends the turn only if it succeeded; a refusal goes back to the model. One reply may hold up to `AGENT_MAX_TOOL_CALLS` calls ("queue it, wait 10 s, then skip"; `wait` pauses without calling the model), run in order; after a failure the rest are skipped.
-- **No native tool calls**: the free model has none, so `ToolPromptChatModel` (`tool_calling.py`) describes tools in the prompt and parses `<tool_call>{...}</tool_call>` back into `AIMessage.tool_calls` (gpt-oss's own `<|channel|>…<|call|>` format too). Call text, and text written before a call, never reaches Discord or TTS. A `<tool_response>` the model writes itself is cut off and sent back once.
+- **Agent loop**: `run_agent(history, ctx)` in `agent.py` — the model picks a tool, the result goes back, up to `AGENT_MAX_ROUNDS` model calls (the last without tools). Yields `("status" | "content" | "action" | "done" | "error", payload)`; `done` is a succeeded turn-ending tool's call and result, which the cogs add to the history as a real tool call (an action-only turn has no text, and a history without it makes the model repeat the request). A `return_direct` tool ends the turn only if it succeeded; a refusal goes back to the model. One reply may hold up to `AGENT_MAX_TOOL_CALLS` calls ("queue it, wait 10 s, then skip"; `wait` pauses without calling the model), run in order; after a failure the rest are skipped.
+- **No native tool calls**: the free model has none, so `ToolPromptChatModel` (`tool_calling.py`) describes tools in the prompt and parses `<tool_call>{...}</tool_call>` back into `AIMessage.tool_calls` (gpt-oss's own `<|channel|>…<|call|>` format too). Call text, and text written before a call, never reaches Discord or TTS. A `<tool_response>` the model writes itself is cut off and sent back once. A call nested in harmony markers or with an escaped `<\/tool_call>` is read too, and a reply that is only reasoning ("We need to call tool.") is dropped and retried once with a note. A `[result]` line in an earlier assistant turn is the system's record; the prompt tells the model never to write one.
 - **Tools**: standard LangChain `@tool`s in `utils/ai/tools/`, chosen per turn by `tools_for(ctx)`. Per-turn Discord state is passed as `YuukaContext` (`Ctx` alias) via `InjectedToolArg`, so the model never sees it. Adding a tool: write it in a module there, export `TOOLS` and `STATUS`, and gate it in `tools_for`.
 
 | Module | Tools |
@@ -350,7 +353,7 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 | `discord_read.py` | `read_messages`, `search_messages` — permissions are the **requester's**, not the bot's (private threads included). Channels they read go in `ctx.channels_used`, and `utils/ai/linker.py` turns her `#name` for them into a clickable `<#id>` (text only; a mention read aloud is digits) |
 | `music.py` | `music_play/skip/stop` (via `ai_actions.run_action`; `music_skip` takes a queue `position` or a `song` name, like `/music skip <position>`), `music_now_playing/queue/history/remove` |
 | `server.py` | `voice_members`, `user_info`, `server_info` — never show who is in a voice channel the requester cannot see |
-| `actions.py` | `voice_kick`, `voice_disconnect_timer` — propose only; `confirm.py` button (requester only) runs them |
+| `actions.py` | `voice_kick`, `voice_disconnect_timer` — propose only; the `confirm.py` button (requester only) or the requester's spoken yes/no runs them. Offered to anyone in a guild: a missing permission or not being in voice is refused by the tool, because hiding it made the model claim success without calling anything |
 | `reminders.py` | `remind_me`, `notify_when_joins_voice` — timers/listeners in `scheduler.py`, **0 LLM requests** while waiting or firing |
 
 - **Token budget** (free model: 20 RPM, 50/day without credits): a plain chat is 1 request, a tool turn 2, worst case `AGENT_MAX_ROUNDS`. Button presses, reminders and watches never call the model.
@@ -442,6 +445,6 @@ There is no test suite. Before committing:
 - ❌ Do NOT peak-normalise STT audio — it amplifies room tone on quiet segments and makes Whisper hallucinate
 - ❌ Do NOT remove the wake-word gate from `/ai voice` — without it the bot replies to every sentence spoken in the room
 - ❌ Do NOT install `langchain` or `langgraph` — `langchain` v1 pulls in LangGraph; use `langchain-core` / `langchain-openai` only
-- ❌ Do NOT let an AI tool act on other people without the `ConfirmActionView` button, and check the **requester's** permissions, never just the bot's
+- ❌ Do NOT let an AI tool act on other people without the `ConfirmActionView` (its button, or the requester's own spoken yes/no), and check the **requester's** permissions, never just the bot's
 - ❌ Do NOT let an AI tool find, list or name a channel the requester cannot see — resolve through `utils/ai/tools/resolve.py`, which treats hidden channels as nonexistent
 - ❌ Do NOT use `OLLAMA_*` env vars — nothing reads them; the LLM settings are `OPENROUTER_*`

@@ -84,6 +84,7 @@ async def music_skip(ctx: Ctx, position: int = 0, song: str = ""):
     `song` (part of the title of a song already in the queue). Never give both.
     When the user says "that song" or "the one you just added", pass its title from the
     earlier [result] or tool result as `song`: a plain skip is only for "skip" on its own.
+    Plain skip: ข้าม, ข้ามเพลง, เปลี่ยนเพลง, เพลงต่อไป, เอาเพลงอื่น, next, skip.
     """
     if position and song:
         raise UserError("ระบุมาสองอย่างค่ะ", "ให้ระบุแค่ลำดับหรือชื่อเพลงอย่างใดอย่างหนึ่งนะคะ")
@@ -97,19 +98,33 @@ async def music_skip(ctx: Ctx, position: int = 0, song: str = ""):
 
 @tool(return_direct=True, response_format="content_and_artifact")
 async def music_stop(ctx: Ctx):
-    """Stop playback and clear the whole queue."""
+    """Stop playback AND clear the whole queue. This cannot be undone, so use it only when the user clearly wants everything gone.
+
+    Use for: ล้างคิว, ล้างเพลงทั้งหมด, เลิกเปิด, เลิกเล่น, เลิกฟัง, ไม่ฟังแล้ว, ปิดเพลง, ปิดเพลงเลย,
+    เอาออกให้หมด, stop everything, clear the queue, stop and clear, turn the music off.
+    NOT for a bare "หยุด", "หยุดก่อน", "หยุดแป๊บ", "หยุดเพลง" or "stop": those are music_pause.
+    """
     return await _run(ctx, "music_stop")
 
 
 @tool(return_direct=True, response_format="content_and_artifact")
 async def music_pause(ctx: Ctx):
-    """Pause the song that is playing. music_resume continues it."""
+    """Pause the song that is playing; music_resume continues it from the same spot. The queue is kept, so this is the safe choice when unsure.
+
+    Use for a bare or soft stop: หยุด, หยุดก่อน, หยุดแป๊บ, หยุดแปป, หยุดเพลง, หยุดเล่น, พักก่อน,
+    พักเพลง, รอแป๊บ, เงียบก่อน, ขอเงียบ, pause, stop, hold on, wait.
+    Only use music_stop when the user also asks to clear or end everything (ล้างคิว, เลิกเปิด, ปิดเพลง).
+    """
     return await _run(ctx, "music_pause")
 
 
 @tool(return_direct=True, response_format="content_and_artifact")
 async def music_resume(ctx: Ctx):
-    """Continue a song that was paused."""
+    """Continue a song that was paused.
+
+    Use for: เล่นต่อ, เปิดต่อ, เปิดเพลงต่อ, ต่อเลย, เอาต่อ, ไปต่อ, เล่นเลย, เล่นอีก, กลับมาเล่น,
+    resume, continue, unpause, keep playing. Needs a paused song: to start a new one use music_play.
+    """
     return await _run(ctx, "music_resume")
 
 
@@ -118,32 +133,54 @@ async def music_seek(timestamp: str, ctx: Ctx):
     """Jump to a time in the song that is playing.
 
     `timestamp` is seconds or minutes:seconds the user said ("90", "1:30", "1:02:03").
-    Convert spoken times yourself: "สองนาทีครึ่ง" is "2:30".
+    Convert spoken times yourself: "สองนาทีครึ่ง" is "2:30", "นาทีที่ 3" is "3:00".
+    To restart the song use "0": ตั้งแต่ต้น, เล่นใหม่, เล่นเพลงนี้ใหม่, เริ่มใหม่, from the start, restart.
+    Use for: ไปที่, กรอไปที่, เลื่อนไป, ข้ามไปที่นาที, seek, jump to.
     """
     return await _run(ctx, "music_seek", timestamp)
 
 
 @tool(return_direct=True, response_format="content_and_artifact")
 async def music_previous(ctx: Ctx):
-    """Go back to the song that played before the current one."""
+    """Go back to the song that played before the current one.
+
+    Use for: ย้อนกลับ, เพลงก่อนหน้า, เพลงที่แล้ว, เล่นเพลงที่แล้ว, กลับไปเพลงเมื่อกี้, previous, go back.
+    To restart the song that is playing now use music_seek with "0" instead.
+    """
     return await _run(ctx, "music_previous")
 
 
 @tool(return_direct=True, response_format="content_and_artifact")
 async def music_loop(mode: Literal["off", "track", "queue"], ctx: Ctx):
-    """Set looping: "track" repeats the current song, "queue" repeats the whole queue, "off" turns it off."""
+    """Set looping: "track" repeats the current song, "queue" repeats the whole queue, "off" turns it off.
+
+    "track": วนเพลงนี้, เล่นซ้ำเพลงนี้, ซ้ำเพลงนี้, เปิดซ้ำ, วนซ้ำ, loop this song, repeat this song.
+    "queue": วนทั้งคิว, วนทั้งหมด, เล่นซ้ำทั้งคิว, วนลิสต์, loop the queue, repeat all.
+    "off": เลิกวน, ไม่ต้องวน, ปิดวนซ้ำ, ปิดลูป, หยุดวน, stop looping, loop off.
+    """
     return await _run(ctx, "music_loop", mode)
 
 
 @tool(return_direct=True, response_format="content_and_artifact")
 async def music_volume(level: int, ctx: Ctx):
-    """Set the music volume from 0 to 100 (a percentage the user said, never a guess). For "a bit louder" or "quieter", start from the Volume in the [MUSIC] notice."""
+    """Set the music volume from 0 to 100.
+
+    A number the user said is used as it is ("เสียง 30" is 30). For relative requests start from
+    the Volume in the [MUSIC] notice: ดังขึ้น, เร่งเสียง, เพิ่มเสียง, louder is +15 (หน่อย: +10);
+    เบาลง, ลดเสียง, เสียงเบาหน่อย, quieter is -15. ดังสุด, max is 100. ปิดเสียง, mute is 0.
+    Clamp to 0-100. Changing the volume never pauses or stops the song.
+    """
     return await _run(ctx, "music_volume", str(level))
 
 
 @tool(return_direct=True, response_format="content_and_artifact")
 async def music_leave(ctx: Ctx):
-    """Leave the voice channel: stops the music, clears the queue and ends the voice chat. Only when the user asks her to leave."""
+    """Leave the voice channel: stops the music, clears the queue and ends the voice chat. Only when the user asks HER to leave the room.
+
+    Use for: ออกไป, ออกจากห้อง, ออกไปได้แล้ว, ไปได้แล้ว, ไปก่อนนะ, กลับไปได้แล้ว, เลิกคุย, บ๊ายบาย,
+    leave, go away, get out of the channel, bye. NOT for stopping or pausing the music (music_pause,
+    music_stop), and NOT for kicking someone else (voice_kick).
+    """
     if ctx.before_action is not None:
         # She cannot speak once she has left, so the goodbye comes first.
         await ctx.before_action("ไว้เจอกันใหม่นะคะ เซนเซย์" if ctx.voice else "")

@@ -12,6 +12,15 @@ from langchain_core.tools import BaseTool
 from utils.ai.context import YuukaContext
 from utils.ai.tools import actions, attendance, capture, discord_read, music, reminders, search, server, wait
 
+# Tools that only look something up. The same call twice in one reply would return the
+# same thing, so the agent runs it once. Never put an action here: "play X" twice is a
+# real request, and removing queue position 2 twice removes two songs.
+READ_ONLY = frozenset({
+    "web_search", "read_messages", "search_messages",
+    "voice_members", "user_info", "server_info",
+    "music_now_playing", "music_queue", "music_history",
+})
+
 _STATUS: dict[str, Callable[[dict], str]] = {
     **search.STATUS,
     **discord_read.STATUS,

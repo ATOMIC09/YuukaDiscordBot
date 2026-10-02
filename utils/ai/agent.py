@@ -21,6 +21,7 @@ messages) are all LangChain core.
 
 from __future__ import annotations
 
+import json
 from typing import Any, AsyncGenerator
 
 import openai
@@ -39,7 +40,7 @@ from utils.ai.context import YuukaContext
 from utils.ai.linker import ChannelLinker
 from utils.ai.models import chat_model
 from utils.ai.tool_calling import FABRICATED, ToolPromptChatModel
-from utils.ai.tools import music, status_line, tools_for
+from utils.ai.tools import READ_ONLY, music, status_line, tools_for
 from utils.ai_actions import ActionResult
 from utils.errors import UserError, UserWarning
 
@@ -189,9 +190,33 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
                 break
 
             conversation.append(AIMessage(content=reply.content, tool_calls=calls))
-            yield ("plan", [{"name": c["name"], "args": c["args"]} for c in calls])
+
+            # The model sometimes writes the same lookup several times in one reply
+            # (reading result 0 three times). Run it once: the others get a note.
+            seen: set[str] = set()
+            duplicate: set[int] = set()
+            for position, call in enumerate(calls):
+                if call["name"] not in READ_ONLY:
+                    continue
+                key = f"{call['name']}:{json.dumps(call['args'], sort_keys=True, ensure_ascii=False)}"
+                if key in seen:
+                    duplicate.add(position)
+                seen.add(key)
+            planned = [c for position, c in enumerate(calls) if position not in duplicate]
+            yield ("plan", [{"name": c["name"], "args": c["args"]} for c in planned])
+
             stop = False
-            for index, call in enumerate(calls):
+            index = -1  # position among the planned calls, which is what the "step" events number
+            for position, call in enumerate(calls):
+                if position in duplicate:
+                    logger.info(f"[Agent] Skipped a repeated call: {call['name']}({call['args']})")
+                    conversation.append(ToolMessage(
+                        "Same call as an earlier one in this reply: use that result.",
+                        tool_call_id=call["id"],
+                        name=call["name"],
+                    ))
+                    continue
+                index += 1
                 logger.info(f"[Agent] Tool call: {call['name']}({call['args']})")
                 yield ("step", (index, "running"))
                 yield ("status", status_line(call["name"], call["args"]))
@@ -222,9 +247,12 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
                 # Calls in one reply are a sequence ("queue it, then skip"): after a
                 # failure the rest no longer make sense.
                 if not worked:
-                    for offset, skipped in enumerate(calls[index + 1 :], start=index + 1):
+                    offset = index
+                    for later, skipped in enumerate(calls[position + 1 :], start=position + 1):
                         logger.info(f"[Agent] Skipped after a failure: {skipped['name']}")
-                        yield ("step", (offset, "skipped"))
+                        if later not in duplicate:
+                            offset += 1
+                            yield ("step", (offset, "skipped"))
                         conversation.append(ToolMessage(
                             "Not run: an earlier call in the same reply failed.",
                             tool_call_id=skipped["id"],

@@ -84,6 +84,13 @@ ACTIONS: dict[str, ActionSpec] = {
         command="/music stop",
         requires_cog=_PLAYER_COG,
     ),
+    "music_pause": ActionSpec(command="/music pause", requires_cog=_PLAYER_COG),
+    "music_resume": ActionSpec(command="/music resume", requires_cog=_PLAYER_COG),
+    "music_seek": ActionSpec(command="/music seek", requires_cog=_PLAYER_COG),
+    "music_previous": ActionSpec(command="/music previous", requires_cog=_PLAYER_COG),
+    "music_loop": ActionSpec(command="/music loop", requires_cog=_PLAYER_COG),
+    "music_volume": ActionSpec(command="/music volume", requires_cog=_PLAYER_COG),
+    "music_leave": ActionSpec(command="/music leave", requires_cog=_PLAYER_COG),
 }
 
 
@@ -197,10 +204,91 @@ async def _music_stop(
     )
 
 
+async def _music_pause(bot, guild, member, arg, text_channel) -> ActionResult:
+    await bot.get_cog(_PLAYER_COG).pause_playback(guild)
+    return ActionResult(
+        True, "หยุดเพลงชั่วคราวแล้วค่ะ", "หนูหยุดเพลงให้ก่อนนะคะ (・`ω´・)",
+        spoken_fallback="หยุดให้ก่อนนะคะ",
+    )
+
+
+async def _music_resume(bot, guild, member, arg, text_channel) -> ActionResult:
+    await bot.get_cog(_PLAYER_COG).resume_playback(guild)
+    return ActionResult(
+        True, "เล่นเพลงต่อแล้วค่ะ", "หนูเล่นเพลงต่อแล้วนะคะ! (๑>◡<๑)",
+        spoken_fallback="เล่นต่อแล้วค่ะ",
+    )
+
+
+async def _music_seek(bot, guild, member, arg, text_channel) -> ActionResult:
+    shown = await bot.get_cog(_PLAYER_COG).seek_to(guild, arg)
+    return ActionResult(
+        True, "เลื่อนเวลาแล้วค่ะ", f"เลื่อนไปที่ {shown} ให้แล้วนะคะ! (๑>◡<๑)",
+        spoken_fallback="เลื่อนให้แล้วค่ะ",
+    )
+
+
+async def _music_previous(bot, guild, member, arg, text_channel) -> ActionResult:
+    await bot.get_cog(_PLAYER_COG).rewind_playback(guild)
+    return ActionResult(
+        True, "ย้อนกลับเพลงแล้วค่ะ", "หนูย้อนกลับไปเพลงก่อนหน้าให้แล้วนะคะ! (๑>◡<๑)",
+        spoken_fallback="ย้อนกลับให้แล้วค่ะ",
+    )
+
+
+_LOOP_TEXT = {
+    "off": ("ปิดการวนลูปแล้วค่ะ", "ปิดการวนลูปแล้วนะคะ (・`ω´・)"),
+    "track": ("วนลูปเพลงนี้แล้วค่ะ", "จะวนลูปเพลงนี้ไปเรื่อยๆ เลยค่ะ! (๑>◡<๑)"),
+    "queue": ("วนลูปทั้งคิวแล้วค่ะ", "จะวนลูปทั้งคิวเลยนะคะ! (・`ω´・)"),
+}
+
+
+async def _music_loop(bot, guild, member, arg, text_channel) -> ActionResult:
+    await bot.get_cog(_PLAYER_COG).set_loop(guild, arg)
+    title, detail = _LOOP_TEXT[arg]
+    return ActionResult(True, title, detail, spoken_fallback=title)
+
+
+async def _music_volume(bot, guild, member, arg, text_channel) -> ActionResult:
+    try:
+        level = int(arg)
+    except ValueError:
+        raise UserError("ระดับเสียงไม่ถูกต้องค่ะ", "บอกระดับเสียงเป็นตัวเลข 0 ถึง 100 นะคะ (´・ω・)")
+    await bot.get_cog(_PLAYER_COG).set_volume(guild, level)
+    return ActionResult(
+        True, f"ปรับเสียงเป็น {level}% แล้วค่ะ", f"ปรับเสียงเป็น {level}% แล้วนะคะ (・`ω´・)",
+        spoken_fallback=f"ปรับเสียงเป็น {level} เปอร์เซ็นต์แล้วค่ะ",
+    )
+
+
+async def _music_leave(bot, guild, member, arg, text_channel) -> ActionResult:
+    player = bot.get_cog(_PLAYER_COG)
+    if guild.voice_client is None:
+        await player.leave_voice(guild)  # raises the usual "not in a room" refusal
+
+    # End a running /ai voice session first and on purpose. Otherwise its
+    # disconnect handler would announce that she was kicked out.
+    voice_cog = bot.get_cog("AI Voice Chat")
+    if voice_cog is not None and guild.id in voice_cog.active_sessions:
+        await voice_cog.stop_session(guild.id)
+    if guild.voice_client is not None:
+        await player.leave_voice(guild)
+
+    # Nothing is spoken afterwards: she is no longer in the room to say it.
+    return ActionResult(True, "ออกจากห้องเสียงแล้วค่ะ", "หนูออกจากห้องเสียงแล้วนะคะ ไว้เจอกันใหม่น้า! (・`ω´・)")
+
+
 _HANDLERS: dict[str, Callable[..., Awaitable[ActionResult]]] = {
     "music_play": _music_play,
     "music_skip": _music_skip,
     "music_stop": _music_stop,
+    "music_pause": _music_pause,
+    "music_resume": _music_resume,
+    "music_seek": _music_seek,
+    "music_previous": _music_previous,
+    "music_loop": _music_loop,
+    "music_volume": _music_volume,
+    "music_leave": _music_leave,
 }
 
 

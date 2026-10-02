@@ -351,7 +351,9 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 - yt-dlp resolves the stream; playback goes through `BufferedAudioSource` / `SeamlessCrossfadeSource`.
   The bot leaves after 180 s idle.
 - Other code uses the public methods — `enqueue_query`, `skip_current`, `stop_playback`,
-  `remove_from_queue` — rather than editing `AudioState` directly.
+  `remove_from_queue`, `pause_playback`, `resume_playback`, `seek_to`, `rewind_playback`, `set_loop`,
+  `set_volume`, `leave_voice` — rather than editing `AudioState` directly. The slash commands are thin
+  wrappers over them and raise `UserError` for refusals, so the AI path words them the same way.
 - **One `VoiceClient` per guild is shared with `/ai voice`.** `vc.play()` raises while something is
   playing, so Yuuka can't speak during a track (she posts text instead), and a track must not start
   while she is speaking (`AIVoiceChatCog._await_speech`).
@@ -374,7 +376,7 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 |---|---|
 | `search.py` | `web_search` |
 | `discord_read.py` | `read_messages`, `search_messages` — permissions are the **requester's**, not the bot's (private threads included). Channels they read go in `ctx.channels_used`, and `utils/ai/linker.py` turns her `#name` for them into a clickable `<#id>` (text only; a mention read aloud is digits) |
-| `music.py` | `music_play/skip/stop` (via `ai_actions.run_action`; `music_skip` takes a queue `position` or a `song` name, like `/music skip <position>`), `music_now_playing/queue/history/remove` |
+| `music.py` | `music_play/skip/stop/pause/resume/seek/previous/loop/volume/leave` (via `ai_actions.run_action`; `music_skip` takes a queue `position` or a `song` name, like `/music skip <position>`), `music_now_playing/queue/history/remove`. Volume, loop and pause state ride in the prompt's `[MUSIC]` notice. `music_leave` says goodbye first (she cannot speak once gone) and ends a running `/ai voice` session through `stop_session`, so no "kicked" embed appears. `/music local` has no tool: it needs an attachment |
 | `server.py` | `voice_members`, `user_info`, `server_info` — never show who is in a voice channel the requester cannot see |
 | `actions.py` | `voice_kick`, `voice_disconnect_timer` — propose only; the `confirm.py` button (requester only) or the requester's spoken yes/no runs them. Offered to anyone in a guild: a missing permission or not being in voice is refused by the tool, because hiding it made the model claim success without calling anything |
 | `attendance.py` | `attendance`, `absent` — the `/attendance` and `/absent` reports (`utils/attendance.py`, shared with the commands), posted with their CSV and logged. Read-only, so no confirm button; refused with the reason when the requester is not in a voice channel. Tool results name at most 40 people, the embed and CSV have everyone |

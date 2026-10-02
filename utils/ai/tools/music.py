@@ -6,6 +6,8 @@ Music control as tools. They run the same code as the /music commands through
 
 from __future__ import annotations
 
+from typing import Literal
+
 from langchain_core.tools import tool
 from rapidfuzz import fuzz
 
@@ -99,6 +101,55 @@ async def music_stop(ctx: Ctx):
     return await _run(ctx, "music_stop")
 
 
+@tool(return_direct=True, response_format="content_and_artifact")
+async def music_pause(ctx: Ctx):
+    """Pause the song that is playing. music_resume continues it."""
+    return await _run(ctx, "music_pause")
+
+
+@tool(return_direct=True, response_format="content_and_artifact")
+async def music_resume(ctx: Ctx):
+    """Continue a song that was paused."""
+    return await _run(ctx, "music_resume")
+
+
+@tool(return_direct=True, response_format="content_and_artifact")
+async def music_seek(timestamp: str, ctx: Ctx):
+    """Jump to a time in the song that is playing.
+
+    `timestamp` is seconds or minutes:seconds the user said ("90", "1:30", "1:02:03").
+    Convert spoken times yourself: "สองนาทีครึ่ง" is "2:30".
+    """
+    return await _run(ctx, "music_seek", timestamp)
+
+
+@tool(return_direct=True, response_format="content_and_artifact")
+async def music_previous(ctx: Ctx):
+    """Go back to the song that played before the current one."""
+    return await _run(ctx, "music_previous")
+
+
+@tool(return_direct=True, response_format="content_and_artifact")
+async def music_loop(mode: Literal["off", "track", "queue"], ctx: Ctx):
+    """Set looping: "track" repeats the current song, "queue" repeats the whole queue, "off" turns it off."""
+    return await _run(ctx, "music_loop", mode)
+
+
+@tool(return_direct=True, response_format="content_and_artifact")
+async def music_volume(level: int, ctx: Ctx):
+    """Set the music volume from 0 to 100 (a percentage the user said, never a guess). For "a bit louder" or "quieter", start from the Volume in the [MUSIC] notice."""
+    return await _run(ctx, "music_volume", str(level))
+
+
+@tool(return_direct=True, response_format="content_and_artifact")
+async def music_leave(ctx: Ctx):
+    """Leave the voice channel: stops the music, clears the queue and ends the voice chat. Only when the user asks her to leave."""
+    if ctx.before_action is not None:
+        # She cannot speak once she has left, so the goodbye comes first.
+        await ctx.before_action("ไว้เจอกันใหม่นะคะ เซนเซย์" if ctx.voice else "")
+    return await _run(ctx, "music_leave")
+
+
 def _player(ctx: YuukaContext):
     return ctx.bot.get_cog("PlayerCog")
 
@@ -114,9 +165,12 @@ def now_playing_notice(ctx: YuukaContext) -> str:
     if state.current is None:
         return "\n\n[MUSIC] Nothing is playing right now."
     waiting = len(state.queue) + (1 if state.crossfade_next else 0)
+    paused = state.voice_client is not None and state.voice_client.is_paused()
     return (
-        f"\n\n[MUSIC] Playing right now: {state.current.title} <{state.current.original_url}>. "
-        f"Songs waiting in the queue: {waiting}."
+        f"\n\n[MUSIC] {'Paused' if paused else 'Playing right now'}: "
+        f"{state.current.title} <{state.current.original_url}>. "
+        f"Songs waiting in the queue: {waiting}. "
+        f"Volume: {round(state.volume * 100)}%. Loop: {state.loop_mode}."
     )
 
 
@@ -175,7 +229,11 @@ async def music_remove(position: int, ctx: Ctx) -> str:
     return f"Removed: {_describe(track)}"
 
 
-TOOLS = [music_play, music_skip, music_stop, music_now_playing, music_queue, music_history, music_remove]
+TOOLS = [
+    music_play, music_skip, music_stop, music_pause, music_resume, music_seek, music_previous,
+    music_loop, music_volume, music_leave,
+    music_now_playing, music_queue, music_history, music_remove,
+]
 
 # The command embed already tells the user what is happening.
 STATUS: dict = {}

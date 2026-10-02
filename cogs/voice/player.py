@@ -1801,6 +1801,105 @@ class PlayerCog(commands.Cog):
             await self._update_controller(state, self._build_player_embed(state.current, state))
         return track
 
+    # The commands below are thin wrappers over these. The AI path
+    # (`utils.ai_actions`) calls them too, so a refusal is worded once.
+
+    async def _refresh_controller(self, state: AudioState) -> None:
+        if state.current:
+            await self._update_controller(state, self._build_player_embed(state.current, state))
+
+    async def pause_playback(self, guild: discord.Guild) -> None:
+        vc = guild.voice_client
+        if not vc or not vc.is_playing():
+            raise UserError("ไม่มีเพลงเล่นอยู่นะคะ", "ตอนนี้หนูไม่ได้เปิดเพลงอะไรอยู่เลยค่ะ (´・ω・)")
+
+        vc.pause()
+        state = self.get_state(guild.id)
+        self._mark_playback_paused(state)
+        await self._refresh_controller(state)
+
+    async def resume_playback(self, guild: discord.Guild) -> None:
+        vc = guild.voice_client
+        if not vc or not vc.is_paused():
+            raise UserError("เพลงไม่ได้หยุดอยู่นะคะ", "เพลงก็เล่นอยู่ปกตินี่นา หรือไม่ได้เปิดเพลงน้า (´-ω-`)")
+
+        vc.resume()
+        state = self.get_state(guild.id)
+        self._mark_playback_resumed(state)
+        # Arming is refused while paused, so a crossfade toggled on during the
+        # pause would silently miss this track. Retry now.
+        self._request_crossfade_prepare(state)
+        await self._refresh_controller(state)
+
+    async def seek_to(self, guild: discord.Guild, timestamp: str, on_valid=None) -> str:
+        """Jump to `timestamp` ("90", "1:30"). Returns the position as shown to users.
+
+        `on_valid` is awaited once the request is known to be fine and before the
+        slow part, so the slash command can defer only then and keep its refusals
+        ephemeral."""
+        state = self.get_state(guild.id)
+        track = state.current
+        if not track or not self._can_seek(state):
+            raise UserError("เลื่อนเวลาไม่ได้ค่ะ", "ตอนนี้ไม่มีเพลงที่เลื่อนเวลาได้อยู่เลยค่ะ (´・ω・)")
+
+        target = parse_timestamp(timestamp)
+        if target is None:
+            raise UserError("รูปแบบเวลาไม่ถูกต้องค่ะ", "ลองพิมพ์แบบ `90`, `1:30` หรือ `1:02:03` ดูนะคะ (´・ω・)")
+        if target >= track.duration:
+            raise UserError(
+                "เวลาเกินความยาวเพลงค่ะ",
+                f"เพลงนี้ยาว {format_duration(track.duration)} เท่านั้นนะคะ (´-ω-`)",
+            )
+        if state.seek_lock.locked():
+            raise UserError("รอสักครู่นะคะ", "หนูกำลังเลื่อนเพลงอยู่ค่ะ (´・ω・)")
+
+        if on_valid is not None:
+            await on_valid()
+        async with state.seek_lock:
+            ok = await self._seek_async(state, target)
+        if not ok:
+            raise UserError("เลื่อนเวลาไม่สำเร็จค่ะ", "เพลงเปลี่ยนไปก่อนที่หนูจะเลื่อนเสร็จค่ะ (´-ω-`)")
+
+        await self._refresh_controller(state)
+        return format_duration(int(target))
+
+    async def rewind_playback(self, guild: discord.Guild) -> None:
+        if not await self._rewind_async(guild.id):
+            raise UserError("ย้อนกลับไม่ได้ค่ะ", "ไม่มีเพลงก่อนหน้าให้ย้อนกลับ หรือหนูไม่ได้อยู่ในห้องเสียงเลยค่ะ (´・ω・)")
+
+    async def set_loop(self, guild: discord.Guild, mode: str) -> None:
+        if mode not in ("off", "track", "queue"):
+            raise UserError("โหมดวนลูปไม่ถูกต้องค่ะ", "เลือกได้แค่ off, track หรือ queue นะคะ (´・ω・)")
+        state = self.get_state(guild.id)
+        state.loop_mode = mode
+        await self._refresh_controller(state)
+
+    async def set_volume(self, guild: discord.Guild, level: int) -> None:
+        if not 0 <= level <= 100:
+            raise UserError("ระดับเสียงไม่ถูกต้องค่ะ", "ปรับเสียงได้ตั้งแต่ 0 ถึง 100 นะคะ (´・ω・)")
+        state = self.get_state(guild.id)
+        state.volume = level / 100.0
+        if state.active_audio_source:
+            state.active_audio_source.volume = state.volume
+        await self._refresh_controller(state)
+
+    async def leave_voice(self, guild: discord.Guild) -> None:
+        vc = guild.voice_client
+        if not vc:
+            raise UserError("หนูไม่ได้อยู่ในห้องนะคะ", "หนูไม่ได้อยู่ในห้องเสียงไหนเลยนะคะ (´-ω-`)")
+
+        state = self.get_state(guild.id)
+        self._clear_crossfade(state)
+        state.active_audio_source = None
+        state.queue.clear()
+        state.current = None
+        state.history.clear()
+        state.forward_history.clear()
+        state.loop_mode = "off"
+
+        await vc.disconnect()
+        state.voice_client = None
+
     @staticmethod
     def build_skip_embed(next_track: Track | None) -> discord.Embed:
         """The 'skipped, here is what is next' embed, shared by slash and AI paths."""
@@ -1825,21 +1924,7 @@ class PlayerCog(commands.Cog):
 
     @music.command(name="leave", description="👋 ออกจากห้องเสียง")
     async def leave(self, ctx: discord.ApplicationContext):
-        if not ctx.voice_client:
-            raise UserError("หนูไม่ได้อยู่ในห้องนะคะ", "หนูไม่ได้อยู่ในห้องเสียงไหนเลยนะคะ (´-ω-`)")
-
-        state = self.get_state(ctx.guild.id)
-        self._clear_crossfade(state)
-        state.active_audio_source = None
-        state.queue.clear()
-        state.current = None
-        state.history.clear()
-        state.forward_history.clear()
-        state.loop_mode = "off"
-
-        await ctx.voice_client.disconnect()
-        state.voice_client = None
-
+        await self.leave_voice(ctx.guild)
         await ctx.respond(embed=success_embed("ไปแล้วค่า~", "หนูออกจากห้องเสียงแล้วนะคะ ไว้เจอกันใหม่น้า! (・`ω´・)"))
 
     @music.command(name="local", description="📂 เล่นเพลงจากไฟล์แนบหรือประวัติแชท")
@@ -1984,35 +2069,12 @@ class PlayerCog(commands.Cog):
 
     @music.command(name="pause", description="⏸️ หยุดเพลงชั่วคราว")
     async def pause(self, ctx: discord.ApplicationContext):
-        if not ctx.voice_client or not ctx.voice_client.is_playing():
-            raise UserError("ไม่มีเพลงเล่นอยู่นะคะ", "ตอนนี้หนูไม่ได้เปิดเพลงอะไรอยู่เลยค่ะ (´・ω・)")
-        
-        ctx.voice_client.pause()
-        
-        state = self.get_state(ctx.guild.id)
-        self._mark_playback_paused(state)
-        if state.current:
-            embed = self._build_player_embed(state.current, state)
-            await self._update_controller(state, embed)
-            
+        await self.pause_playback(ctx.guild)
         await ctx.respond(embed=info_embed("⏸️ หยุดเพลงชั่วคราว", "หนูหยุดเพลงให้ก่อนนะคะ (・`ω´・)"))
 
     @music.command(name="resume", description="⏯️ เล่นเพลงต่อ")
     async def resume(self, ctx: discord.ApplicationContext):
-        if not ctx.voice_client or not ctx.voice_client.is_paused():
-            raise UserError("เพลงไม่ได้หยุดอยู่นะคะ", "เพลงก็เล่นอยู่ปกตินี่นา หรือไม่ได้เปิดเพลงน้า (´-ω-`)")
-            
-        ctx.voice_client.resume()
-        
-        state = self.get_state(ctx.guild.id)
-        self._mark_playback_resumed(state)
-        # Arming is refused while paused, so a crossfade toggled on during the
-        # pause would silently miss this track. Retry now.
-        self._request_crossfade_prepare(state)
-        if state.current:
-            embed = self._build_player_embed(state.current, state)
-            await self._update_controller(state, embed)
-
+        await self.resume_playback(ctx.guild)
         await ctx.respond(embed=info_embed("▶️ เล่นเพลงต่อ", "หนูเล่นเพลงต่อแล้วนะคะ! (๑>◡<๑)"))
 
     @music.command(name="stop", description="⏹️ หยุดเพลงและล้างคิวทั้งหมด")
@@ -2028,59 +2090,18 @@ class PlayerCog(commands.Cog):
     @music.command(name="seek", description="⏩ เลื่อนไปยังเวลาที่ต้องการ")
     @discord.option("timestamp", description="เช่น 90, 1:30 หรือ 1:02:03")
     async def seek(self, ctx: discord.ApplicationContext, timestamp: str):
-        state = self.get_state(ctx.guild.id)
-        track = state.current
-        if not track or not self._can_seek(state):
-            return await ctx.respond(
-                embed=error_embed("เลื่อนเวลาไม่ได้ค่ะ", "ตอนนี้ไม่มีเพลงที่เลื่อนเวลาได้อยู่เลยค่ะ (´・ω・)"),
-                ephemeral=True
-            )
-
-        target = parse_timestamp(timestamp)
-        if target is None:
-            return await ctx.respond(
-                embed=error_embed("รูปแบบเวลาไม่ถูกต้องค่ะ", "ลองพิมพ์แบบ `90`, `1:30` หรือ `1:02:03` ดูนะคะ (´・ω・)"),
-                ephemeral=True
-            )
-
-        duration = track.duration
-        if target >= duration:
-            return await ctx.respond(
-                embed=error_embed(
-                    "เวลาเกินความยาวเพลงค่ะ",
-                    f"เพลงนี้ยาว {format_duration(duration)} เท่านั้นนะคะ (´-ω-`)",
-                ),
-                ephemeral=True
-            )
-        if state.seek_lock.locked():
-            return await ctx.respond(
-                embed=error_embed("รอสักครู่นะคะ", "หนูกำลังเลื่อนเพลงอยู่ค่ะ (´・ω・)"),
-                ephemeral=True
-            )
-
-        await ctx.defer()
-        async with state.seek_lock:
-            ok = await self._seek_async(state, target)
-
-        if not ok:
-            return await ctx.respond(
-                embed=error_embed("เลื่อนเวลาไม่สำเร็จค่ะ", "เพลงเปลี่ยนไปก่อนที่หนูจะเลื่อนเสร็จค่ะ (´-ω-`)"),
-                ephemeral=True
-            )
-
-        if state.current:
-            await self._update_controller(state, self._build_player_embed(state.current, state))
+        try:
+            shown = await self.seek_to(ctx.guild, timestamp, on_valid=ctx.defer)
+        except UserError as exc:
+            return await ctx.respond(embed=error_embed(exc.title, exc.description), ephemeral=True)
 
         await ctx.respond(
-            embed=success_embed("⏩ เลื่อนเวลาแล้ว", f"เลื่อนไปที่ {format_duration(int(target))} ให้แล้วนะคะ! (๑>◡<๑)")
+            embed=success_embed("⏩ เลื่อนเวลาแล้ว", f"เลื่อนไปที่ {shown} ให้แล้วนะคะ! (๑>◡<๑)")
         )
 
     @music.command(name="previous", description="⏮️ ย้อนกลับไปเพลงก่อนหน้า")
     async def previous(self, ctx: discord.ApplicationContext):
-        ok = await self._rewind_async(ctx.guild.id)
-        if not ok:
-            raise UserError("ย้อนกลับไม่ได้ค่ะ", "ไม่มีเพลงก่อนหน้าให้ย้อนกลับ หรือหนูไม่ได้อยู่ในห้องเสียงเลยค่ะ (´・ω・)")
-
+        await self.rewind_playback(ctx.guild)
         await ctx.respond(embed=success_embed("⏮️ ย้อนกลับเพลง", "หนูย้อนกลับไปเพลงก่อนหน้าให้แล้วนะคะ! (๑>◡<๑)"))
 
     @music.command(name="nowplaying", description="🎵 ดูเพลงที่กำลังเล่นอยู่")
@@ -2095,20 +2116,15 @@ class PlayerCog(commands.Cog):
 
     @music.command(name="loop", description="🔁 ตั้งค่าการวนลูปเพลง")
     async def loop(self, ctx: discord.ApplicationContext, mode: discord.Option(str, choices=["off", "track", "queue"])):
-        state = self.get_state(ctx.guild.id)
-        state.loop_mode = mode
-        
+        await self.set_loop(ctx.guild, mode)
+
         if mode == "off":
             msg = "ปิดการวนลูปแล้วนะคะ (・`ω´・)"
         elif mode == "track":
             msg = "จะวนลูปเพลงนี้ไปเรื่อยๆ เลยค่ะ! (๑>◡<๑)"
         else:
             msg = "จะวนลูปทั้งคิวเลยนะคะ! (・`ω´・)"
-            
-        if state.current:
-            embed = self._build_player_embed(state.current, state)
-            await self._update_controller(state, embed)
-            
+
         await ctx.respond(embed=success_embed("ตั้งค่าลูป", msg))
 
     @music.command(name="queue", description="📜 ดูคิวเพลงทั้งหมด")
@@ -2133,16 +2149,7 @@ class PlayerCog(commands.Cog):
 
     @music.command(name="volume", description="🔊 ปรับระดับเสียง (0-100)")
     async def volume(self, ctx: discord.ApplicationContext, level: discord.Option(int, min_value=0, max_value=100)):
-        state = self.get_state(ctx.guild.id)
-        state.volume = level / 100.0
-        
-        if state.active_audio_source:
-            state.active_audio_source.volume = state.volume
-
-        if state.current:
-            embed = self._build_player_embed(state.current, state)
-            await self._update_controller(state, embed)
-                
+        await self.set_volume(ctx.guild, level)
         await ctx.respond(embed=success_embed("🔉 ปรับเสียง", f"ปรับเสียงเป็น {level}% แล้วนะคะ (・`ω´・)"))
 
 

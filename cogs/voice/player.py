@@ -597,7 +597,8 @@ class PlayerControls(discord.ui.View):
 
     @discord.ui.button(style=discord.ButtonStyle.secondary, emoji="⏭️", row=0)
     async def skip(self, button: discord.ui.Button, interaction: discord.Interaction):
-        if not self.state.voice_client or not self.state.voice_client.is_playing():
+        vc = self.state.voice_client
+        if not vc or not (vc.is_playing() or vc.is_paused()):
             return await interaction.response.send_message("ไม่มีเพลงเล่นอยู่ให้ข้ามนะคะ", ephemeral=True)
         
         self.state.skip_request = True
@@ -655,8 +656,9 @@ class PlayerControls(discord.ui.View):
         self.state.loop_mode = "off"
         self.state.last_controller_message = None
 
-        if self.state.voice_client and self.state.voice_client.is_playing():
-            self.state.voice_client.stop()
+        vc = self.state.voice_client
+        if vc and (vc.is_playing() or vc.is_paused()):
+            vc.stop()
 
         try:
             embeds = interaction.message.embeds
@@ -1696,7 +1698,9 @@ class PlayerCog(commands.Cog):
         else:
             state.voice_client = vc
 
-        if not state.current or not state.voice_client.is_playing():
+        if not state.current or not (
+            state.voice_client.is_playing() or state.voice_client.is_paused()
+        ):
             # if playing is stopped, start it
             self.bot.loop.create_task(self._play_next_async(guild.id, auto_send=True))
         elif state.crossfade_enabled:
@@ -1723,8 +1727,11 @@ class PlayerCog(commands.Cog):
                 pass
             state.last_controller_message = None
 
-        if guild.voice_client and guild.voice_client.is_playing():
-            guild.voice_client.stop()
+        # Paused counts too: `is_playing()` is false while paused, and a paused player
+        # that is never stopped keeps the VoiceClient busy for good.
+        vc = guild.voice_client
+        if vc and (vc.is_playing() or vc.is_paused()):
+            vc.stop()
 
     async def skip_current(self, guild: discord.Guild, position: int | None = None) -> Track | None:
         """Skip the playing track (or jump `position` entries in). Returns what plays next.
@@ -1734,7 +1741,7 @@ class PlayerCog(commands.Cog):
         catches it to build its own embed.
         """
         vc = guild.voice_client
-        if not vc or not vc.is_playing():
+        if not vc or not (vc.is_playing() or vc.is_paused()):
             raise UserError(
                 "ไม่มีเพลงเล่นอยู่นะคะ",
                 "ตอนนี้หนูไม่ได้เปิดเพลงอะไรอยู่เลยค่ะ ข้ามไม่ได้น้า (´・ω・)",
@@ -2026,7 +2033,9 @@ class PlayerCog(commands.Cog):
         else:
             state.voice_client = ctx.guild.voice_client
 
-        if not state.current or not state.voice_client.is_playing():
+        if not state.current or not (
+            state.voice_client.is_playing() or state.voice_client.is_paused()
+        ):
             self.bot.loop.create_task(self._play_next_async(ctx.guild.id, auto_send=True))
         else:
             display_track = state.current if state.current else track

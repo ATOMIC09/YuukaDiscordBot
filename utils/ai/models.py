@@ -22,6 +22,8 @@ def chat_model() -> ChatOpenAI:
             "HTTP-Referer": "https://github.com/ATOMIC09/YuukaDiscordBot",
             "X-Title": "Yuuka-Bot",
         },
+        # OpenRouter's own field. langchain's `max_tokens` is sent as `max_completion_tokens`.
+        extra_body={"max_tokens": config.openrouter_max_tokens},
         timeout=180,
         max_retries=1,
     )

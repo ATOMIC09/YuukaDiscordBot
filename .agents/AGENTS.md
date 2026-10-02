@@ -387,7 +387,7 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 | `capture.py` | `record_start/stop`, `transcribe_start/stop` — the `/record` and `/transcribe` commands, through the same `begin_*`/`end_*` methods as the slash commands. No confirmation (deliberate); starting also posts the command's "started" embed so the room can see it. `/record stop`'s files are delivered in a background task |
 | `reminders.py` | `remind_me`, `notify_when_joins_voice` — timers/listeners in `scheduler.py`, **0 LLM requests** while waiting or firing |
 
-- **Token budget** (free model: 20 RPM, 50/day without credits): a plain chat is 1 request, a tool turn 2, worst case `AGENT_MAX_ROUNDS`. Button presses, reminders and watches never call the model.
+- **Token budget** (free model: 20 RPM, 50/day without credits): a plain chat is 1 request, a tool turn 2, worst case `AGENT_MAX_ROUNDS`. Button presses, reminders and watches never call the model. Every request carries `max_tokens` = `OPENROUTER_MAX_TOKENS` (4096): without it OpenRouter reserves the model's whole context for the reply and rejects the request when the key's credit cannot cover that.
 - **State**: nothing is persisted (stateless Docker container); pending reminders are lost on restart by design.
 - **History squashing**: consecutive messages with the same `role` are merged (required by some instruct models).
 

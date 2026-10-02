@@ -24,6 +24,7 @@ class Config:
     bot_token: str
     openrouter_api_key: str
     openrouter_model: str
+    openrouter_max_tokens: int
     openrouter_system_prompt: str
     max_history_length: int
     read_messages_max: int
@@ -102,6 +103,9 @@ class Config:
             )
 
         openrouter_model = os.getenv("OPENROUTER_MODEL", "openrouter/free")
+        # Without a cap OpenRouter reserves the model's whole context for the reply and
+        # refuses the request when the key's credit cannot cover that. Replies are short.
+        openrouter_max_tokens = max(256, int(os.getenv("OPENROUTER_MAX_TOKENS", "4096")))
 
         openrouter_system_prompt = os.getenv("OPENROUTER_SYSTEM_PROMPT")
         if not openrouter_system_prompt:
@@ -141,6 +145,7 @@ class Config:
             log_level=log_level,
             openrouter_api_key=openrouter_api_key,
             openrouter_model=openrouter_model,
+            openrouter_max_tokens=openrouter_max_tokens,
             openrouter_system_prompt=openrouter_system_prompt,
             max_history_length=max_history_length,
             read_messages_max=read_messages_max,

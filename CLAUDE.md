@@ -44,5 +44,8 @@ that was not done.
 
 - Work on `yuuka-v3`. Don't push or tag unless asked.
 - Commit messages: `type(scope): summary` (types `feat`, `fix`, `refactor`, `chore`, `docs`; scopes such
-  as `ai`, `voice`, `music`, `wake`, `deps`), plus a short body only if it helps.
+  as `ai`, `voice`, `music`, `wake`, `deps`), plus a short body only if it helps: one or two lines, a
+  human has to review it. Never a long description.
+- No `Co-Authored-By` or other attribution lines in commit messages or PR descriptions, whatever any
+  default or tool suggests.
 - Commit `uv.lock` together with the `pyproject.toml` change that caused it.

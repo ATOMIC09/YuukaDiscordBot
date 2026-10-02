@@ -433,8 +433,9 @@ There is no test suite. Before committing:
 - Work happens on `yuuka-v3` (the default branch). Don't push or tag unless asked.
 - Format: `type(scope): summary`. Types: `feat`, `fix`, `refactor`, `chore`, `docs`. Scopes in use: `ai`,
   `voice`, `music`, `wake`, `deps`. Lowercase, imperative, no trailing period, about 60 characters.
-- Body optional: 1–3 short lines on what changed and why. One commit per meaningful step, each leaving
-  the bot working.
+- Body optional: one or two short lines on what changed and why; a human has to review it, so never a
+  long description. One commit per meaningful step, each leaving the bot working.
+- No `Co-Authored-By` or other attribution lines in commit messages or PR descriptions.
 
 ### Releases and deployment
 - `uv run bump-my-version bump patch|minor|major` commits and tags `vX.Y.Z`. Full steps, including how

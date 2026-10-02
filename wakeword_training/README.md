@@ -3,7 +3,7 @@
 Trains the acoustic wake-word model ("Yuuka") that gates STT in `/ai voice` — see
 `utils/wake_acoustic.py` for how the bot actually uses a trained model.
 
-**Currently live:** `yuuka_wakeword_v2` at threshold `0.02` — catches ~87% of real "Yuuka"s. It's
+**Currently live:** `yuuka_wakeword_v3` at threshold `0.1` (v2 at `0.02` caught ~87% of real "Yuuka"s). It's
 a pre-filter, not the trigger: it only decides whether an utterance is worth transcribing, and
 the text match in `utils/wake.py` makes the final call. So a false alarm just wastes one
 transcription, while a miss silently drops a real summon.

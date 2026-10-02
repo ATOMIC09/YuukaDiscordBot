@@ -5,8 +5,10 @@ worth transcribing at all, ahead of utils/wake.py's text match.
 
 Why a pre-filter and not the trigger itself
 --------------------------------------------
-The shipped model (yuuka_wakeword_v2, see wakeword_training/TRAINING.md) runs
-at about 87% recall and 43 false accepts/hour on its held-out set. That is fine
+The shipped model (yuuka_wakeword_v3, see wakeword_training/TRAINING.md) is
+used as a cheap gate, not a trigger. Its predecessor ran at about 87% recall and
+43 false accepts/hour on its held-out set; v3 has no such figures for the bot's
+threshold yet. A gate with that profile is fine
 for a "is this worth paying for STT" gate — a false accept just costs one
 wasted transcription that utils/wake.py's text match silently drops. It would
 not be fine as the sole trigger: the LLM would end up answering unrelated

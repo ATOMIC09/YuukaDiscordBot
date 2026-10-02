@@ -80,8 +80,8 @@ class Config:
 
     # ── Acoustic wake-word pre-filter (/ai voice only) ────────────────────
     stt_wake_acoustic_enabled: bool = True
-    stt_wake_acoustic_model_path: str = "models/wake_word/yuuka_wakeword_v2.onnx"
-    stt_wake_acoustic_threshold: float = 0.02
+    stt_wake_acoustic_model_path: str = "models/wake_word/yuuka_wakeword_v3.onnx"
+    stt_wake_acoustic_threshold: float = 0.1
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -176,9 +176,9 @@ class Config:
             not in ("false", "0", "no"),
             stt_wake_acoustic_model_path=os.getenv(
                 "STT_WAKE_ACOUSTIC_MODEL_PATH",
-                "models/wake_word/yuuka_wakeword_v2.onnx",
+                "models/wake_word/yuuka_wakeword_v3.onnx",
             ),
-            stt_wake_acoustic_threshold=float(os.getenv("STT_WAKE_ACOUSTIC_THRESHOLD", "0.02")),
+            stt_wake_acoustic_threshold=float(os.getenv("STT_WAKE_ACOUSTIC_THRESHOLD", "0.1")),
         )
 
 

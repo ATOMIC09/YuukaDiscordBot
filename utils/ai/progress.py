@@ -16,6 +16,7 @@ one-line answer never shows it.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from typing import Any
 
@@ -29,7 +30,19 @@ SHOW_AFTER_S = 3.0
 # A plan this long is a long task however fast the first step is.
 SHOW_PLAN_AT = 2
 
+# Animated, like the search icons in tools/labels.py.
+_THINKING = "<a:ThinkingSpinning:1528490272588038284>"
+
 _ICONS = {"waiting": "⏳", "running": "🔄", "ok": "✅", "failed": "❌", "skipped": "➖"}
+
+# `<a:Name:id>` is the animated emoji and `<:Name:id>` is the same one shown still. Only the
+# step that is running (and the thinking line) should move: a finished step that keeps
+# spinning looks as if it were still working.
+_ANIMATED = re.compile(r"<a:(\w+:\d+)>")
+
+
+def _still(text: str) -> str:
+    return _ANIMATED.sub(r"<:\1>", text)
 
 
 class TurnProgress:
@@ -97,13 +110,17 @@ class TurnProgress:
         task.add_done_callback(self._tasks.discard)
 
     def _embed(self) -> discord.Embed:
-        lines = [f"{_ICONS[state]} {label}" for label, state in self._steps]
+        lines = [
+            f"{_ICONS[state]} {label if state == 'running' else _still(label)}"
+            for label, state in self._steps
+        ]
         if self._thinking:
             number, limit = self._round
-            lines.append("💭 กำลังคิด" + (f" (รอบที่ {number}/{limit})" if number > 1 else "") + "...")
+            lines.append(f"{_THINKING} กำลังคิด" + (f" (รอบที่ {number}/{limit})" if number > 1 else "") + "...")
         embed = discord.Embed(
-            title="🧠 หนูกำลังทำงานให้อยู่ค่ะ",
-            description="\n".join(lines) or "💭 กำลังคิด...",
+            # A status, not a sentence, and not a word the lines below already use.
+            title="สถานะการทำงาน",
+            description="\n".join(lines) or f"{_THINKING} กำลังคิด...",
             color=COLOR_INFO,
         )
         embed.set_footer(text="รอสักครู่นะคะ เซนเซย์ ไม่ต้องสั่งซ้ำน้า (・`ω´・)")

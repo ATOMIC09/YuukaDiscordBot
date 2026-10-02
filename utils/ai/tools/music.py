@@ -19,7 +19,10 @@ _MAX_LISTED = 25
 _TITLE_MATCH_MIN = 75
 
 
-async def _run(ctx: YuukaContext, name: str, arg: str = "") -> tuple[str, ai_actions.ActionResult | None]:
+async def _run(
+    ctx: YuukaContext, name: str, arg: str = "", shown: str = ""
+) -> tuple[str, ai_actions.ActionResult | None]:
+    """`shown` is what the "running" notice prints instead of `arg`, when `arg` is a bare number."""
     if ctx.before_action is not None:
         await ctx.before_action("")
 
@@ -27,6 +30,7 @@ async def _run(ctx: YuukaContext, name: str, arg: str = "") -> tuple[str, ai_act
         ctx.bot,
         name=name,
         arg=arg,
+        shown=shown,
         guild=ctx.guild,
         member=ctx.requester,
         fallback_channel=ctx.channel,
@@ -81,9 +85,12 @@ async def music_skip(ctx: Ctx, position: int = 0, song: str = ""):
     """
     if position and song:
         raise UserError("ระบุมาสองอย่างค่ะ", "ให้ระบุแค่ลำดับหรือชื่อเพลงอย่างใดอย่างหนึ่งนะคะ")
+    upcoming = _upcoming(ctx)
     if song:
-        position = _position_of(_upcoming(ctx), song)
-    return await _run(ctx, "music_skip", str(position) if position > 0 else "")
+        position = _position_of(upcoming, song)
+    # The notice names the song it is about to jump to, not just a number.
+    shown = f"#{position} {upcoming[position - 1].title}" if 0 < position <= len(upcoming) else ""
+    return await _run(ctx, "music_skip", str(position) if position > 0 else "", shown)
 
 
 @tool(return_direct=True, response_format="content_and_artifact")
@@ -161,6 +168,10 @@ async def music_history(ctx: Ctx) -> str:
 async def music_remove(position: int, ctx: Ctx) -> str:
     """Remove one song from the queue by its position (1 is the next song). Check music_queue first."""
     track = await _player(ctx).remove_from_queue(ctx.guild, position)
+    await ai_actions.log_command(
+        ctx.bot, guild=ctx.guild, channel=ctx.channel, member=ctx.requester,
+        command=f"/music remove position={position}", ok=True, detail=track.title,
+    )
     return f"Removed: {_describe(track)}"
 
 
@@ -168,7 +179,3 @@ TOOLS = [music_play, music_skip, music_stop, music_now_playing, music_queue, mus
 
 # The command embed already tells the user what is happening.
 STATUS: dict = {}
-    await ai_actions.log_command(
-        ctx.bot, guild=ctx.guild, channel=ctx.channel, member=ctx.requester,
-        command=f"/music remove position={position}", ok=True, detail=track.title,
-    )

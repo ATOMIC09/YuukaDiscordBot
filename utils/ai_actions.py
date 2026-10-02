@@ -67,6 +67,8 @@ class ActionResult:
     # Spoken in voice when she wrote nothing herself (text before a tool call is
     # dropped, so for a successful action that is the usual case).
     spoken_fallback: str = ""
+    # The song's picture, as the slash command's embed shows it.
+    thumbnail: str = ""
 
 
 ACTIONS: dict[str, ActionSpec] = {
@@ -135,7 +137,9 @@ async def _music_play(
     if result.added == 1:
         track = result.first_track
         detail = f"เพิ่ม [{track.title}]({track.original_url}) ลงคิวแล้วค่ะ"
+        thumbnail = track.thumbnail or ""
     else:
+        thumbnail = ""
         shown = result.tracks[:_ADDED_LISTED]
         lines = "\n".join(f"• [{t.title}]({t.original_url})" for t in shown)
         more = result.added - len(shown)
@@ -148,6 +152,7 @@ async def _music_play(
         "เปิดเพลงให้แล้วค่ะ",
         detail,
         spoken_fallback="ได้ค่ะ เดี๋ยวหนูเปิดเพลงให้เลยนะคะ",
+        thumbnail=thumbnail,
     )
 
 
@@ -171,6 +176,7 @@ async def _music_skip(
         "ข้ามเพลงให้แล้วค่ะ",
         detail,
         spoken_fallback="ข้ามให้แล้วค่ะ",
+        thumbnail=(next_track.thumbnail or "") if next_track else "",
     )
 
 
@@ -203,12 +209,6 @@ _HANDLERS: dict[str, Callable[..., Awaitable[ActionResult]]] = {
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def _target_channel(bot: discord.Bot, guild: discord.Guild, fallback: Any) -> Any:
-    """Where a command embed goes: the player's channel, else the caller's."""
-    player = bot.get_cog(_PLAYER_COG)
-    if player is not None:
-        state = player.get_state(guild.id)
-        if state.text_channel is not None:
 async def log_command(
     bot: discord.Bot,
     *,
@@ -236,6 +236,12 @@ async def log_command(
         logger.warning(f"[AI Action] Could not log '{command}': {exc}")
 
 
+def _target_channel(bot: discord.Bot, guild: discord.Guild, fallback: Any) -> Any:
+    """Where a command embed goes: the player's channel, else the caller's."""
+    player = bot.get_cog(_PLAYER_COG)
+    if player is not None:
+        state = player.get_state(guild.id)
+        if state.text_channel is not None:
             return state.text_channel
     return fallback
 
@@ -254,12 +260,15 @@ def _running_embed(spec: ActionSpec, arg: str, requester: str) -> discord.Embed:
 
 def _done_embed(spec: ActionSpec, result: ActionResult, requester: str) -> discord.Embed:
     icon = "✅" if result.ok else "❌"
-    return build_embed(
+    embed = build_embed(
         f"{icon} `{spec.command}` — {result.title}",
         result.detail,
         COLOR_SUCCESS if result.ok else COLOR_ERROR,
         footer=f"🤖 หนูสั่งเองตามคำขอของ {requester}",
     )
+    if result.thumbnail:
+        embed.set_thumbnail(url=result.thumbnail)
+    return embed
 
 
 async def run_action(
@@ -270,6 +279,7 @@ async def run_action(
     guild: discord.Guild,
     member: discord.Member,
     fallback_channel: Any,
+    shown: str = "",
 ) -> ActionResult | None:
     """Execute one model-requested action and post the embed that documents it.
 
@@ -299,7 +309,7 @@ async def run_action(
 
     notice = None
     try:
-        notice = await channel.send(embed=_running_embed(spec, arg, requester))
+        notice = await channel.send(embed=_running_embed(spec, shown or arg, requester))
     except discord.HTTPException as exc:
         logger.warning(f"[AI Action] Could not post the notice embed: {exc}")
 
@@ -327,7 +337,6 @@ async def run_action(
     except discord.HTTPException as exc:
         logger.warning(f"[AI Action] Could not post the result embed: {exc}")
 
-    return result
     await log_command(
         bot,
         guild=guild,
@@ -338,3 +347,4 @@ async def run_action(
         detail=result.detail,
         jump_url=(notice.jump_url if notice is not None else None),
     )
+    return result

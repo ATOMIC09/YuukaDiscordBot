@@ -64,6 +64,7 @@ from bot.config import config
 from bot.logger import logger
 from utils import chime, wake
 from utils.ai import YuukaContext, run_agent
+from utils.ai.progress import TurnProgress
 from utils.embeds import (
     ai_disclosure_field,
     build_embed,
@@ -700,9 +701,12 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                 before_action=before_action,
             )
 
+            # A slow turn shows what she is doing, so nobody has to repeat the request.
+            progress = TurnProgress(session.text_channel)
             try:
                 async with session.text_channel.typing():
                     async for msg_type, chunk in run_agent(session.history, ctx):
+                        progress.feed(msg_type, chunk)
                         if msg_type == "error":
                             dev_msg = chunk.get("dev", chunk) if isinstance(chunk, dict) else chunk
                             user_msg = chunk.get("user", chunk) if isinstance(chunk, dict) else chunk
@@ -734,6 +738,8 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                 logger.error(f"[AI Voice] LLM error in guild {guild_id}: {exc}")
                 await session.text_channel.send(embed=error_embed("AI Error", str(exc)))
                 return
+            finally:
+                await progress.finish()
 
             # An action-only turn has no text but still happened: without it in the
             # history the request looks unanswered and gets done again.

@@ -8,6 +8,9 @@ this loop is small; the pieces that matter (chat model, tool calls, tools,
 messages) are all LangChain core.
 
 `run_agent` yields the events the cogs already handle:
+    ("thinking", (int, int))    a round starts: its number and the most rounds a turn may take
+    ("plan", list[dict])        the calls the model chose this round, {"name", "args"}, in order
+    ("step", (int, str))        call number (in that plan) and its state: running, ok, failed, skipped
     ("status", str)             a tool is about to run
     ("content", str)            a chunk of her reply
     ("action", ActionResult)    a bot command ran
@@ -147,6 +150,7 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
                 # Without this the model plans its next tool call out loud as the reply.
                 conversation.append(HumanMessage(content=_LAST_ROUND_NOTE))
             logger.debug(f"[Agent] Round {round_no + 1}/{max_rounds} | messages={len(conversation)}")
+            yield ("thinking", (round_no + 1, max_rounds))
 
             reply: AIMessageChunk | None = None
             separate = wrote
@@ -185,9 +189,11 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
                 break
 
             conversation.append(AIMessage(content=reply.content, tool_calls=calls))
+            yield ("plan", [{"name": c["name"], "args": c["args"]} for c in calls])
             stop = False
             for index, call in enumerate(calls):
                 logger.info(f"[Agent] Tool call: {call['name']}({call['args']})")
+                yield ("step", (index, "running"))
                 yield ("status", status_line(call["name"], call["args"]))
 
                 result, ok = await _run_tool(tools, call, ctx)
@@ -196,6 +202,8 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
                 action = result.artifact if isinstance(result.artifact, ActionResult) else None
                 if action is not None:
                     yield ("action", action)
+                worked = ok and (action is None or action.ok)
+                yield ("step", (index, "ok" if worked else "failed"))
                 # A terminal tool ends the turn only when it worked; a refusal
                 # goes back to the model so she can explain it.
                 if ok and tools[call["name"]].return_direct:
@@ -213,9 +221,10 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
                     ])
                 # Calls in one reply are a sequence ("queue it, then skip"): after a
                 # failure the rest no longer make sense.
-                if not ok or (action is not None and not action.ok):
-                    for skipped in calls[index + 1 :]:
+                if not worked:
+                    for offset, skipped in enumerate(calls[index + 1 :], start=index + 1):
                         logger.info(f"[Agent] Skipped after a failure: {skipped['name']}")
+                        yield ("step", (offset, "skipped"))
                         conversation.append(ToolMessage(
                             "Not run: an earlier call in the same reply failed.",
                             tool_call_id=skipped["id"],

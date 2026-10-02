@@ -14,16 +14,41 @@ Slash commands:
 
 from __future__ import annotations
 
+import re
+
 import discord
 from discord.ext import commands
 
 from bot.config import config
 from bot.logger import logger
 from cogs.ai import ai_group
-from utils.embeds import ai_disclosure_field, build_embed, COLOR_SUCCESS, error_embed, success_embed
+from utils.embeds import AI_DISCLOSURE_NAME, ai_disclosure_field, build_embed, COLOR_SUCCESS, error_embed, success_embed
 from utils.ai import YuukaContext, run_agent
 from utils.ai.scheduler import ReminderScheduler
 from utils.errors import UserWarning
+
+
+_MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_RECORD_MAX = 400
+
+
+def _embed_record(msg: discord.Message) -> str:
+    """Her own embed as a line for the history: what she did and what came of it.
+
+    The "[result]" marker is explained to the model in `tool_calling`: it is the
+    system's record, never something to write instead of calling a tool."""
+    parts = []
+    for embed in msg.embeds:
+        # The same fixed explanation every time: all she needs is that a session began.
+        if any(f.name == AI_DISCLOSURE_NAME for f in embed.fields):
+            kind = "/ai voice" if "Voice" in (embed.title or "") else "/ai chat"
+            parts.append(f"เริ่มการสนทนา {kind}")
+            continue
+        text = " — ".join(filter(None, [embed.title, embed.description]))
+        text = " ".join([text, *(f"{f.name}: {f.value}" for f in embed.fields)])
+        parts.append(_MD_LINK.sub(r"\1", text).strip())
+    text = " ".join(filter(None, parts))
+    return f"[result] {text[:_RECORD_MAX]}" if text else ""
 
 
 class AIChatCog(commands.Cog, name="AI Chat"):
@@ -139,6 +164,10 @@ class AIChatCog(commands.Cog, name="AI Chat"):
 
         for msg in recent_messages:
             content = msg.clean_content.strip()
+            if msg.author == self.bot.user and not content:
+                # Her command results are embeds. Without them every request to her
+                # looks unanswered, and she does it again.
+                content = _embed_record(msg)
             if not content:
                 continue
 

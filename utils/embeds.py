@@ -83,6 +83,10 @@ def warning_embed(title: str, description: str = "") -> discord.Embed:
     return build_embed(title=f"{title}", description=description, color=COLOR_WARNING)
 
 
+# Only the AI session-start embeds carry this field, so it also identifies them.
+AI_DISCLOSURE_NAME = "🤖 โมเดล & ความเป็นส่วนตัวของข้อมูล"
+
+
 def ai_disclosure_field(model: str, extra_note: str = "") -> tuple[str, str, bool]:
     """
     Build the (name, value, inline) field tuple used on AI session-start embeds
@@ -101,4 +105,4 @@ def ai_disclosure_field(model: str, extra_note: str = "") -> tuple[str, str, boo
     )
     if extra_note:
         value += f"\n{extra_note}"
-    return ("🤖 โมเดล & ความเป็นส่วนตัวของข้อมูล", value, False)
+    return (AI_DISCLOSURE_NAME, value, False)

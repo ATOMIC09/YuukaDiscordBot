@@ -91,7 +91,8 @@ Rules:
 - Several calls only when the user asked for several things. A call that needs an earlier call's result must wait for it, in your next reply.
 - Never write a <tool_response> yourself, and never guess what a tool would return. Only the system sends results.
 - Never describe the call format or mention that you are using tools.
-- Never invent arguments the user did not give and no earlier tool result provided."""
+- Never invent arguments the user did not give and no earlier tool result provided.
+- A line starting with [result] in an earlier assistant turn is the system's record of something already done. Never write one yourself: to do something, call the tool."""
 
 
 # Text before a call is never shown: gpt-oss fills it with its reasoning ("We need

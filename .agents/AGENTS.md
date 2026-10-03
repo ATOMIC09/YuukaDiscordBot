@@ -245,6 +245,13 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
   utils/wake.py). When the acoustic score clears `STT_WAKE_ACOUSTIC_CONFIDENT_SCORE` (0.5), the
   text match uses `STT_WAKE_RELAXED_THRESHOLD` (70) instead — ordinary speech saying "อยู่กับ"
   won't also score 0.5+ on the acoustic model, so this doesn't reopen that false-positive risk.
+  A match that only cleared the relaxed threshold, in a segment of at most `_NAME_ONLY_MAX_S`, is a
+  misheard name: its leftover letters ("You got it" → "ot it") are not sent to the LLM as a request,
+  it counts as a bare wake word.
+- **Bots are never speakers**: `_on_segment` drops segments from other bot accounts before any STT.
+  A second Yuuka in the room (a test instance) hears the first one's chime as a wake word and
+  answers with its own, and the two chime at each other every ~3 s, each round costing STT requests
+  until Groq's rate limit hit (seen in production).
 - **Echo guard**: segments overlapping Yuuka's own playback are dropped — a speaker without
   headphones has her voice coming back through their mic.
 - Spoken and typed input both funnel into `_respond()`, so the two paths cannot drift apart.

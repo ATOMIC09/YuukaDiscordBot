@@ -299,6 +299,13 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         user = member or self.bot.get_user(segment.user_id)
         display = user.display_name if user else f"Unknown ({segment.user_id})"
 
+        # Another bot in the room is never a speaker. Its chimes and music score on
+        # the acoustic model, and if it is also a Yuuka the two answer each other's
+        # chime forever, each round costing an STT request.
+        if user is not None and user.bot:
+            logger.debug(f"[AI Voice] Ignored {segment.duration:.1f}s from bot {display}")
+            return
+
         # A pending confirmation is the one thing heard without the wake word: the
         # requester answering "ยืนยัน" or "ยกเลิก" to a proposal Yuuka just made. It
         # is scoped to that speaker, ends with the 60 s button, and only a short
@@ -431,13 +438,21 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             f"(threshold {text_threshold}) from {display}"
         )
 
-        if match.remainder:
+        remainder = match.remainder
+        if remainder and match.score < config.stt_wake_threshold and segment.duration <= _NAME_ONLY_MAX_S:
+            # Only the relaxed threshold let this through, so the transcript is a
+            # misheard name ("You got it" for ユウカ) and what is left of it after
+            # the cut is leftover letters, not a request.
+            logger.info(f"[AI Voice] Taking {result.text!r} as a misheard name from {display}, no request")
+            remainder = ""
+
+        if remainder:
             # The request came with her name, so there is nothing left to listen for.
             self._stop_listening(session, segment.user_id, early_deadline)
             if early_deadline is None:
                 chime.play(session.voice_client, "wake")
             await self._announce_and_respond(
-                segment.guild_id, session, display, match.remainder, member,
+                segment.guild_id, session, display, remainder, member,
                 heard=result.text,
             )
             return

@@ -268,6 +268,11 @@ def _bare_call(text: str, names: set[str]) -> dict[str, Any] | None:
     return None
 
 
+def _is_json_object(text: str) -> bool:
+    """The whole reply is one JSON object: a call whose tool name got lost, not an answer."""
+    return isinstance(_load_json(text), dict)
+
+
 def _parse_harmony(raw: str) -> dict[str, Any] | None:
     """Read a call out of a harmony block, or None if it holds no usable call."""
     raw = _STRAY_TAG.sub("", raw)
@@ -471,6 +476,11 @@ class ToolPromptChatModel(BaseChatModel):
             # song is ready"). Shown, they claim something that never happened, so the
             # reply is empty and the agent asks again.
             logger.warning(f"[Tools] Unreadable call, dropped the text before it: {(held + tail)[:200]!r}")
+            yield ChatGenerationChunk(message=AIMessageChunk(content=""))
+        elif held + tail and holding and tools and _is_json_object(held + tail):
+            # Only the arguments, no tool name ({"query": ...}): reading it aloud is
+            # worse than nothing, and guessing the tool could run the wrong one.
+            logger.warning(f"[Tools] Call without a tool name; dropped: {(held + tail)[:200]!r}")
             yield ChatGenerationChunk(message=AIMessageChunk(content=""))
         elif held + tail and holding and tools and _LEAKED_REASONING.match((held + tail).strip()):
             # Sent as an empty reply, which the agent retries once.

@@ -163,6 +163,13 @@ def _reply_language(messages: Sequence[BaseMessage]) -> str:
     return ""
 
 
+def _tool_text(function: dict[str, Any]) -> str:
+    """One tool's schema as prompt text. It is resent every round, so no padding:
+    a docstring's indentation and JSON's spaces are tokens like any others."""
+    function = {**function, "description": re.sub(r"\n[ \t]+", "\n", function.get("description", ""))}
+    return json.dumps(function, ensure_ascii=False, separators=(",", ":"))
+
+
 def _call_text(call: dict[str, Any]) -> str:
     payload = {"name": call["name"], "arguments": call.get("args", {})}
     return f"{_OPEN}{json.dumps(payload, ensure_ascii=False)}{_CLOSE}"
@@ -193,7 +200,7 @@ def render_messages(
 
     if tools:
         section = _TOOL_INSTRUCTIONS.format(
-            tools="\n".join(json.dumps(t["function"], ensure_ascii=False) for t in tools),
+            tools="\n".join(_tool_text(t["function"]) for t in tools),
             max_calls=config.agent_max_tool_calls,
             final=_final_rule(final_tools),
         )
@@ -358,6 +365,7 @@ class ToolPromptChatModel(BaseChatModel):
 
         rendered = render_messages(messages, tools, final_tools)
         stream = self.inner.astream(rendered, stop=stop, **kwargs)
+        usage: dict[str, Any] | None = None
 
         buffer = block = ""
         mode: str | None = None  # "tag", "harmony" or "fake" while one is open
@@ -375,6 +383,7 @@ class ToolPromptChatModel(BaseChatModel):
 
         try:
             async for piece in stream:
+                usage = getattr(piece, "usage_metadata", None) or usage
                 buffer += _text(piece)
 
                 # One piece can close a call and open the next.
@@ -438,6 +447,20 @@ class ToolPromptChatModel(BaseChatModel):
             aclose = getattr(stream, "aclose", None)
             if aclose is not None:
                 await aclose()
+            # Where the tokens go: read this before guessing which prompt part to cut.
+            system_chars = len(rendered[0].content) if rendered[0].type == "system" else 0
+            sizes = (
+                f"system {system_chars} chars, {len(rendered)} messages, "
+                f"{sum(len(m.content) for m in rendered)} chars in all"
+            )
+            if usage:
+                details = usage.get("output_token_details") or {}
+                logger.info(
+                    f"[Usage] prompt {usage.get('input_tokens')} + reply {usage.get('output_tokens')}"
+                    f" (reasoning {details.get('reasoning', 0)}) tokens | {sizes}"
+                )
+            else:
+                logger.info(f"[Usage] tokens not reported | {sizes}")
 
         tail = ""
         if mode == "tag" and block.strip():

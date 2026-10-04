@@ -24,6 +24,8 @@ def chat_model() -> ChatOpenAI:
         },
         # OpenRouter's own field. langchain's `max_tokens` is sent as `max_completion_tokens`.
         extra_body={"max_tokens": config.openrouter_max_tokens},
+        # Asks OpenRouter for the token counts that `tool_calling` logs as [Usage].
+        stream_usage=True,
         timeout=180,
         max_retries=1,
     )

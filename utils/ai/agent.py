@@ -65,18 +65,18 @@ _EMPTY_REPLY = "หนูนึกคำตอบไม่ออกค่ะ เ
 
 
 def _cache_notice() -> str:
-    from utils.web_search import get_all_cached_tocs
+    """Names the earlier searches, never their results: this rides on every request."""
+    from utils.web_search import cached_queries
 
-    count, tocs = get_all_cached_tocs()
-    if count == 0:
+    queries = cached_queries()
+    if not queries:
         return ""
+    listed = "; ".join(f'"{q}"' for q in queries)
     return (
-        "\n\n[CACHED SEARCH RESULTS]\n"
-        "You have recently searched the web. The results are below in Table of Contents (TOC) format.\n"
-        "If the answer is in these snippets, answer immediately.\n"
-        "To read one result in full, call web_search with the same query and its result_index.\n"
-        "If the information is NOT in the cache, call web_search with a new query.\n"
-        f"--- START CACHE ---\n{tocs}\n--- END CACHE ---"
+        "\n\n[CACHED SEARCHES] Searched recently, newest first: "
+        f"{listed}.\n"
+        "To read one again (free), call web_search with that exact query. "
+        "Search a new query only when none of these fits."
     )
 
 

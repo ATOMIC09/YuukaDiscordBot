@@ -4,11 +4,13 @@ Async Tavily web search helper with in-memory TTL cache.
 
 Cache design — "book with table of contents":
   - The ENTIRE Tavily response is stored losslessly on first call (1 credit).
-  - Default call → LLM receives a compact TOC: snippets, favicons, per-result
-    image previews, and the full top-level image list with URLs.
-  - Follow-up with result_index=N → LLM receives full raw_content + all per-result
-    images (url, description, description_source, score) of that result (0 credits).
-  - Images have their URLs in the TOC, so the LLM can cite them with no extra call.
+  - Default call → LLM receives a compact TOC: capped snippets and a few top-level
+    image URLs it can cite with no extra call.
+  - Follow-up with result_index=N → LLM receives the (capped) raw_content and the first
+    images of that result (0 credits).
+  - The system prompt only names the cached queries (`cached_queries`); the model reads
+    one again by calling web_search with the same query, which is free. Pasting every
+    cached TOC into every request cost far more than the searches saved.
 
 Cache structure:
   _cache[normalized_query] = {
@@ -16,8 +18,7 @@ Cache structure:
       "data": dict    # complete raw Tavily response — nothing dropped:
                       #   query, answer, follow_up_questions, images (top-level),
                       #   results[].{url, title, content, score, raw_content,
-                      #             images[].{url, description, description_source, score},
-                      #             favicon},
+                      #             images[].{url, description, description_source, score}},
                       #   response_time, usage, request_id
   }
 """
@@ -36,7 +37,13 @@ _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="tavily")
 # In-memory cache
 _cache: dict[str, dict] = {}
 
-_RAW_CONTENT_LIMIT = 5000  # chars — cap for detail requests (single result)
+# Everything below is prompt the model is billed for, and Thai costs about a token per
+# character or two, so each cap is deliberate.
+_RAW_CONTENT_LIMIT = 3000  # chars — cap for detail requests (single result)
+_SNIPPET_LIMIT = 400  # chars — one result's snippet in the table of contents
+_TOC_IMAGES = 3  # top-level images listed in the table of contents
+_DETAIL_IMAGES = 5  # images listed for one result in the detail view
+_NOTICE_QUERIES = 5  # earlier queries named in the system prompt
 
 
 # ── Cache helpers ─────────────────────────────────────────────────────────────
@@ -63,16 +70,17 @@ def _get_cached(query: str) -> dict | None:
     return entry["data"]
 
 
-def get_all_cached_tocs() -> tuple[int, str]:
-    """Return a tuple of (count, combined_string) of all currently cached search TOCs."""
+def cached_queries(limit: int = _NOTICE_QUERIES) -> list[str]:
+    """The newest cached queries still inside the TTL, newest first."""
     now = time.monotonic()
-    tocs = []
+    fresh = []
     for key, entry in list(_cache.items()):
         if (now - entry["ts"]) / 60 > config.search_cache_ttl_minutes:
             del _cache[key]
         else:
-            tocs.append(_format_toc(entry["data"]))
-    return len(tocs), "\n\n".join(tocs)
+            fresh.append((entry["ts"], entry["data"].get("query") or key))
+    fresh.sort(reverse=True)
+    return [query for _, query in fresh[:limit]]
 
 
 def _store_cache(query: str, data: dict) -> None:
@@ -103,7 +111,6 @@ def _sync_search(query: str, max_results: int) -> dict:
         max_results=max_results,
         include_images=True,
         include_image_descriptions=True,
-        include_favicon=True,
         include_raw_content="markdown",
         include_usage=True,
     )
@@ -119,99 +126,67 @@ def _sync_search(query: str, max_results: int) -> dict:
 def _format_toc(data: dict) -> str:
     """
     Table of contents view — sent on a normal web_search call.
-    Exposes all top-level fields: answer, results (with favicon, per-result images),
-    and top-level images. The LLM can cite URLs/images directly from this view.
+    Title, URL and a capped snippet per result, Tavily's direct answer when it has one,
+    and a few top-level images the model can cite. Favicons, scores, follow-up questions
+    and per-result images carry nothing the model uses, so they stay in the cache only.
     """
     lines: list[str] = [f'Web search results for: "{data.get("query", "")}"', ""]
 
-    # Direct answer (Tavily sometimes provides one)
     if data.get("answer"):
         lines += ["── DIRECT ANSWER ──", data["answer"], ""]
-
-    # Follow-up questions
-    if data.get("follow_up_questions"):
-        lines.append("── FOLLOW-UP QUESTIONS ──")
-        for q in data["follow_up_questions"]:
-            lines.append(f"  • {q}")
-        lines.append("")
 
     results = data.get("results", [])
     lines.append(f"── RESULTS ({len(results)} found) ──")
     for i, r in enumerate(results):
         lines.append(f"[{i}] {r.get('title', '')}")
         lines.append(f"    URL    : {r.get('url', '')}")
-        if r.get("favicon"):
-            lines.append(f"    Favicon: {r['favicon']}")
-        lines.append(f"    Score  : {round(r.get('score', 0), 4)}")
         snippet = (r.get("content") or "").strip()
+        if len(snippet) > _SNIPPET_LIMIT:
+            snippet = snippet[:_SNIPPET_LIMIT] + "…"
         if snippet:
             lines.append(f"    Snippet: {snippet}")
-        # Per-result images — show count + first image as preview
-        r_images = r.get("images", [])
-        if r_images:
-            lines.append(f"    Images : {len(r_images)} image(s) in this result")
-            first = r_images[0]
-            lines.append(f"             [0] {first.get('url', '')}")
-            if first.get("description"):
-                lines.append(f"                 {first['description']}")
         lines.append("")
 
-    # Top-level images (curated image results from the search)
-    top_images = data.get("images", [])
+    top_images = data.get("images", [])[:_TOC_IMAGES]
     if top_images:
-        lines.append(f"── TOP-LEVEL IMAGES ({len(top_images)} found) ──")
+        lines.append("── IMAGES ──")
         for i, img in enumerate(top_images):
-            lines.append(f"[img:{i}] {img.get('title', '')}")
-            lines.append(f"    URL : {img.get('url', '')}")
-            if img.get("description"):
-                lines.append(f"    Desc: {img['description']}")
-            lines.append("")
+            desc = f" — {img['description']}" if img.get("description") else ""
+            lines.append(f"[img:{i}] {img.get('url', '')}{desc}")
+        lines.append("")
 
-    lines.append(
-        "To get full content + all images of a specific result: call web_search with result_index=N."
-    )
+    lines.append("Full content + images of one result: call web_search with result_index=N.")
     return "\n".join(lines)
 
 
 def _format_result_detail(data: dict, index: int) -> str:
     """
     Full detail view for a specific result — returned when result_index is set.
-    Includes: raw_content (truncated), all per-result images with description_source,
-    favicon, and score.
+    Includes: raw_content (truncated) and the first few images of that page.
     """
     results = data.get("results", [])
     if index < 0 or index >= len(results):
         return (
             f"result_index={index} is out of range. "
-            f"There are {len(results)} results (0\u2013{len(results)-1})."
+            f"There are {len(results)} results (0–{len(results)-1})."
         )
 
     r = results[index]
     raw = (r.get("raw_content") or r.get("content") or "").strip()
     if len(raw) > _RAW_CONTENT_LIMIT:
-        raw = raw[:_RAW_CONTENT_LIMIT] + "\n\u2026[truncated — content continues on the page]"
+        raw = raw[:_RAW_CONTENT_LIMIT] + "\n…[truncated — content continues on the page]"
 
     lines = [
         f'Full detail for result [{index}]: {r.get("title", "")}',
         f'URL    : {r.get("url", "")}',
     ]
-    if r.get("favicon"):
-        lines.append(f'Favicon: {r["favicon"]}')
-    lines.append(f'Score  : {round(r.get("score", 0), 4)}')
 
-    # Per-result images (with description_source and image score)
-    r_images = r.get("images", [])
+    r_images = r.get("images", [])[:_DETAIL_IMAGES]
     if r_images:
-        lines += ["", f"Images from this page ({len(r_images)} total):"]
+        lines += ["", "Images from this page:"]
         for j, img in enumerate(r_images):
-            lines.append(f"  [img:{j}] {img.get('url', '')}")
-            if img.get("description"):
-                lines.append(f"           Desc  : {img['description']}")
-            if img.get("description_source"):
-                lines.append(f"           Source: {img['description_source']}")
-            img_score = img.get("score")
-            if img_score is not None:
-                lines.append(f"           Score : {img_score}")
+            desc = f" — {img['description']}" if img.get("description") else ""
+            lines.append(f"  [img:{j}] {img.get('url', '')}{desc}")
 
     lines += ["", "── Full content ──", raw]
     return "\n".join(lines)

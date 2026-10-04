@@ -16,8 +16,8 @@ async def web_search(query: str, result_index: int | None = None) -> str:
 
     Returns a table of contents of results. To read one result in full, call
     again with the same `query` and that result's `result_index`; that costs
-    nothing extra. Results from earlier searches are listed under
-    [CACHED SEARCH RESULTS] in your instructions.
+    nothing extra. Earlier queries are listed under [CACHED SEARCHES] in your
+    instructions: the same query again returns that table of contents for free.
 
     Read the table of contents first and answer from it when you can. Read each
     `result_index` once, and each index is a different call: never repeat the same

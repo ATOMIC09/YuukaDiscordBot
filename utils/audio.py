@@ -91,6 +91,35 @@ def mono16k_to_wav(audio: np.ndarray) -> bytes:
     return buf.getvalue()
 
 
+async def decode_to_pcm(path: str) -> bytes:
+    """Decode an audio file to 48 kHz stereo 16-bit PCM, all in memory.
+
+    For her short spoken replies, so they can be mixed into the music stream."""
+    import asyncio
+
+    process = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-v", "error", "-i", path,
+        "-f", "s16le", "-ar", str(OPUS_SAMPLE_RATE), "-ac", str(OPUS_CHANNELS), "pipe:1",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await process.communicate()
+    if process.returncode != 0:
+        raise RuntimeError(stderr.decode("utf-8", errors="ignore").strip())
+    return stdout
+
+
+def music_mixer(voice_client):
+    """The music player's mixer on this voice client, if she can speak over it.
+
+    Anything else playing (her own clip, nothing) or a paused track is None: a paused
+    mixer is not read, so a sound added to it would never come out."""
+    if voice_client is None or not voice_client.is_connected() or voice_client.is_paused():
+        return None
+    source = voice_client.source
+    return source if hasattr(source, "add_overlay") else None
+
+
 def pcm_duration_seconds(pcm: bytes) -> float:
     """Wall-clock length of a 48 kHz stereo PCM buffer."""
     return len(pcm) / BYTES_PER_SECOND

@@ -22,6 +22,7 @@ import discord
 import numpy as np
 
 from bot.logger import logger
+from utils.audio import music_mixer
 
 _RATE = 48_000  # PCMAudio is 48 kHz stereo 16-bit, in 20 ms frames
 _FRAME_BYTES = 3_840  # 20 ms of that
@@ -93,13 +94,20 @@ def play(voice_client: discord.VoiceClient | None, kind: Literal["wake", "done"]
     """Start a chime and return at once. False when it could not play.
 
     One `VoiceClient` is shared with the music player and her own speech, and `play()`
-    raises on a busy one, so a chime never interrupts either: it is simply skipped."""
+    raises on a busy one. Over a playing track the chime is mixed into the track
+    instead (`add_overlay`, the music ducks under it); against anything else, her own
+    speech or a paused track, it is skipped rather than cut in."""
     if voice_client is None or not voice_client.is_connected():
         logger.info(f"[Chime] '{kind}' skipped: not connected to voice")
         return False
     if voice_client.is_playing() or voice_client.is_paused():
-        logger.info(f"[Chime] '{kind}' skipped: the voice client is busy playing something")
-        return False
+        mixer = music_mixer(voice_client)
+        if mixer is None:
+            logger.info(f"[Chime] '{kind}' skipped: the voice client is busy playing something")
+            return False
+        mixer.add_overlay(_SOUNDS[kind])
+        logger.info(f"[Chime] '{kind}' playing over the music")
+        return True
     try:
         cold = voice_client not in _WARM
         voice_client.play(discord.PCMAudio(io.BytesIO((_COLD_SOUNDS if cold else _SOUNDS)[kind])))

@@ -123,6 +123,12 @@ CROSSFADE_PRELOAD_LEAD_SECONDS = CROSSFADE_BUFFER_SECONDS + PREFILL_SECONDS
 SEEK_BACKWARD_SECONDS = 10.0
 SEEK_FORWARD_SECONDS = 30.0
 PROGRESS_BAR_SLOTS = 20
+# While Yuuka speaks over a track (SeamlessCrossfadeSource.add_overlay) the music drops
+# to this fraction of its level: down over 3 frames, back up over 15, so neither edge
+# clicks and the end of her sentence is not swallowed by a sudden swell.
+DUCK_GAIN = 0.2
+DUCK_ATTACK_FRAMES = 3
+DUCK_RELEASE_FRAMES = 15
 
 
 def equal_power_gains(fade_frames: int) -> tuple[list[float], list[float]]:
@@ -241,6 +247,13 @@ class SeamlessCrossfadeSource(discord.AudioSource):
         self._volume = max(0.0, float(volume))
         self._generation = 0
         self._lock = threading.Lock()
+        # Sounds mixed over the track: [pcm, position, on_done]. Her voice shares the
+        # one VoiceClient with the music, and a client can only play one source, so
+        # she goes through this mixer instead of play(). The deque is touched from the
+        # event loop (add) and the voice send thread (read), hence its own lock.
+        self._overlays: collections.deque = collections.deque()
+        self._overlay_lock = threading.Lock()
+        self._duck = 1.0
 
     @property
     def volume(self) -> float:
@@ -331,7 +344,56 @@ class SeamlessCrossfadeSource(discord.AudioSource):
         np.clip(mixed, PCM_SAMPLE_MIN, PCM_SAMPLE_MAX, out=mixed)
         return mixed.astype(PCM_DTYPE).tobytes()
 
+    def add_overlay(self, pcm: bytes, on_done=None) -> None:
+        """Play `pcm` (48 kHz stereo 16-bit) over the track, ducking the music under it.
+
+        Sounds queue and play one after another. `on_done` is called from the voice
+        send thread once the last frame is mixed in (or the mixer is torn down), so it
+        must only hand off to the event loop. Safe to call from any thread."""
+        # The lead-in lets the duck finish before the sound starts.
+        pcm = b"\x00" * (PCM_FRAME_BYTES * DUCK_ATTACK_FRAMES) + pcm
+        pcm += b"\x00" * (-len(pcm) % PCM_FRAME_BYTES)
+        with self._overlay_lock:
+            self._overlays.append([pcm, 0, on_done])
+
+    def _next_overlay_frame(self):
+        """The next 20 ms of the sound being played over the track, and any callbacks
+        that sound's last frame has just triggered."""
+        with self._overlay_lock:
+            if not self._overlays:
+                return None, ()
+            item = self._overlays[0]
+            frame = item[0][item[1] : item[1] + PCM_FRAME_BYTES]
+            item[1] += PCM_FRAME_BYTES
+            if item[1] >= len(item[0]):
+                self._overlays.popleft()
+                return frame, (item[2],)
+            return frame, ()
+
     def read(self) -> bytes:
+        frame = self._read_music()
+        if len(frame) != PCM_FRAME_BYTES:
+            return frame  # the track is ending (or already gone): nothing to mix into
+        overlay, finished = self._next_overlay_frame()
+        if overlay is None and self._duck >= 1.0:
+            return frame  # the common case, and no extra work on the send thread
+
+        step = (1.0 - DUCK_GAIN) / (DUCK_ATTACK_FRAMES if overlay is not None else DUCK_RELEASE_FRAMES)
+        if overlay is not None:
+            self._duck = max(DUCK_GAIN, self._duck - step)
+        else:
+            self._duck = min(1.0, self._duck + step)
+
+        mixed = np.frombuffer(frame, dtype=PCM_DTYPE).astype(np.float32) * self._duck
+        if overlay is not None:
+            mixed += np.frombuffer(overlay, dtype=PCM_DTYPE).astype(np.float32)
+        np.clip(mixed, PCM_SAMPLE_MIN, PCM_SAMPLE_MAX, out=mixed)
+        for callback in finished:
+            if callback:
+                callback()
+        return mixed.astype(PCM_DTYPE).tobytes()
+
+    def _read_music(self) -> bytes:
         with self._lock:
             deck = self._current
             generation = self._generation
@@ -406,6 +468,13 @@ class SeamlessCrossfadeSource(discord.AudioSource):
         for source in sources:
             if source:
                 source.cleanup()
+        # Whoever is waiting on a sound that will now never play must not wait forever.
+        with self._overlay_lock:
+            callbacks = [item[2] for item in self._overlays]
+            self._overlays.clear()
+        for callback in callbacks:
+            if callback:
+                callback()
 
 def format_duration(seconds: int | None) -> str:
     if not seconds or seconds <= 0:

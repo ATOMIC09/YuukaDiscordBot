@@ -236,8 +236,9 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
   sound that arrives with the speaking signal. The first sound on a fresh connection is clipped
   even more (a chime was inaudible until her first spoken reply), so `_open_session` plays 400 ms of
   silence to open the stream (`chime.warm_up`), and a client that has sent no audio yet (`_WARM`)
-  gets a 600 ms lead-in once. Every call logs `[Chime] … playing` or why it was skipped. It never interrupts music or her own speech (one `VoiceClient`): while a track plays a
-  short text notice stands in, posted at the same moment, deleted when the window closes.
+  gets a 600 ms lead-in once. Every call logs `[Chime] … playing` or why it was skipped. It never interrupts her own speech (one `VoiceClient`). Over a playing track it is mixed into the
+  track's mixer instead (see "Speaking over music"); only a paused track skips it, and then a short
+  text notice stands in, posted at the same moment, deleted when the window closes.
 - **The chime means "I am listening for you"**, so it also sounds whenever she waits for an answer:
   after a reply that asks a question (the answer window, `STT_ANSWER_WINDOW_S`, same closing chime
   if unused) and when a `voice_kick` / `voice_disconnect_timer` confirmation is posted (`expect_answer`).
@@ -267,8 +268,18 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
   tool runs, and a tool that ends the turn speaks its own line instead: `spoken_fallback` for
   music, `before_action(text)` for reminders and confirmations. Anything already written is still
   spoken on each `status` event (`spoken_upto`). `_speak` strips links for TTS only; text
-  fallbacks keep them. One `VoiceClient` is shared with music, so she
-  cannot speak while a track plays and posts text instead (`_post_unspoken`).
+  fallbacks keep them. One `VoiceClient` is shared with music; she speaks over a track
+  (below) and posts text instead (`_post_unspoken`) only when she cannot be heard at all.
+- **Speaking over music**: `vc.play()` raises on a busy client, so while a track plays her chime and
+  voice go through the track's own mixer: `SeamlessCrossfadeSource.add_overlay(pcm, on_done)` mixes
+  them into the music frames on the voice send thread and ducks the music (`DUCK_GAIN`, ramped over
+  `DUCK_ATTACK_FRAMES` / `DUCK_RELEASE_FRAMES`). `utils.audio.music_mixer(vc)` finds the mixer, and is
+  None for a paused track (a paused mixer is not read, so a sound added to it would never play) or
+  when her own clip owns the client. `_audio_worker` decodes the MP3 to PCM (`decode_to_pcm`) and waits
+  for `on_done`, which is also called on `cleanup()` so a stopped track cannot strand it. While she
+  speaks over music `speaking_until` is finite: `stop_session` treats an infinite one as her own clip
+  and calls `vc.stop()`, which would kill the track. Without a track nothing changes: she `play()`s
+  directly.
 - **Answer to her question**: when a reply ends by asking something (`_asks_user`: a `?`, or Thai
   `คะ` that is not `นะคะ`, or a question word at the end), that speaker's next utterance within
   `STT_ANSWER_WINDOW_S` goes straight to the LLM with no wake word. The window opens when she
@@ -375,8 +386,8 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
   `set_volume`, `leave_voice` — rather than editing `AudioState` directly. The slash commands are thin
   wrappers over them and raise `UserError` for refusals, so the AI path words them the same way.
 - **One `VoiceClient` per guild is shared with `/ai voice`.** `vc.play()` raises while something is
-  playing, so Yuuka can't speak during a track (she posts text instead), and a track must not start
-  while she is speaking (`AIVoiceChatCog._await_speech`).
+  playing, so Yuuka speaks over a track through its mixer (`add_overlay`, see AI Voice Chat) instead
+  of `play()`, and a track must not start while she is speaking (`AIVoiceChatCog._await_speech`).
   The line she speaks after an action races the track's stream lookup, so `_play_next_async` also
   waits (up to 30 s) for the client to go quiet before `play()`; without it the track was dropped
   with "Already playing audio".

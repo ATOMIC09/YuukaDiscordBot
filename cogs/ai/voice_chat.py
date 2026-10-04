@@ -30,8 +30,10 @@ How speech reaches the LLM
    score is not trusted that far (it is weak on some speakers and fires on
    ordinary talk). That speaker's next segment waits for the verdict rather
    than racing it (`verifying`).
-   While a track plays the chime cannot sound (one VoiceClient), so a short
-   text notice stands in and the music is never paused.
+   While a track plays she cannot `play()` (one VoiceClient), so the chime and her
+   voice are mixed into the track's own mixer instead, with the music turned down
+   under them (`SeamlessCrossfadeSource.add_overlay`). Only a paused track leaves
+   her no way to be heard, and a short text notice stands in then.
 5. The accepted text goes through the same LLM → TTS → playback path as a
    typed message.
 6. The reply comes from the agent loop (`utils.ai.run_agent`), which may call
@@ -40,7 +42,7 @@ How speech reaches the LLM
    command (`utils.ai_actions`) also waits for that speech to finish first
    (a track cannot start while she is mid-sentence — one VoiceClient). The
    session is never torn down: while music plays she keeps listening and
-   answers in the text channel instead of out loud.
+   answers over it.
 
 Each spoken turn logs how long every stage took, counted from the moment the hub
 closed the segment (`[Timing]` lines, see `_mark`), so a slow reply can be traced
@@ -69,6 +71,7 @@ from discord.ext import commands
 from bot.config import config
 from bot.logger import logger
 from utils import chime, wake
+from utils.audio import decode_to_pcm, music_mixer, pcm_duration_seconds
 from utils.ai import YuukaContext, run_agent
 from utils.ai.progress import TurnProgress
 from utils.embeds import (
@@ -117,7 +120,8 @@ _MULTI_SPEAKER_NOTE = (
 # this; it only bounds a stuck turn.
 _MAX_PENDING = 6
 
-# Stands in for the chime when a track holds the voice client.
+# Stands in for the chime when it cannot be mixed in: a paused track, or her own clip
+# holding the voice client. Over a playing track the chime itself sounds.
 _LISTENING_NOTICE = "-# (๑•̀ᴗ•́)و หนูฟังอยู่ค่ะ เซนเซย์ พูดได้เลยน้า"
 
 _MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
@@ -152,6 +156,10 @@ _ECHO_TAIL_S = 0.4
 # (is that her name?). Longer than a normal STT round trip, short enough that a
 # stalled request cannot hold the speaker back.
 _VERDICT_WAIT_S = 5.0
+
+# How long past a clip's own length to wait for it to come out of the music mixer. Only
+# reached when the track was paused or stopped under it.
+_OVERLAY_GRACE_S = 5.0
 
 # Upper bound on waiting for queued speech to finish playing. Only reached when
 # the audio worker has died, which must not wedge the turn forever.
@@ -294,10 +302,16 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                     session.queue.task_done()
                     continue
 
-                # The music player shares this VoiceClient and play() raises on
-                # one that is already busy. Her line loses to somebody's track —
-                # but losing the audio slot is not a reason to lose the answer,
-                # so it goes to the text channel instead of nowhere.
+                # A playing track takes her voice into its own mixer, which ducks the
+                # music under it: play() would raise on a client that is busy.
+                if music_mixer(vc) is not None:
+                    await self._speak_over_music(session, mp3_path, spoken_text, timing)
+                    session.queue.task_done()
+                    continue
+
+                # Anything else holding the client (a paused track, her own earlier
+                # clip) leaves no slot. Losing the audio slot is not a reason to lose
+                # the answer, so it goes to the text channel instead of nowhere.
                 if vc.is_playing() or vc.is_paused():
                     logger.info(
                         f"[AI Voice] Voice client busy in guild {guild_id}, posting the line instead"
@@ -342,6 +356,43 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         except asyncio.CancelledError:
             logger.debug(f"[AI Voice] Audio worker cancelled for guild {guild_id}")
             session.speaking_until = time.perf_counter()
+
+    async def _speak_over_music(
+        self, session: VoiceChatSession, mp3_path: str, spoken_text: str, timing: _Timing | None
+    ) -> None:
+        """Say a clip over the track that is playing, with the music turned down."""
+        try:
+            pcm = await decode_to_pcm(mp3_path)
+        except Exception as exc:
+            logger.error(f"[AI Voice] Could not decode her clip to mix over the music: {exc}")
+            pcm = b""
+        finally:
+            self._discard(mp3_path)
+
+        # Looked up again: the track may have changed or paused while decoding.
+        mixer = music_mixer(session.voice_client)
+        if not pcm or mixer is None:
+            await self._post_unspoken(session, spoken_text, timing)
+            return
+
+        duration = pcm_duration_seconds(pcm)
+        loop = asyncio.get_running_loop()
+        done = asyncio.Event()
+        # Her voice is audible for the clip plus the duck's lead-in. The end is finite
+        # on purpose: stop_session reads an infinite one as her own clip owning the
+        # client and would stop the track.
+        now = time.perf_counter()
+        session.speaking_from = now
+        session.speaking_until = now + duration + 0.1 + _ECHO_TAIL_S
+        mixer.add_overlay(pcm, lambda: loop.call_soon_threadsafe(done.set))
+        _mark_first_output(timing, "first sound (over the music)")
+
+        try:
+            await asyncio.wait_for(done.wait(), timeout=duration + _OVERLAY_GRACE_S)
+        except asyncio.TimeoutError:
+            logger.warning("[AI Voice] Her clip never came out of the music mixer (track paused or stopped?)")
+        session.speaking_until = time.perf_counter() + _ECHO_TAIL_S
+        session.text_fallback_announced = False
 
     # ──────────────────────────────────────────────────────────────────────
     # Speech input — segment → transcript → wake gate → reply
@@ -663,8 +714,8 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
     ) -> None:
         """Deliver in text what she could not say out loud.
 
-        Reached whenever the audio slot is unavailable — most often because a
-        track is playing. Silently dropping the line makes her look broken; the
+        Reached whenever she cannot be heard: a paused track, her own earlier
+        clip, or a lost connection. Silently dropping the line makes her look broken; the
         answer is the point, the voice is only the medium.
 
         Sent as a plain message rather than an embed: this is her ordinary reply
@@ -679,7 +730,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         if not session.text_fallback_announced:
             # Discord subtext ("-# ") renders small and grey, so the reason sits
             # above the reply without competing with it.
-            body = "-# 🔇 มีเพลงเล่นอยู่ หนูขอพิมพ์ตอบแทนพูดนะคะ\n" + text
+            body = "-# 🔇 ตอนนี้หนูพูดไม่ได้ (เพลงหยุดอยู่ หรือมีเสียงอื่นเล่นอยู่) ขอพิมพ์ตอบแทนนะคะ\n" + text
             session.text_fallback_announced = True
 
         try:
@@ -701,7 +752,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             return
 
         vc = session.voice_client
-        if vc and (vc.is_playing() or vc.is_paused()):
+        if vc and (vc.is_playing() or vc.is_paused()) and music_mixer(vc) is None:
             logger.info("[AI Voice] Voice slot taken, answering in text without synthesizing")
             await self._post_unspoken(session, text, session.timing)
             return
@@ -927,7 +978,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         if session is None:
             return
         vc = session.voice_client
-        if not vc or vc.is_playing() or vc.is_paused():
+        if not vc or vc.is_paused() or (vc.is_playing() and music_mixer(vc) is None):
             return
         if not session.busy:
             session.timing = None  # not part of the last spoken turn
@@ -1044,8 +1095,8 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                 f"หรือจะ `@mention` ในช่อง **{ctx.channel.name}** ก็ได้ค่ะ!\n\n"
                 "🎵 สั่งเปิดเพลงด้วยเสียงได้ด้วยนะคะ เช่น *«ยูกะ เปิดเพลง YOASOBI ให้หน่อย»* "
                 "หนูจะเรียก `/music` ให้เอง แล้วบอกในช่องนี้ว่าใช้คำสั่งอะไรไปค่ะ\n"
-                "(ระหว่างมีเพลงเล่นอยู่หนูยังฟังอยู่นะคะ แต่พูดออกเสียงไม่ได้ "
-                "หนูจะพิมพ์ตอบในช่องนี้แทนค่ะ)"
+                "(ระหว่างมีเพลงเล่นอยู่หนูจะเบาเสียงเพลงลงแล้วพูดทับให้ค่ะ "
+                "แต่ถ้าหยุดเพลงชั่วคราวไว้ หนูจะพิมพ์ตอบในช่องนี้แทนน้า)"
             )
         else:
             how = (

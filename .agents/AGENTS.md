@@ -278,8 +278,9 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
   when her own clip owns the client. `_audio_worker` decodes the MP3 to PCM (`decode_to_pcm`) and waits
   for `on_done`, which is also called on `cleanup()` so a stopped track cannot strand it. While she
   speaks over music `speaking_until` is finite: `stop_session` treats an infinite one as her own clip
-  and calls `vc.stop()`, which would kill the track. Without a track nothing changes: she `play()`s
-  directly.
+  and calls `vc.stop()`, which would kill the track. Her voice is raised by `SPEECH_OVER_MUSIC_GAIN`
+  (`boost_pcm`: tanh soft limit, so a hot track can be outshouted without clipping; the chime is
+  not boosted). Without a track nothing changes: she `play()`s directly.
 - **Answer to her question**: when a reply ends by asking something (`_asks_user`: a `?`, or Thai
   `คะ` that is not `นะคะ`, or a question word at the end), that speaker's next utterance within
   `STT_ANSWER_WINDOW_S` goes straight to the LLM with no wake word. The window opens when she
@@ -420,8 +421,8 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 
 - **Progress embed** (`utils/ai/progress.py`, used by `/ai voice` replies): a turn can run tens of seconds with nothing on screen, so people repeat the request and get it twice. `TurnProgress` feeds on `thinking` (round n of `AGENT_MAX_ROUNDS`), `plan` (the calls the model chose, labelled by `utils/ai/tools/labels.py`) and `step` (running / ok / failed / skipped) and keeps one embed with a checklist. It appears after 3 s, or at once for a plan of 2+ steps (a quick answer never shows it), is edited in the background (it never blocks the turn) and deleted when the turn ends. A new tool needs a line in `labels.py`, or it shows under its name. `/ai chat` replies keep their own status embed for now
 - **Token budget** (free model: 20 RPM, 50/day without credits): a plain chat is 1 request, a tool turn 2, worst case `AGENT_MAX_ROUNDS`. Button presses, reminders and watches never call the model. Every request carries `max_tokens` = `OPENROUTER_MAX_TOKENS` (4096): without it OpenRouter reserves the model's whole context for the reply and rejects the request when the key's credit cannot cover that.
-- **State**: nothing is persisted (stateless Docker container); pending reminders are lost on restart by design.
 - **What a request carries**: the system prompt, the `[TOOLS]` section (about 30 schemas, resent every round, so no padding: `_tool_text` strips docstring indentation and JSON spaces), up to `MAX_HISTORY_LENGTH` messages, and every earlier tool result of the turn. Search results are the big item: the table of contents caps each snippet and lists three images, a detail read is capped at 3000 characters, and **the system prompt only names the cached queries** (`[CACHED SEARCHES]`; the model re-reads one with the same query, free). Pasting every cached result there used to put an hour of searches on every request, "play a song" included. Each model call logs `[Usage] prompt N + reply M (reasoning R) tokens` (`stream_usage=True` in `models.py`) — read it before cutting anything else.
+- **State**: nothing is persisted (stateless Docker container); pending reminders are lost on restart by design.
 - **History squashing**: consecutive messages with the same `role` are merged (required by some instruct models).
 
 ---

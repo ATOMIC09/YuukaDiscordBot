@@ -120,6 +120,18 @@ def music_mixer(voice_client):
     return source if hasattr(source, "add_overlay") else None
 
 
+def boost_pcm(pcm: bytes, gain: float) -> bytes:
+    """Make 16-bit PCM louder by `gain`, softening the peaks instead of clipping them.
+
+    A plain multiply flat-tops any sample past full scale, which buzzes. tanh is
+    linear for quiet samples and eases the loud ones toward the ceiling, so speech
+    gets louder where it is quiet and nothing goes over."""
+    if gain == 1.0 or not pcm:
+        return pcm
+    samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+    return (np.tanh(samples * gain) * 32767.0).astype(np.int16).tobytes()
+
+
 def pcm_duration_seconds(pcm: bytes) -> float:
     """Wall-clock length of a 48 kHz stereo PCM buffer."""
     return len(pcm) / BYTES_PER_SECOND

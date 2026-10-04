@@ -71,7 +71,7 @@ from discord.ext import commands
 from bot.config import config
 from bot.logger import logger
 from utils import chime, wake
-from utils.audio import decode_to_pcm, music_mixer, pcm_duration_seconds
+from utils.audio import boost_pcm, decode_to_pcm, music_mixer, pcm_duration_seconds
 from utils.ai import YuukaContext, run_agent
 from utils.ai.progress import TurnProgress
 from utils.embeds import (
@@ -384,7 +384,9 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         now = time.perf_counter()
         session.speaking_from = now
         session.speaking_until = now + duration + 0.1 + _ECHO_TAIL_S
-        mixer.add_overlay(pcm, lambda: loop.call_soon_threadsafe(done.set))
+        mixer.add_overlay(
+            boost_pcm(pcm, config.speech_over_music_gain), lambda: loop.call_soon_threadsafe(done.set)
+        )
         _mark_first_output(timing, "first sound (over the music)")
 
         try:

@@ -76,6 +76,7 @@ class Config:
     stt_wake_head_chars: int = 0       # 0 = match the name anywhere; N = first N chars only
     stt_listen_window_s: float = 5.0
     stt_answer_window_s: float = 7.0
+    speech_over_music_gain: float = 2.0  # her voice's level while she talks over a track, 1 = as synthesised
     # UNUSED since the chime moved to after the transcript. They drove shortcuts that
     # trusted a high acoustic score as proof of her name; yuuka_wakeword_v3 is too weak
     # and speaker-dependent for that (see wakeword_training/TRAINING.md, "v3 in a real
@@ -179,6 +180,7 @@ class Config:
             stt_wake_head_chars=int(os.getenv("STT_WAKE_HEAD_CHARS", "0")),
             stt_listen_window_s=float(os.getenv("STT_LISTEN_WINDOW_S", "5")),
             stt_answer_window_s=float(os.getenv("STT_ANSWER_WINDOW_S", "7")),
+            speech_over_music_gain=max(0.1, float(os.getenv("SPEECH_OVER_MUSIC_GAIN", "2"))),
             stt_wake_acoustic_confident_score=float(os.getenv("STT_WAKE_ACOUSTIC_CONFIDENT_SCORE", "0.5")),
             stt_wake_relaxed_threshold=int(os.getenv("STT_WAKE_RELAXED_THRESHOLD", "70")),
             stt_wake_acoustic_enabled=os.getenv("STT_WAKE_ACOUSTIC_ENABLED", "true").strip().lower()

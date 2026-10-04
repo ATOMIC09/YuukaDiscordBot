@@ -29,6 +29,9 @@ because it is a near-miss of the *name*, not an artefact of where we looked.
 The default threshold of 80 sits in that gap. `head_chars` is still there for
 a room noisy enough to need it.
 
+Only the edges count, though: a name in the middle of a sentence is a mention, not
+a summons (see `_MAX_LEAD_CHARS`).
+
 On a hit we return the sentence with the wake word cut out, wherever it was,
 so "ยูกะ ช่วยบอกเวลาหน่อย" and "ช่วยบอกเวลาหน่อยยูกะ" both reach the LLM as
 "ช่วยบอกเวลาหน่อย".
@@ -86,6 +89,14 @@ _GAP = re.compile(r"\s{2,}")
 # misheard "โยกา" is cut as "ยกา" and leaves a stray "โ" behind; one or two
 # characters are never a request.
 _MIN_REMAINDER_CHARS = 3
+
+# Addressing someone puts their name at an edge of the sentence: first, after at
+# most a short opener ("เฮ้ย", "hey", "โอเค"), or last, before at most a particle
+# ("ครับ", "นะคะ", "หน่อย"). Counted on the normalised text, where tone marks and
+# spaces are already gone. A name deeper inside a sentence is talk *about* her
+# ("ต้องพูดคำว่า ยูกะ ร้อยรอบ") and is not a summons.
+_MAX_LEAD_CHARS = 5
+_MAX_TRAIL_CHARS = 4
 
 
 @dataclass(frozen=True)
@@ -171,7 +182,7 @@ def detect(
 
     *head_chars* limits the search to the first N characters; 0 — the default —
     searches the whole utterance, which is what catches a name spoken at the
-    end of a sentence.
+    end of a sentence, but accepts it only at the start or the end.
 
     Returns a :class:`WakeMatch` whose ``score`` is the best match found even
     when nothing cleared *threshold* — log it to tune the threshold against
@@ -214,16 +225,23 @@ def detect(
         if score < _floor(needle, threshold) or score <= match_score:
             continue
 
-        match_score = score
-        match_word = word
         # partial_ratio_alignment swaps its arguments when the first is the
         # longer one, which would make dest_start/dest_end refer to the needle
         # instead. Wake words are short, so that only happens on a near-empty
         # utterance — treat the whole thing as the name there.
         if len(needle) <= len(haystack):
-            match_start, match_end = alignment.dest_start, alignment.dest_end
+            start, end = alignment.dest_start, alignment.dest_end
         else:
-            match_start, match_end = 0, len(haystack)
+            start, end = 0, len(haystack)
+
+        # `head_chars` is an explicit choice of where to look, so the edge rule
+        # only applies to the default whole-utterance search.
+        if head_chars <= 0 and start > _MAX_LEAD_CHARS and len(haystack) - end > _MAX_TRAIL_CHARS:
+            continue
+
+        match_score = score
+        match_word = word
+        match_start, match_end = start, end
 
     if not match_word:
         return WakeMatch(False, best_score, best_word)

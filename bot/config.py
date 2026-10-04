@@ -76,6 +76,10 @@ class Config:
     stt_wake_head_chars: int = 0       # 0 = match the name anywhere; N = first N chars only
     stt_listen_window_s: float = 8.0
     stt_answer_window_s: float = 15.0
+    # UNUSED since the chime moved to after the transcript. They drove shortcuts that
+    # trusted a high acoustic score as proof of her name; yuuka_wakeword_v3 is too weak
+    # and speaker-dependent for that (see wakeword_training/TRAINING.md, "v3 in a real
+    # group call"). Kept so they can be wired back in once a v4 model scores reliably.
     stt_wake_acoustic_confident_score: float = 0.5
     stt_wake_relaxed_threshold: int = 70
 

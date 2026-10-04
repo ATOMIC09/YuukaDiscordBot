@@ -218,18 +218,20 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
   ran out unused. A cough (empty transcript) does not use it up, and a sentence that started before
   the deadline still counts. This also covers "Yuuka, *(pause)*, what time is it": `voice_hub` cuts
   a segment on ~800ms of packet silence, so the name and the question arrive as two segments.
-- **Signal on the gate, before STT**: a segment is only known at its end (`STT_SILENCE_MS`), so
-  nothing can beat that. But the moment the acoustic gate passes (`STT_WAKE_ACOUSTIC_THRESHOLD`) she
-  gives the signal and opens the listening window, without waiting for STT: people talk as soon as
-  they hear it, possibly while the first segment is still being transcribed. If the transcript is
-  not her name the window and notice are taken back (`_stop_listening`) and that signal was a false
-  alarm — except when the acoustic score is `>= STT_WAKE_ACOUSTIC_CONFIDENT_SCORE` and the segment
-  is at most `_NAME_ONLY_MAX_S` (1.6 s): then a transcript that does not look like her name is
-  taken as Whisper mishearing it (ヨーカ, ヨガ) and counts as a bare wake word.
+- **The signal waits for the transcript**: a segment is only known at its end (`STT_SILENCE_MS`), and
+  the acoustic score is not proof of her name (v3 scores 0.4-0.6 at best on a clear Thai voice, 0.0-0.1
+  with noise, and varies a lot between speakers; it also fires on ordinary talk). So the chime and the
+  listening window only come after `wake.detect` matches the transcript. The score only decides whether
+  a segment is worth transcribing. A segment from the same speaker that arrives while the name is
+  still in STT waits for the verdict (`session.verifying`, at most `_VERDICT_WAIT_S`) instead of being
+  gated on its own, so "Yuuka" + an immediate request still works. An earlier version chimed on the
+  gate and took it back; people heard a chime for chatter, and "confident score" shortcuts built on the
+  same assumption (a short clip "must be her name") swallowed real commands. Both were removed;
+  `STT_WAKE_ACOUSTIC_CONFIDENT_SCORE` and `STT_WAKE_RELAXED_THRESHOLD` stay in `Config` and
+  `.env.example`, marked unused, for a future model that scores reliably.
 - **Her name while listening** (spamming it because nothing seemed to happen) is not the request:
-  a short segment the model is confident about, or a transcript that is just her name, restarts the
-  window with a fresh signal (`_relisten`) and never reaches the LLM; a name followed by words is
-  cut out of the request.
+  a transcript that is just her name restarts the window with a fresh signal (`_relisten`) and never
+  reaches the LLM; a name followed by words is cut out of the request.
 - **The chime itself**: starts with 150 ms of silence, because clients clip the opening of a short
   sound that arrives with the speaking signal. The first sound on a fresh connection is clipped
   even more (a chime was inaudible until her first spoken reply), so `_open_session` plays 400 ms of
@@ -240,14 +242,6 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
   after a reply that asks a question (the answer window, `STT_ANSWER_WINDOW_S`, same closing chime
   if unused) and when a `voice_kick` / `voice_disconnect_timer` confirmation is posted (`expect_answer`).
   Both run after her line has finished, so the voice client is free.
-- **Acoustic confidence relaxes the text threshold**: Whisper sometimes hears "ยูกะ" as "อยู่กับ"
-  (a real, common word — scores 75, just under the default `STT_WAKE_THRESHOLD=80` on purpose, see
-  utils/wake.py). When the acoustic score clears `STT_WAKE_ACOUSTIC_CONFIDENT_SCORE` (0.5), the
-  text match uses `STT_WAKE_RELAXED_THRESHOLD` (70) instead — ordinary speech saying "อยู่กับ"
-  won't also score 0.5+ on the acoustic model, so this doesn't reopen that false-positive risk.
-  A match that only cleared the relaxed threshold, in a segment of at most `_NAME_ONLY_MAX_S`, is a
-  misheard name: its leftover letters ("You got it" → "ot it") are not sent to the LLM as a request,
-  it counts as a bare wake word.
 - **Bots are never speakers**: `_on_segment` drops segments from other bot accounts before any STT.
   A second Yuuka in the room (a test instance) hears the first one's chime as a wake word and
   answers with its own, and the two chime at each other every ~3 s, each round costing STT requests
@@ -325,7 +319,9 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 - ASR never spells a name the same way twice, and Thai makes it worse: "Yuuka" comes back as
   ยูกะ / ยูก้า / ยูคะ / ยุกะ / ยูก๊ะ. Exact matching fails constantly.
 - Normalises away tone marks, spacing, punctuation and case, then fuzzy-matches (rapidfuzz
-  `partial_ratio`) against the **whole utterance**. Thai puts the vocative at the end as often as
+  `partial_ratio`) against the **whole utterance**, but a hit only counts at the start (after at most
+  `_MAX_LEAD_CHARS`, a "เฮ้ย"/"hey") or the end (before at most `_MAX_TRAIL_CHARS`, a "ครับ"/"นะคะ"):
+  a name deeper in a sentence is talk about her ("ต้องพูดคำว่า ยูกะ ร้อยรอบ"), not a summons. Thai puts the vocative at the end as often as
   the front — "แล้วอีกแบบคืออะไรล่ะยูกะ" scores 29 on the first 16 chars and 100 on the whole line —
   so a head-only match misses half of real summons. It costs less precision than it looks: the
   phrase it collides with, "อยู่กับ", scores 75 either way, because it is a near-miss of the *name*

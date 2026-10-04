@@ -66,6 +66,31 @@ Re-derive with `compare_models.py` on every promotion — then keep it if it hol
 
 `steps` in the config sets phase 1 only; the real total is `steps + steps/10 + steps/10`.
 
+### v3 in a real group call (2026-10-04)
+
+First test with three people in one Discord VC, production gate `STT_WAKE_ACOUSTIC_THRESHOLD=0.3`:
+
+- On the maintainer's voice, a clear "ยูกะ" in a quiet room scores **0.4-0.6** at best. With noise
+  from someone's speakers, or an unclear take, it scores **0.0-0.1**: below the gate, so the call
+  is dropped with no chime and no transcript.
+- **It depends on the speaker.** One friend wakes her first time; another needs many tries. This
+  is the Piper single-accent gap described in [Why v3 lost](#why-v3-lost-single-tts-overfitting),
+  now seen on real voices.
+- The cost is not just recall. A silently dropped first call looks like a slow bot, so people
+  repeat the name, and the repeats are what trigger the misheard follow-ups and the confusion
+  about who woke her.
+- No v3 score means "sure" on a Thai voice, so the bot no longer trusts a high score for anything (`STT_WAKE_ACOUSTIC_CONFIDENT_SCORE` is kept but unused; production had to put it below the gate). The score only picks which segments to transcribe.
+
+What v4 needs from this, on top of the TODO list below:
+
+- **Real positives recorded through Discord**, not a local mic: Opus → decode → 16 kHz is the
+  deployment path. Several server members, each saying "ยูกะ" 20-30 times in a normal call, with
+  chatter in between; that chatter is in-domain negatives. Labelling can start from the STT
+  transcript and the text wake match, then be checked by hand.
+- The same clips decide **v2 vs v3 (vs v4)** on these speakers before any promotion.
+- Pick the gate for recall: a miss costs a dropped summon, a false accept costs one Groq request
+  (free tier: 20 RPM, 2,000 a day).
+
 ---
 
 ## Running a training run

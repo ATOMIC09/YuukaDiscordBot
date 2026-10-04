@@ -48,8 +48,15 @@ async def _run(
 async def music_play(query: str, ctx: Ctx):
     """Play or queue a song in the voice channel the requester is in.
 
-    `query` must be a song name or URL the user gave, or one found by
-    web_search in this conversation. Never make one up.
+    `query` is the song name or URL the user gave, exactly as heard, in the
+    language they said it, taken from their LATEST message only. A title from an
+    earlier request (one you played or searched, however similar) is not this one's:
+    reuse it only when they say "again" or "that song". This searches YouTube
+    itself, so when the user named a song, call it straight away: not recognising
+    it is no reason to search or to swap in another song (speech recognition
+    garbles names, and the user sees which song started). Use web_search first
+    only when the user describes a song without naming it, or asks you to look it
+    up. Never make one up.
     """
     return await _run(ctx, "music_play", query)
 

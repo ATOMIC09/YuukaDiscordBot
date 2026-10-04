@@ -365,6 +365,10 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
   default 80 means "one character in three is wrong", which in Japanese is a different word: ゆうか
   hits exactly 80 on ユーザー, ユーチューブ and every other ユー… word, while a genuine summons
   scores 100. Thai and romaji variants are 4+ characters and keep the configured threshold.
+- **An utterance shorter than the name is scored with `ratio`, not `partial_ratio`.** `partial_ratio`
+  gives 100 to any string contained in the other, so a transcript of just "a" or "u" scored 100
+  against `yuka` and chimed for a bare "eh" (seen in production, right after a music request). A
+  clipped "yuk" still passes (86); a lone letter or "ยู" does not.
 - Non-matches are logged at DEBUG **with their score** — tune `STT_WAKE_THRESHOLD` against what
   your speakers' mics actually produce rather than guessing. The score reported on a miss is the
   best *raw* score, even if it was rejected by the short-needle floor.

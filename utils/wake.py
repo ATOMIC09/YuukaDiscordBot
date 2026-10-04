@@ -43,7 +43,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
-from rapidfuzz.fuzz import partial_ratio_alignment
+from rapidfuzz.fuzz import partial_ratio_alignment, ratio
 
 # Thai marks that sit above/below a consonant and do not change which sound
 # the ASR heard — tone marks, maitaikhu, thanthakhat, nikhahit. Stripping them
@@ -214,25 +214,25 @@ def detect(
         if not needle:
             continue
 
-        alignment = partial_ratio_alignment(needle, haystack)
-        if alignment is None:
-            continue
+        if len(needle) <= len(haystack):
+            alignment = partial_ratio_alignment(needle, haystack)
+            if alignment is None:
+                continue
+            score = alignment.score
+            start, end = alignment.dest_start, alignment.dest_end
+        else:
+            # An utterance shorter than the name is not "contained" in it: the
+            # partial score of a lone "a" or "u" against "yuka" is 100, and every
+            # filler the ASR hears as one letter would summon her. Compare the
+            # two whole, so only a clipped name ("yuk") still scores high.
+            score = ratio(needle, haystack)
+            start, end = 0, len(haystack)
 
-        score = alignment.score
         if score > best_score:
             best_score, best_word = score, word
 
         if score < _floor(needle, threshold) or score <= match_score:
             continue
-
-        # partial_ratio_alignment swaps its arguments when the first is the
-        # longer one, which would make dest_start/dest_end refer to the needle
-        # instead. Wake words are short, so that only happens on a near-empty
-        # utterance — treat the whole thing as the name there.
-        if len(needle) <= len(haystack):
-            start, end = alignment.dest_start, alignment.dest_end
-        else:
-            start, end = 0, len(haystack)
 
         # `head_chars` is an explicit choice of where to look, so the edge rule
         # only applies to the default whole-utterance search.

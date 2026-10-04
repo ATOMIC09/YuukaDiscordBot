@@ -42,6 +42,10 @@ How speech reaches the LLM
    session is never torn down: while music plays she keeps listening and
    answers in the text channel instead of out loud.
 
+Each spoken turn logs how long every stage took, counted from the moment the hub
+closed the segment (`[Timing]` lines, see `_mark`), so a slow reply can be traced
+to its stage instead of guessed at.
+
 Both a typed message and a spoken one land in `_respond()`, so the two entry
 points cannot drift apart.
 
@@ -56,6 +60,7 @@ import asyncio
 import os
 import re
 import time
+from collections import deque
 from dataclasses import dataclass, field
 
 import discord
@@ -100,6 +105,18 @@ _VOICE_PROMPT_SUFFIX = (
     "meant from context; ask for a repeat only if it is genuinely unclear."
 )
 
+# Added to the system prompt while more than one person is in the voice channel, so a
+# reply says who it is for (several people can be waiting on her at once).
+_MULTI_SPEAKER_NOTE = (
+    "\n\nSeveral people are talking to you in this call. Each user turn shows who "
+    "spoke. Start your reply by addressing that person by the name shown, so the room "
+    "knows who it is for, then answer. Skip the name if it is only symbols or emoji."
+)
+
+# Requests waiting behind the one she is answering. A room of friends never gets near
+# this; it only bounds a stuck turn.
+_MAX_PENDING = 6
+
 # Stands in for the chime when a track holds the voice client.
 _LISTENING_NOTICE = "-# (๑•̀ᴗ•́)و หนูฟังอยู่ค่ะ เซนเซย์ พูดได้เลยน้า"
 
@@ -141,6 +158,49 @@ _VERDICT_WAIT_S = 5.0
 _SPEECH_DRAIN_TIMEOUT_S = 60.0
 
 
+def _mark(display: str, label: str, t0: float | None) -> None:
+    """Log that a stage of a spoken turn finished, in seconds since `t0`.
+
+    `t0` is when the hub closed the segment, which is `STT_SILENCE_MS` after the
+    speaker actually stopped, so add that to what a speaker felt."""
+    if t0 is not None:
+        logger.info(f"[Timing] {display}: {label} +{time.perf_counter() - t0:.2f}s")
+
+
+@dataclass
+class _Request:
+    """One thing someone asked her, waiting for or in the middle of its turn."""
+
+    user_id: int | None
+    speaker: str
+    text: str
+    member: discord.Member | None = None
+    heard_at: float | None = None  # when its segment closed, for the timing log
+
+
+@dataclass
+class _Timing:
+    """One timed spoken turn. It rides along with each clip she queues, because the
+    audio worker plays it after `_respond` has already returned."""
+
+    speaker: str
+    t0: float
+    first_output_logged: bool = False
+
+
+def _mark_turn(session: "VoiceChatSession", label: str) -> None:
+    """`_mark` for the spoken turn the session is answering, if it is timed."""
+    if session.timing is not None:
+        _mark(session.timing.speaker, label, session.timing.t0)
+
+
+def _mark_first_output(timing: _Timing | None, label: str) -> None:
+    """Log the first thing of a turn the room could hear or read; later ones are not news."""
+    if timing is not None and not timing.first_output_logged:
+        timing.first_output_logged = True
+        _mark(timing.speaker, label, timing.t0)
+
+
 @dataclass
 class VoiceChatSession:
     """All state for a single active voice-chat session (one per guild)."""
@@ -156,9 +216,11 @@ class VoiceChatSession:
     speaking_from: float = 0.0
     speaking_until: float = 0.0
 
-    # One in-flight generation per guild — a second speaker interrupting mid
-    # thought gets their words remembered, not answered twice over.
+    # One in-flight generation per guild. A request that arrives meanwhile (a second
+    # speaker, or the same one asking again) waits in `pending` and is answered in turn.
     busy: bool = False
+    active: _Request | None = None
+    pending: deque = field(default_factory=deque)
 
     # Speakers she is listening to after their bare wake word, by user id. The
     # window itself is `awaiting_answer`; this task only sounds the closing chime
@@ -173,6 +235,9 @@ class VoiceChatSession:
     # by user id. Set once that verdict is known, so a segment that arrives meanwhile
     # (a request right after the name) waits for it instead of being gated on its own.
     verifying: dict[int, asyncio.Event] = field(default_factory=dict)
+
+    # The spoken turn being answered, or None for a typed one. See `_mark`.
+    timing: _Timing | None = None
 
     # Whether the room has already been told she is typing instead of speaking.
     # Explaining it once per silent stretch is helpful; repeating it above every
@@ -217,7 +282,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         logger.debug(f"[AI Voice] Audio worker started for guild {guild_id}")
         try:
             while True:
-                mp3_path, spoken_text = await session.queue.get()
+                mp3_path, spoken_text, timing = await session.queue.get()
 
                 vc = session.voice_client
                 if not vc or not vc.is_connected():
@@ -225,7 +290,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                         f"[AI Voice] Voice client gone for guild {guild_id}, posting the line instead"
                     )
                     self._discard(mp3_path)
-                    await self._post_unspoken(session, spoken_text)
+                    await self._post_unspoken(session, spoken_text, timing)
                     session.queue.task_done()
                     continue
 
@@ -238,7 +303,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                         f"[AI Voice] Voice client busy in guild {guild_id}, posting the line instead"
                     )
                     self._discard(mp3_path)
-                    await self._post_unspoken(session, spoken_text)
+                    await self._post_unspoken(session, spoken_text, timing)
                     session.queue.task_done()
                     continue
 
@@ -257,6 +322,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                 source = discord.FFmpegPCMAudio(mp3_path)
                 vc.play(source, after=_after)
                 chime.mark_warm(vc)
+                _mark_first_output(timing, "first sound")
 
                 await play_done.wait()
 
@@ -348,6 +414,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         if deadline is not None and segment.started_at <= deadline:
             if result is None:
                 result = await transcribe_pcm(segment.pcm, display)
+                _mark(display, "transcript (answer)", segment.ended_at)
             if not result.text:
                 # A cough or a breath must not use up the window.
                 if time.perf_counter() < deadline:
@@ -371,7 +438,9 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             self._cancel_listening(session, segment.user_id)
             logger.info(f"[AI Voice] Heard {display} while listening: {text}")
             await self._announce_and_respond(
-                segment.guild_id, session, display, text, member, heard=result.text
+                segment.guild_id, session, display, text, member,
+                heard=result.text, heard_at=segment.ended_at,
+                user_id=segment.user_id,
             )
             return
 
@@ -390,6 +459,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             f"[AI Voice] Acoustic wake hit from {display} "
             f"(score {acoustic_score:.3f} >= {config.stt_wake_acoustic_threshold})"
         )
+        _mark(display, "acoustic gate passed", segment.ended_at)
 
         # The acoustic score only says "worth transcribing". It is not proof of her
         # name (weak on some voices, and it fires on ordinary talk), so nothing is
@@ -404,6 +474,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         try:
             if result is None:
                 result = await transcribe_pcm(segment.pcm, display)
+                _mark(display, "transcript", segment.ended_at)
             if not result.text:
                 return
 
@@ -428,8 +499,15 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                 f"(threshold {config.stt_wake_threshold}) from {display}"
             )
 
-            chimed = chime.play(session.voice_client, "wake")
             remainder = match.remainder
+            if self._already_asked(session, segment.user_id, remainder):
+                # No chime and no new window: a second signal would only open a
+                # listening window whose next sentence goes to the model.
+                logger.info(f"[AI Voice] {display} repeated a request she is already on: {result.text!r}")
+                return
+
+            chimed = chime.play(session.voice_client, "wake")
+            _mark(display, "chime" if chimed else "chime skipped (voice busy)", segment.ended_at)
             if not remainder:
                 # Just her name and nothing else: she listens for the next thing
                 # this speaker says.
@@ -444,7 +522,8 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             # The request came with her name, so there is nothing left to listen for.
             await self._announce_and_respond(
                 segment.guild_id, session, display, remainder, member,
-                heard=result.text,
+                heard=result.text, heard_at=segment.ended_at,
+                user_id=segment.user_id,
             )
 
     def _start_listening(
@@ -539,6 +618,8 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         prompt: str,
         member: discord.Member | None = None,
         heard: str | None = None,
+        heard_at: float | None = None,
+        user_id: int | None = None,
     ) -> None:
         """Post what she heard, then generate and speak a reply.
 
@@ -556,7 +637,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         except discord.HTTPException:
             pass
 
-        await self._respond(guild_id, session, display, prompt, member)
+        await self._respond(guild_id, session, display, prompt, member, heard_at, user_id)
 
     # ──────────────────────────────────────────────────────────────────────
     # Shared reply path — used by both spoken and typed input
@@ -577,7 +658,9 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         except OSError:
             pass
 
-    async def _post_unspoken(self, session: VoiceChatSession, text: str) -> None:
+    async def _post_unspoken(
+        self, session: VoiceChatSession, text: str, timing: _Timing | None = None
+    ) -> None:
         """Deliver in text what she could not say out loud.
 
         Reached whenever the audio slot is unavailable — most often because a
@@ -603,6 +686,8 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             await session.text_channel.send(body)
         except discord.HTTPException as exc:
             logger.warning(f"[AI Voice] Could not post an unspoken line: {exc}")
+        else:
+            _mark_first_output(timing, "answer posted as text")
 
     async def _speak(self, session: VoiceChatSession, text: str) -> None:
         """Say `text` out loud, or post it if the voice slot is taken.
@@ -618,7 +703,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         vc = session.voice_client
         if vc and (vc.is_playing() or vc.is_paused()):
             logger.info("[AI Voice] Voice slot taken, answering in text without synthesizing")
-            await self._post_unspoken(session, text)
+            await self._post_unspoken(session, text, session.timing)
             return
 
         spoken = _speakable(text)
@@ -627,9 +712,10 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
 
         try:
             mp3_path = await synthesize_speech(spoken)
+            _mark_turn(session, "speech synthesized")
             # The original text, links included, rides along so the worker can
             # still deliver the answer if it turns out it cannot play the audio.
-            await session.queue.put((mp3_path, text))
+            await session.queue.put((mp3_path, text, session.timing))
             logger.debug(f"[AI Voice] Enqueued audio (queue size: {session.queue.qsize()})")
         except Exception as exc:
             logger.error(f"[AI Voice] TTS synthesis failed: {exc}")
@@ -646,6 +732,28 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         except asyncio.TimeoutError:
             logger.warning("[AI Voice] Timed out waiting for queued speech to finish")
 
+    def _already_asked(self, session: VoiceChatSession, user_id: int, text: str) -> bool:
+        """Whether she is already on this: they have a request being answered or waiting.
+
+        With no text (the bare name) any such request counts, because "Yuuka" said
+        again is someone who thinks she did not hear, not a new call. With text it
+        has to be the same words, so a different request is still taken."""
+        mine = [r for r in (session.active, *session.pending) if r is not None and r.user_id == user_id]
+        if not text:
+            return bool(mine)
+        key = wake.normalize(text)
+        return any(wake.normalize(r.text) == key for r in mine)
+
+    @staticmethod
+    def _sync_speaker_note(session: VoiceChatSession) -> None:
+        """Tell the model to name who it is answering, while more than one person is here."""
+        if not session.history or session.history[0].get("role") != "system":
+            return
+        channel = getattr(session.voice_client, "channel", None)
+        people = sum(1 for m in getattr(channel, "members", ()) if not m.bot)
+        base = session.history[0]["content"].replace(_MULTI_SPEAKER_NOTE, "")
+        session.history[0]["content"] = base + (_MULTI_SPEAKER_NOTE if people > 1 else "")
+
     async def _respond(
         self,
         guild_id: int,
@@ -653,111 +761,145 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         speaker: str,
         text: str,
         member: discord.Member | None = None,
+        heard_at: float | None = None,
+        user_id: int | None = None,
     ) -> None:
-        """Generate a reply and speak it, or run the command it asks for."""
-        await self._remember(session, speaker, text)
+        """Answer a request now, or queue it behind the one she is already answering.
+
+        `heard_at` is when the spoken request's segment closed, for the timing log."""
+        if user_id is None and member is not None:
+            user_id = member.id
+        request = _Request(user_id, speaker, text, member, heard_at)
 
         if session.busy:
-            # Their words are in history, so she has the context next turn —
-            # we just don't start a second generation on top of the first.
-            logger.debug(f"[AI Voice] Busy in guild {guild_id}, not replying to {speaker}")
+            # Dropping it would leave the second person talking to nobody, and
+            # they would just say her name again.
+            if len(session.pending) >= _MAX_PENDING:
+                dropped = session.pending.popleft()
+                logger.warning(f"[AI Voice] Queue full in guild {guild_id}, dropped {dropped.speaker}'s request")
+            session.pending.append(request)
+            logger.info(
+                f"[AI Voice] Busy in guild {guild_id}, queued {speaker}'s request "
+                f"({len(session.pending)} waiting)"
+            )
             return
 
         session.busy = True
+        try:
+            while request is not None:
+                session.active = request
+                try:
+                    await self._run_turn(guild_id, session, request)
+                except Exception as exc:
+                    logger.error(f"[AI Voice] Turn for {request.speaker} failed in guild {guild_id}: {exc}")
+                request = session.pending.popleft() if session.pending else None
+        finally:
+            session.busy = False
+            session.active = None
+
+    async def _run_turn(self, guild_id: int, session: VoiceChatSession, request: _Request) -> None:
+        """Generate one reply and speak it, or run the command it asks for."""
+        speaker, text, member = request.speaker, request.text, request.member
+        # Remembered now and not on arrival, so history stays in the order she answered.
+        await self._remember(session, speaker, text)
+        self._sync_speaker_note(session)
+
+        session.timing = _Timing(speaker, request.heard_at) if request.heard_at is not None else None
+        _mark_turn(session, "asking the model")
         full_response = ""
         done: list[dict] = []  # what tools did this turn, for the history
         spoken_upto = 0  # how much of full_response has already been spoken
+
+        async def before_action(extra: str = "") -> None:
+            # Anything she said earlier in the turn went out on a status
+            # event. The tool's own line goes next, and the track must not
+            # start until all of it has been said.
+            if extra:
+                await self._speak(session, extra)
+            await self._await_speech(session)
+
+        # Without a resolved Member there is nobody to run a command on
+        # behalf of, so no action tools are offered.
+        ctx = YuukaContext(
+            bot=self.bot,
+            guild=session.text_channel.guild,
+            requester=member,
+            channel=session.text_channel,
+            voice=True,
+            before_action=before_action,
+        )
+
+        # A slow turn shows what she is doing, so nobody has to repeat the request.
+        progress = TurnProgress(session.text_channel)
         try:
-            async def before_action(extra: str = "") -> None:
-                # Anything she said earlier in the turn went out on a status
-                # event. The tool's own line goes next, and the track must not
-                # start until all of it has been said.
-                if extra:
-                    await self._speak(session, extra)
-                await self._await_speech(session)
-
-            # Without a resolved Member there is nobody to run a command on
-            # behalf of, so no action tools are offered.
-            ctx = YuukaContext(
-                bot=self.bot,
-                guild=session.text_channel.guild,
-                requester=member,
-                channel=session.text_channel,
-                voice=True,
-                before_action=before_action,
-            )
-
-            # A slow turn shows what she is doing, so nobody has to repeat the request.
-            progress = TurnProgress(session.text_channel)
-            try:
-                async with session.text_channel.typing():
-                    async for msg_type, chunk in run_agent(session.history, ctx):
-                        progress.feed(msg_type, chunk)
-                        if msg_type == "error":
-                            dev_msg = chunk.get("dev", chunk) if isinstance(chunk, dict) else chunk
-                            user_msg = chunk.get("user", chunk) if isinstance(chunk, dict) else chunk
-                            logger.error(f"[AI Voice] LLM error in guild {guild_id}: {dev_msg}")
-                            await session.text_channel.send(
-                                embed=error_embed("AI Error", str(user_msg))
-                            )
-                            return
-                        elif msg_type == "content":
-                            full_response += chunk
-                        elif msg_type == "done":
-                            done.extend(chunk)
-                        elif msg_type == "status":
-                            # A tool is about to run. Say anything she has written
-                            # so far now. Text right before a call is dropped
-                            # upstream, so this is usually empty. The status
-                            # text itself is never spoken.
-                            pending = full_response[spoken_upto:]
-                            if pending.strip():
-                                await self._speak(session, pending)
-                                spoken_upto = len(full_response)
-                        elif msg_type == "action":
-                            # Said when the command failed, or when she gave no
-                            # acknowledgement of her own. Out loud if the slot
-                            # is free, in text if a track has taken it.
-                            if not chunk.ok or not full_response.strip():
-                                await self._speak(session, chunk.spoken_fallback)
-            except Exception as exc:
-                logger.error(f"[AI Voice] LLM error in guild {guild_id}: {exc}")
-                await session.text_channel.send(embed=error_embed("AI Error", str(exc)))
-                return
-            finally:
-                await progress.finish()
-
-            # An action-only turn has no text but still happened: without it in the
-            # history the request looks unanswered and gets done again.
-            session.history.extend(done)
-            if not full_response:
-                if not done:
-                    logger.warning(f"[AI Voice] Empty response in guild {guild_id}")
-                return
-
-            logger.debug(f"[AI Voice] LLM response ({len(full_response)} chars): {full_response}")
-            session.history.append({"role": "assistant", "content": full_response})
-
-            tail = full_response[spoken_upto:]
-            if tail.strip():
-                if spoken_upto:
-                    # _speak posts text instead of speaking while the voice
-                    # client is busy, and that includes her own earlier sentence.
-                    await self._await_speech(session)
-                await self._speak(session, tail)
-
-            # The window opens when she stops talking, not when she starts.
-            if member is not None and _asks_user(full_response):
-                await self._await_speech(session)
-                self._start_listening(
-                    session,
-                    member.id,
-                    speaker,
-                    window=config.stt_answer_window_s,
-                    chimed=chime.play(session.voice_client, "wake"),
-                )
+            async with session.text_channel.typing():
+                async for msg_type, chunk in run_agent(session.history, ctx):
+                    progress.feed(msg_type, chunk)
+                    if msg_type == "error":
+                        dev_msg = chunk.get("dev", chunk) if isinstance(chunk, dict) else chunk
+                        user_msg = chunk.get("user", chunk) if isinstance(chunk, dict) else chunk
+                        logger.error(f"[AI Voice] LLM error in guild {guild_id}: {dev_msg}")
+                        await session.text_channel.send(
+                            embed=error_embed("AI Error", str(user_msg))
+                        )
+                        return
+                    elif msg_type == "content":
+                        full_response += chunk
+                    elif msg_type == "done":
+                        done.extend(chunk)
+                    elif msg_type == "status":
+                        # A tool is about to run. Say anything she has written
+                        # so far now. Text right before a call is dropped
+                        # upstream, so this is usually empty. The status
+                        # text itself is never spoken.
+                        pending = full_response[spoken_upto:]
+                        if pending.strip():
+                            await self._speak(session, pending)
+                            spoken_upto = len(full_response)
+                    elif msg_type == "action":
+                        # Said when the command failed, or when she gave no
+                        # acknowledgement of her own. Out loud if the slot
+                        # is free, in text if a track has taken it.
+                        if not chunk.ok or not full_response.strip():
+                            await self._speak(session, chunk.spoken_fallback)
+        except Exception as exc:
+            logger.error(f"[AI Voice] LLM error in guild {guild_id}: {exc}")
+            await session.text_channel.send(embed=error_embed("AI Error", str(exc)))
+            return
         finally:
-            session.busy = False
+            await progress.finish()
+
+        _mark_turn(session, "model finished")
+
+        # An action-only turn has no text but still happened: without it in the
+        # history the request looks unanswered and gets done again.
+        session.history.extend(done)
+        if not full_response:
+            if not done:
+                logger.warning(f"[AI Voice] Empty response in guild {guild_id}")
+            return
+
+        logger.debug(f"[AI Voice] LLM response ({len(full_response)} chars): {full_response}")
+        session.history.append({"role": "assistant", "content": full_response})
+
+        tail = full_response[spoken_upto:]
+        if tail.strip():
+            if spoken_upto:
+                # _speak posts text instead of speaking while the voice
+                # client is busy, and that includes her own earlier sentence.
+                await self._await_speech(session)
+            await self._speak(session, tail)
+
+        # The window opens when she stops talking, not when she starts.
+        if member is not None and _asks_user(full_response):
+            await self._await_speech(session)
+            self._start_listening(
+                session,
+                member.id,
+                speaker,
+                window=config.stt_answer_window_s,
+                chimed=chime.play(session.voice_client, "wake"),
+            )
 
     # ──────────────────────────────────────────────────────────────────────
     # Public API — called by AIChatCog
@@ -787,6 +929,8 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         vc = session.voice_client
         if not vc or vc.is_playing() or vc.is_paused():
             return
+        if not session.busy:
+            session.timing = None  # not part of the last spoken turn
         await self._speak(session, text)
 
     async def _open_session(

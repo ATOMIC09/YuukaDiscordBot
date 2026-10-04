@@ -242,6 +242,19 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
   after a reply that asks a question (the answer window, `STT_ANSWER_WINDOW_S`, same closing chime
   if unused) and when a `voice_kick` / `voice_disconnect_timer` confirmation is posted (`expect_answer`).
   Both run after her line has finished, so the voice client is free.
+- **Several speakers**: one reply is generated per guild at a time (`session.busy`). A request that
+  arrives meanwhile, from another person or the same one, waits in `session.pending` (at most
+  `_MAX_PENDING`) and is answered in turn by the loop in `_respond`; it enters the history only when
+  its turn starts, so history keeps the order she answered in. A person whose request is already being
+  answered or queued (`_already_asked`) who says the bare name again, or the same request again, is
+  ignored with no chime and no listening window: it is someone who thinks she did not hear. With more
+  than one human in the voice channel `_sync_speaker_note` adds `_MULTI_SPEAKER_NOTE` to the system
+  prompt so replies start with the speaker's name; it is removed again when they are alone.
+- **Timing logs**: each spoken turn logs `[Timing] <speaker>: <stage> +N.NNs` (acoustic gate, transcript,
+  chime, asking the model, model finished, speech synthesized, first sound or "answer posted as
+  text"), counted from when the hub closed the segment (`STT_SILENCE_MS` after the speaker stopped).
+  The `_Timing` object rides on each queued clip because the audio worker plays it after `_respond`
+  has returned. Read these before guessing why a reply felt slow.
 - **Bots are never speakers**: `_on_segment` drops segments from other bot accounts before any STT.
   A second Yuuka in the room (a test instance) hears the first one's chime as a wake word and
   answers with its own, and the two chime at each other every ~3 s, each round costing STT requests

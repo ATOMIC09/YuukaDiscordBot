@@ -98,6 +98,13 @@ class Config:
     # compare two models on identical audio. It never decides. Empty = off (production).
     stt_wake_acoustic_compare_path: str = ""
 
+    # ── Server memory (/memory) ───────────────────────────────────────────
+    # Notes live as messages in a hidden channel of each server, never on the machine
+    # the bot runs on; these only bound what is read back into RAM and into a prompt.
+    memory_max_facts: int = 500        # notes kept per server; saving past it is refused
+    memory_notice_max: int = 20        # most notes added to a request on their own; 0 = only when she searches
+    memory_notice_max_chars: int = 5000  # most characters of them (the header counts); every one is prompt the free model pays for
+
     @classmethod
     def from_env(cls) -> "Config":
         """Build a Config instance from environment variables. Raises if required values are missing."""
@@ -205,6 +212,9 @@ class Config:
             ),
             stt_wake_acoustic_threshold=float(os.getenv("STT_WAKE_ACOUSTIC_THRESHOLD", "0.85")),
             stt_wake_acoustic_compare_path=os.getenv("STT_WAKE_ACOUSTIC_COMPARE_PATH", "").strip(),
+            memory_max_facts=max(1, int(os.getenv("MEMORY_MAX_FACTS", "500"))),
+            memory_notice_max=max(0, int(os.getenv("MEMORY_NOTICE_MAX", "20"))),
+            memory_notice_max_chars=max(600, int(os.getenv("MEMORY_NOTICE_MAX_CHARS", "5000"))),
         )
 
 

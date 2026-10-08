@@ -863,7 +863,9 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                 logger.warning(f"[AI Voice] Could not post her reply: {exc}")
                 return
 
-    async def _speak(self, session: VoiceChatSession, text: str, *, posted: bool = False) -> None:
+    async def _speak(
+        self, session: VoiceChatSession, text: str, *, posted: bool = False, typed: bool = True
+    ) -> None:
         """Say `text` out loud, or post it if the voice slot is taken.
 
         The check here is an optimisation, not the safety net: synthesizing an
@@ -872,13 +874,18 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         start in the gap between this line and playback.
 
         `posted` says the text is already in the chat (`_post_reply`), so a voice
-        slot that is taken only needs the reason, not the line again.
+        slot that is taken only needs the reason, not the line again. `typed=False`
+        is for a line that is worth nothing in text (an action's "done", which its
+        embed already says): it is dropped when it cannot be spoken.
         """
         if not text.strip():
             return
 
         vc = session.voice_client
         if vc and (vc.is_playing() or vc.is_paused()) and music_mixer(vc) is None:
+            if not typed:
+                logger.info("[AI Voice] Voice slot taken, not typing a line that is only for speech")
+                return
             logger.info("[AI Voice] Voice slot taken, answering in text without synthesizing")
             if posted:
                 if not session.text_fallback_announced:
@@ -904,7 +911,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             # The original text, links included, rides along so the worker can
             # still deliver the answer if it turns out it cannot play the audio
             # (nothing to deliver when the chat already has it).
-            await session.queue.put((mp3_path, "" if posted else text, session.timing))
+            await session.queue.put((mp3_path, "" if posted or not typed else text, session.timing))
             logger.debug(f"[AI Voice] Enqueued audio (queue size: {session.queue.qsize()})")
         except Exception as exc:
             logger.error(f"[AI Voice] TTS synthesis failed: {exc}")
@@ -1018,6 +1025,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         spoken_upto = 0  # how much of full_response has already been spoken
         said = ""  # the last part of the reply she read aloud, to see whether it asked something
         searched = False  # a web search ran this turn, so its reply is clipped for speech
+        acknowledged = False  # an action's own "done" line has been said this turn
 
         async def before_action(extra: str = "") -> None:
             # Anything she said earlier in the turn went out on a status
@@ -1070,9 +1078,16 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                     elif msg_type == "action":
                         # Said when the command failed, or when she gave no
                         # acknowledgement of her own. Out loud if the slot
-                        # is free, in text if a track has taken it.
-                        if not chunk.ok or not full_response.strip():
+                        # is free, in text if a track has taken it. A failure always
+                        # says something new; a success is acknowledged once per
+                        # turn, or ten queued songs are ten sentences, each of which
+                        # the next command waits for.
+                        if not chunk.ok:
                             await self._speak(session, chunk.spoken_fallback)
+                        elif not full_response.strip() and not acknowledged:
+                            acknowledged = True
+                            # Spoken only: the action's embed already says it is done.
+                            await self._speak(session, chunk.spoken_fallback, typed=False)
         except Exception as exc:
             logger.error(f"[AI Voice] LLM error in guild {guild_id}: {exc}")
             await session.text_channel.send(embed=error_embed("AI Error", str(exc)))

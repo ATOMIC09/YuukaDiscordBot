@@ -69,10 +69,18 @@ class SpeechSegment:
     started_at: float  # perf_counter of the first packet
     ended_at: float  # perf_counter when silence closed the segment
     truncated: bool = False  # hit the max-length cap while still talking
+    # Where the speaker's client stopped sending packets for a while: (byte offset into
+    # `pcm`, seconds of silence). That silence is not in `pcm`, which only joins the packets
+    # that arrived, so this is the only record of a pause shorter than the segment gap.
+    pauses: tuple[tuple[int, float], ...] = ()
 
     @property
     def duration(self) -> float:
         return len(self.pcm) / BYTES_PER_SECOND
+
+
+# Shortest packet gap worth recording as a pause. Consumers pick their own, longer, bar.
+_PAUSE_MIN_S = 0.15
 
 
 @dataclass
@@ -82,6 +90,9 @@ class _Utterance:
     started_at: float
     last_packet: float
     buf: bytearray = field(default_factory=bytearray)
+    pauses: list[tuple[int, float]] = field(default_factory=list)
+    last_rtp_ts: int | None = None
+    last_frames: int = 0  # samples (48 kHz) the previous packet covered
 
 
 class SegmentingSink(discord.sinks.Sink):
@@ -171,6 +182,19 @@ class SegmentingSink(discord.sinks.Sink):
                 utterance = _Utterance(started_at=now, last_packet=now)
                 self._utterances[user_id] = utterance
 
+            if rtp_ts is not None:
+                # The RTP clock keeps running while the client sends nothing, so the
+                # jump beyond what the last packet covered is the silence in between.
+                # Measured from the stamps, not wall-clock, for the reason given on the class.
+                if utterance.last_rtp_ts is not None:
+                    delta = (rtp_ts - utterance.last_rtp_ts) & 0xFFFFFFFF
+                    gap = delta - utterance.last_frames
+                    # delta >= 2**31 is a stamp that went backwards (a reordered packet).
+                    if delta < 0x80000000 and gap >= _PAUSE_MIN_S * OPUS_SAMPLE_RATE:
+                        utterance.pauses.append((len(utterance.buf), gap / OPUS_SAMPLE_RATE))
+                utterance.last_rtp_ts = rtp_ts
+                utterance.last_frames = len(pcm) // BYTES_PER_FRAME
+
             utterance.buf.extend(pcm)
             utterance.last_packet = now
 
@@ -253,6 +277,7 @@ class SegmentingSink(discord.sinks.Sink):
             started_at=utterance.started_at,
             ended_at=now,
             truncated=truncated,
+            pauses=tuple(utterance.pauses),
         )
         logger.debug(
             f"[VoiceHub] Segment: user={user_id} {duration:.2f}s truncated={truncated}"

@@ -29,8 +29,10 @@ because it is a near-miss of the *name*, not an artefact of where we looked.
 The default threshold of 80 sits in that gap. `head_chars` is still there for
 a room noisy enough to need it.
 
-Only the edges count, though: a name in the middle of a sentence is a mention, not
-a summons (see `_MAX_LEAD_CHARS`).
+By default only the edges count: a name in the middle of a sentence is a mention,
+not a summons (see `_MAX_LEAD_CHARS`). `anywhere=True` (STT_WAKE_ANYWHERE) drops
+that rule and lets the acoustic model be the judge of a call: the cost is that
+"เดี๋ยวให้ยูกากตอบ…" (let Yuuka answer…) now calls her.
 
 On a hit we return the sentence with the wake word cut out, wherever it was,
 so "ยูกะ ช่วยบอกเวลาหน่อย" and "ช่วยบอกเวลาหน่อยยูกะ" both reach the LLM as
@@ -176,13 +178,15 @@ def detect(
     *,
     threshold: int = 80,
     head_chars: int = 0,
+    anywhere: bool = False,
 ) -> WakeMatch:
     """
     Test whether *text* contains one of *wake_words*.
 
     *head_chars* limits the search to the first N characters; 0 — the default —
     searches the whole utterance, which is what catches a name spoken at the
-    end of a sentence, but accepts it only at the start or the end.
+    end of a sentence, but accepts it only at the start or the end unless
+    *anywhere* is set.
 
     Returns a :class:`WakeMatch` whose ``score`` is the best match found even
     when nothing cleared *threshold* — log it to tune the threshold against
@@ -236,7 +240,12 @@ def detect(
 
         # `head_chars` is an explicit choice of where to look, so the edge rule
         # only applies to the default whole-utterance search.
-        if head_chars <= 0 and start > _MAX_LEAD_CHARS and len(haystack) - end > _MAX_TRAIL_CHARS:
+        if (
+            not anywhere
+            and head_chars <= 0
+            and start > _MAX_LEAD_CHARS
+            and len(haystack) - end > _MAX_TRAIL_CHARS
+        ):
             continue
 
         match_score = score

@@ -228,18 +228,35 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
   in front of the name drops it to 0%, music and voices alone pass about 60% at 0.4), so the default is
   v2 at 0.6. `STT_WAKE_ACOUSTIC_COMPARE_PATH` (dev only, empty in production) scores a second model on
   the same windows and logs it beside the first; it never decides.
-- **The signal waits for the transcript**: a segment is only known at its end (`STT_SILENCE_MS`), and
-  the acoustic score is not proof of her name (v3 scored 0.4-0.6 at best on a clear Thai voice, 0.0-0.1
-  with noise, and varied a lot between speakers, measured with the single-window scoring above; it also
-  fires on ordinary talk). So the chime and the
-  listening window only come after `wake.detect` matches the transcript. The score only decides whether
-  a segment is worth transcribing. A segment from the same speaker that arrives while the name is
-  still in STT waits for the verdict (`session.verifying`, at most `_VERDICT_WAIT_S`) instead of being
-  gated on its own, so "Yuuka" + an immediate request still works. An earlier version chimed on the
-  gate and took it back; people heard a chime for chatter, and "confident score" shortcuts built on the
-  same assumption (a short clip "must be her name") swallowed real commands. Both were removed;
-  `STT_WAKE_ACOUSTIC_CONFIDENT_SCORE` and `STT_WAKE_RELAXED_THRESHOLD` stay in `Config` and
-  `.env.example`, marked unused, for a future model that scores reliably.
+- **The signal waits for the transcript, unless the score is sure**: a segment is only known at its end
+  (`STT_SILENCE_MS`), and below `STT_WAKE_ACOUSTIC_CONFIDENT_SCORE` (0.9) the acoustic score is not
+  proof of her name (it fires on ordinary talk), so the chime and the listening window only come after
+  `wake.detect` matches the transcript. The score only decides whether a segment is worth transcribing.
+  A segment from the same speaker that arrives while the name is still in STT waits for the verdict
+  (`session.verifying`, at most `_VERDICT_WAIT_S`) instead of being gated on its own, so "Yuuka" + an
+  immediate request still works.
+- **The early chime** (score at or above `STT_WAKE_ACOUSTIC_CONFIDENT_SCORE`, `AcousticResult.confident`):
+  the chime sounds before STT, so the speaker has a sign at once. The transcript then only decides
+  what she was asked: the name found = the normal path; no name and little said (`_MIN_REQUEST_CHARS`)
+  = STT misheard the name ("8日", "ยุคค่ะ"), so she listens; no name and more said = that text is the
+  request; nothing heard = she listens. Someone she is already answering is left to the normal path
+  (the repeat rule). It only holds for yuuka_wakeword_v2: in 79 minutes of real conversation v2 reached
+  0.9 about once an hour, v3 30-59 times, so never use it with v3. An earlier version chimed on the gate
+  with v3 and took it back (chimes for chatter, a short clip "must be her name" swallowed real
+  commands); what is different now is the model and the every-hop scoring, and a score above 1 turns
+  it off. `STT_WAKE_RELAXED_THRESHOLD` stays unused.
+- **Earlier talk before the name** (`STT_TRIM_BEFORE_NAME`): in a call people talk without 800 ms of
+  quiet, so a segment is often chatter and then "Yuuka, …". The hub records where the speaker's client
+  stopped sending (`SpeechSegment.pauses`; that silence is not in the audio, which only joins the
+  packets) and the gate (1) puts that silence back for scoring (at most 0.6 s), because the model needs
+  silence before the word (a name after a pause was heard 30/40 collapsed and 40/40 restored, with no
+  extra false passes on real conversation), (2) cuts the audio STT hears at the last pause before the
+  name (`AcousticResult.cut`, a packet gap of 0.3 s or a quiet stretch of 0.4 s), keeping it only if the
+  model still hears the name in what is left, and (3) for a segment that did not pass as a whole but
+  scored 0.1, tries the phrases after its last two pauses. Without a pause nothing is cut. A request said
+  right before the name with a pause between is cut too (she chimes and listens for it again). Known
+  limit: the model barely notices losing the first 0.2-0.3 s of the name, so a pause *inside* a name
+  (stretched TTS voices; not natural speech) can cut its first syllable.
 - **Her name while listening** (spamming it because nothing seemed to happen) is not the request:
   a transcript that is just her name restarts the window with a fresh signal (`_relisten`) and never
   reaches the LLM; a name followed by words is cut out of the request.
@@ -355,9 +372,11 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 - ASR never spells a name the same way twice, and Thai makes it worse: "Yuuka" comes back as
   ยูกะ / ยูก้า / ยูคะ / ยุกะ / ยูก๊ะ. Exact matching fails constantly.
 - Normalises away tone marks, spacing, punctuation and case, then fuzzy-matches (rapidfuzz
-  `partial_ratio`) against the **whole utterance**, but a hit only counts at the start (after at most
-  `_MAX_LEAD_CHARS`, a "เฮ้ย"/"hey") or the end (before at most `_MAX_TRAIL_CHARS`, a "ครับ"/"นะคะ"):
-  a name deeper in a sentence is talk about her ("ต้องพูดคำว่า ยูกะ ร้อยรอบ"), not a summons. Thai puts the vocative at the end as often as
+  `partial_ratio`) against the **whole utterance**. With `STT_WAKE_ANYWHERE=true` (the default) a hit
+  counts anywhere and the acoustic model is the judge of a call; with it false a hit only counts at the
+  start (after at most `_MAX_LEAD_CHARS`, a "เฮ้ย"/"hey") or the end (before at most `_MAX_TRAIL_CHARS`,
+  a "ครับ"/"นะคะ"), because a name deeper in a sentence can be talk about her ("ต้องพูดคำว่า ยูกะ
+  ร้อยรอบ"). Thai puts the vocative at the end as often as
   the front — "แล้วอีกแบบคืออะไรล่ะยูกะ" scores 29 on the first 16 chars and 100 on the whole line —
   so a head-only match misses half of real summons. It costs less precision than it looks: the
   phrase it collides with, "อยู่กับ", scores 75 either way, because it is a near-miss of the *name*

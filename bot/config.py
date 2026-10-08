@@ -74,14 +74,19 @@ class Config:
     stt_wake_words: list[str] = field(default_factory=list)
     stt_wake_threshold: int = 80       # rapidfuzz partial_ratio, 0-100
     stt_wake_head_chars: int = 0       # 0 = match the name anywhere; N = first N chars only
+    stt_wake_anywhere: bool = True     # the name counts anywhere in the sentence, not only at its edges
+    stt_trim_before_name: bool = True  # cut earlier talk off the audio when the name follows a pause
     stt_listen_window_s: float = 5.0
     stt_answer_window_s: float = 7.0
     speech_over_music_gain: float = 2.0  # her voice's level while she talks over a track, 1 = as synthesised
-    # UNUSED since the chime moved to after the transcript. They drove shortcuts that
-    # trusted a high acoustic score as proof of her name; yuuka_wakeword_v3 is too weak
-    # and speaker-dependent for that (see wakeword_training/TRAINING.md, "v3 in a real
-    # group call"). Kept so they can be wired back in once a v4 model scores reliably.
-    stt_wake_acoustic_confident_score: float = 0.5
+    # An acoustic score at or above this counts as her name before STT has read it: the chime
+    # sounds at once and a transcript that lacks the name is still taken as a call. Above 1
+    # turns that off. Calibrated for yuuka_wakeword_v2: in a 31 minute group call nothing but
+    # her name reached 0.9, while yuuka_wakeword_v3 gets there on ordinary talk about 20 times
+    # an hour (see wakeword_training/TRAINING.md).
+    stt_wake_acoustic_confident_score: float = 0.9
+    # UNUSED: the text threshold once the acoustic score is confident. The confident path takes
+    # the transcript as it is instead of re-matching it more loosely.
     stt_wake_relaxed_threshold: int = 70
 
     # ── Acoustic wake-word pre-filter (/ai voice only) ────────────────────
@@ -181,10 +186,14 @@ class Config:
             stt_wake_words=stt_wake_words,
             stt_wake_threshold=int(os.getenv("STT_WAKE_THRESHOLD", "80")),
             stt_wake_head_chars=int(os.getenv("STT_WAKE_HEAD_CHARS", "0")),
+            stt_wake_anywhere=os.getenv("STT_WAKE_ANYWHERE", "true").strip().lower()
+            not in ("false", "0", "no"),
+            stt_trim_before_name=os.getenv("STT_TRIM_BEFORE_NAME", "true").strip().lower()
+            not in ("false", "0", "no"),
             stt_listen_window_s=float(os.getenv("STT_LISTEN_WINDOW_S", "5")),
             stt_answer_window_s=float(os.getenv("STT_ANSWER_WINDOW_S", "7")),
             speech_over_music_gain=max(0.1, float(os.getenv("SPEECH_OVER_MUSIC_GAIN", "2"))),
-            stt_wake_acoustic_confident_score=float(os.getenv("STT_WAKE_ACOUSTIC_CONFIDENT_SCORE", "0.5")),
+            stt_wake_acoustic_confident_score=float(os.getenv("STT_WAKE_ACOUSTIC_CONFIDENT_SCORE", "0.9")),
             stt_wake_relaxed_threshold=int(os.getenv("STT_WAKE_RELAXED_THRESHOLD", "70")),
             stt_wake_acoustic_enabled=os.getenv("STT_WAKE_ACOUSTIC_ENABLED", "true").strip().lower()
             not in ("false", "0", "no"),

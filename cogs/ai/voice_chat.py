@@ -15,7 +15,10 @@ How speech reaches the LLM
 2. `utils.wake_acoustic` scores the raw segment against a trained wake-word
    model *before* anything gets transcribed. This is a cheap pre-filter, not
    the trigger — a miss means "not worth transcribing", not "definitely not
-   Yuuka", so every segment goes through it, every time.
+   Yuuka", so every segment goes through it, every time. It also cuts earlier talk
+   off the front of a segment when a pause comes before her name, and a score at
+   or above STT_WAKE_ACOUSTIC_CONFIDENT_SCORE chimes before STT has run (see
+   `_on_segment`).
 3. `utils.stt` transcribes the segment with faster-whisper, which handles the
    Thai/English code-switching this server actually speaks.
 4. `utils.wake` decides whether Yuuka was addressed. **This gate is the whole
@@ -62,6 +65,7 @@ import asyncio
 import os
 import re
 import time
+import unicodedata
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -124,6 +128,12 @@ _MAX_PENDING = 6
 # holding the voice client. Over a playing track the chime itself sounds.
 _LISTENING_NOTICE = "-# (๑•̀ᴗ•́)و หนูฟังอยู่ค่ะ เซนเซย์ พูดได้เลยน้า"
 
+# When the acoustic model is sure it was her name (the early chime) and the transcript
+# has no name in it, STT misheard it. Fewer characters than this is all that was said
+# (the mishearings seen were 2-8: "8日", "ยุคค่ะ", "อยู่ป่ะ", "You got it."), so she
+# listens for the request; more is the request itself.
+_MIN_REQUEST_CHARS = 12
+
 _MD_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 # Includes Discord's <https://...> form, which tool results use for links.
 _BARE_URL = re.compile(r"<?https?://[^\s>]+>?")
@@ -138,6 +148,11 @@ _ASKS = re.compile(
 
 def _asks_user(text: str) -> bool:
     return bool(_ASKS.search(_TRAILING_NOISE.sub("", text.strip())))
+
+
+def _spoken_chars(text: str) -> int:
+    """How much was said: characters that are not spaces or punctuation (Thai marks count)."""
+    return sum(1 for ch in text if not ch.isspace() and unicodedata.category(ch)[0] != "P")
 
 
 def _speakable(text: str) -> str:
@@ -479,6 +494,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                 config.stt_wake_words,
                 threshold=config.stt_wake_threshold,
                 head_chars=config.stt_wake_head_chars,
+                anywhere=config.stt_wake_anywhere,
             )
             # Her name again ("Yuuka" repeated because nothing seemed to happen) is
             # not the request: say she is listening once more.
@@ -500,7 +516,8 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         # Cheap pre-filter: is this worth transcribing at all? Runs on every
         # segment — there is no standing "awake" state that skips it.
         # (Skipped when a pending confirmation already had it transcribed.)
-        heard, acoustic_score = (True, 0.0) if result is not None else await acoustic_wake.detect(segment.pcm)
+        acoustic = None if result is not None else await acoustic_wake.detect(segment.pcm, segment.pauses)
+        heard, acoustic_score = (True, 0.0) if acoustic is None else (acoustic.heard, acoustic.score)
         if not heard:
             logger.debug(
                 f"[AI Voice] No acoustic wake hit from {display} "
@@ -514,10 +531,18 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         )
         _mark(display, "acoustic gate passed", segment.ended_at)
 
-        # The acoustic score only says "worth transcribing". It is not proof of her
-        # name (weak on some voices, and it fires on ordinary talk), so nothing is
-        # signalled until the transcript confirms it. Until then this speaker's next
-        # segment waits on `verifying`.
+        # A score this high is her name, and STT is slower than the person can stand to
+        # wait for a sign of it: chime now, then let the transcript decide what she was
+        # asked. Anyone she is already answering is left to the normal path, where the
+        # transcript says whether it is a repeat. Below this score the acoustic score is
+        # not proof of her name (weak on some voices, and it fires on ordinary talk), so
+        # nothing is signalled until the transcript confirms it.
+        early: bool | None = None  # None = no early chime; else whether it could sound
+        if acoustic is not None and acoustic.confident and not self._already_asked(session, segment.user_id, ""):
+            early = chime.play(session.voice_client, "wake")
+            _mark(display, "chime (acoustic)" if early else "chime skipped (voice busy)", segment.ended_at)
+
+        # Until the verdict is in, this speaker's next segment waits on `verifying`.
         verdict: asyncio.Event | None = None
         if result is None:
             verdict = asyncio.Event()
@@ -526,9 +551,15 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         remainder = ""
         try:
             if result is None:
-                result = await transcribe_pcm(segment.pcm, display)
+                # Earlier talk before a pause that precedes her name stays out of it, so STT
+                # is shorter and the chatter is not taken for the request.
+                heard_pcm = segment.pcm[acoustic.cut:] if acoustic is not None and acoustic.cut else segment.pcm
+                result = await transcribe_pcm(heard_pcm, display)
                 _mark(display, "transcript", segment.ended_at)
             if not result.text:
+                if early is not None:
+                    # She chimed, so she is listening: a name STT could not hear still is one.
+                    self._start_listening(session, segment.user_id, display, chimed=early)
                 return
 
             match = wake.detect(
@@ -536,8 +567,15 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                 config.stt_wake_words,
                 threshold=config.stt_wake_threshold,
                 head_chars=config.stt_wake_head_chars,
+                anywhere=config.stt_wake_anywhere,
             )
-            if not match:
+            if match:
+                logger.info(
+                    f"[AI Voice] Wake word '{match.word}' matched at {match.score:.0f} "
+                    f"(threshold {config.stt_wake_threshold}) from {display}"
+                )
+                remainder = match.remainder
+            elif early is None:
                 # Logged at debug with the score so STT_WAKE_THRESHOLD can be
                 # tuned against what these speakers' mics actually produce.
                 logger.debug(
@@ -546,21 +584,26 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                     f"threshold {config.stt_wake_threshold}): {result.text}"
                 )
                 return
+            else:
+                # The model is sure it was her name and the transcript has none, so STT
+                # misheard it ("ยุคค่ะ", "8日"). Little else said means that was all of it;
+                # more is the request, name and all, which the model reads past.
+                remainder = result.text if _spoken_chars(result.text) >= _MIN_REQUEST_CHARS else ""
+                logger.info(
+                    f"[AI Voice] Acoustic score {acoustic_score:.3f} but no name in {result.text!r} from "
+                    f"{display}: taken as {'a request' if remainder else 'her name'}"
+                )
 
-            logger.info(
-                f"[AI Voice] Wake word '{match.word}' matched at {match.score:.0f} "
-                f"(threshold {config.stt_wake_threshold}) from {display}"
-            )
-
-            remainder = match.remainder
-            if self._already_asked(session, segment.user_id, remainder):
-                # No chime and no new window: a second signal would only open a
-                # listening window whose next sentence goes to the model.
-                logger.info(f"[AI Voice] {display} repeated a request she is already on: {result.text!r}")
-                return
-
-            chimed = chime.play(session.voice_client, "wake")
-            _mark(display, "chime" if chimed else "chime skipped (voice busy)", segment.ended_at)
+            if early is None:
+                if self._already_asked(session, segment.user_id, remainder):
+                    # No chime and no new window: a second signal would only open a
+                    # listening window whose next sentence goes to the model.
+                    logger.info(f"[AI Voice] {display} repeated a request she is already on: {result.text!r}")
+                    return
+                chimed = chime.play(session.voice_client, "wake")
+                _mark(display, "chime" if chimed else "chime skipped (voice busy)", segment.ended_at)
+            else:
+                chimed = early  # it sounded before STT
             if not remainder:
                 # Just her name and nothing else: she listens for the next thing
                 # this speaker says.

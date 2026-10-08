@@ -132,6 +132,39 @@ def boost_pcm(pcm: bytes, gain: float) -> bytes:
     return (np.tanh(samples * gain) * 32767.0).astype(np.int16).tobytes()
 
 
+def quiet_stretches(audio: np.ndarray, min_s: float, frame_s: float = 0.02) -> list[tuple[float, float]]:
+    """Runs of at least `min_s` seconds that are far quieter than the speech around them.
+
+    `audio` is 16 kHz mono float32. Returns (start_s, end_s) pairs. "Quiet" is relative
+    to this clip: a fraction of the way from its quietest frames up to its loud ones, so
+    a pause reads the same whether the room is silent (a noise-suppressed mic) or hisses.
+    Empty when nothing in the clip is loud enough to be speech or it never gets quiet
+    (music under the voice), which only means there is no pause to find."""
+    frame = int(TARGET_SAMPLE_RATE * frame_s)
+    n = audio.size // frame
+    if n < 3:
+        return []
+    rms = np.sqrt(np.mean(audio[: n * frame].reshape(n, frame) ** 2, axis=1) + 1e-12)
+    db = 20 * np.log10(rms)
+    speech, floor = float(np.percentile(db, 90)), float(np.percentile(db, 10))
+    if speech < -50 or speech - floor < 20:
+        return []
+    quiet = db < floor + 0.3 * (speech - floor)
+
+    runs: list[tuple[float, float]] = []
+    start = None
+    for i, q in enumerate(quiet):
+        if q and start is None:
+            start = i
+        elif not q and start is not None:
+            if (i - start) * frame_s >= min_s:
+                runs.append((start * frame_s, i * frame_s))
+            start = None
+    if start is not None and (n - start) * frame_s >= min_s:
+        runs.append((start * frame_s, n * frame_s))
+    return runs
+
+
 def pcm_duration_seconds(pcm: bytes) -> float:
     """Wall-clock length of a 48 kHz stereo PCM buffer."""
     return len(pcm) / BYTES_PER_SECOND

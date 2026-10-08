@@ -218,9 +218,20 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
   ran out unused. A cough (empty transcript) does not use it up, and a sentence that started before
   the deadline still counts. This also covers "Yuuka, *(pause)*, what time is it": `voice_hub` cuts
   a segment on ~800ms of packet silence, so the name and the question arrive as two segments.
+- **The acoustic gate scores every 80 ms hop, short segments included** (`utils/wake_acoustic.py`): a
+  full window of silence goes in front of the segment, so a window ends at every hop of it. A segment
+  of 2 s or less (every bare name) used to get one window ending at its last sample; the audio Discord
+  keeps sending after the speaker stops (longer with music) moved the word off that spot and the score
+  fell to about 0. Each segment logs `[Wake Acoustic] best … (end window alone …)`: the second number
+  is what the old scoring gave, so a best far above it is a summon that used to be dropped. Scanning lets
+  more segments reach STT, and v3 turned out to fire on "silence, then any short sound" (quiet room noise
+  in front of the name drops it to 0%, music and voices alone pass about 60% at 0.4), so the default is
+  v2 at 0.6. `STT_WAKE_ACOUSTIC_COMPARE_PATH` (dev only, empty in production) scores a second model on
+  the same windows and logs it beside the first; it never decides.
 - **The signal waits for the transcript**: a segment is only known at its end (`STT_SILENCE_MS`), and
-  the acoustic score is not proof of her name (v3 scores 0.4-0.6 at best on a clear Thai voice, 0.0-0.1
-  with noise, and varies a lot between speakers; it also fires on ordinary talk). So the chime and the
+  the acoustic score is not proof of her name (v3 scored 0.4-0.6 at best on a clear Thai voice, 0.0-0.1
+  with noise, and varied a lot between speakers, measured with the single-window scoring above; it also
+  fires on ordinary talk). So the chime and the
   listening window only come after `wake.detect` matches the transcript. The score only decides whether
   a segment is worth transcribing. A segment from the same speaker that arrives while the name is
   still in STT waits for the verdict (`session.verifying`, at most `_VERDICT_WAIT_S`) instead of being

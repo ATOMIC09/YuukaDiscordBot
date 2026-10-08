@@ -22,8 +22,15 @@ Bot integration is done — `utils/wake_acoustic.py`, wired into `cogs/ai/voice_
 
 ## Current model
 
-**`yuuka_wakeword_v2`** — promoted to `models/wake_word/yuuka_wakeword_v2.onnx`, threshold
-**`0.02`** (87.5% recall, ~43 false accepts/hour).
+**`yuuka_wakeword_v2`** — `models/wake_word/yuuka_wakeword_v2.onnx`, threshold **`0.6`** with the
+bot scoring every 80 ms hop (live again since 2026-10-08; v3 was live 2026-10-02 to 10-08). v3 had
+only ever been tried on the maintainer's voice, never compared with v2 on the same audio, and offline
+it fires on "silence, then any short sound": with quiet room noise (-60 dBFS) in front of the name it
+drops from 98% to 0% (v2: 85% to 60%), and music or voices alone pass about 60% of the time at 0.4
+(v2 at 0.6: 4-14%). Compare them on real voices with `STT_WAKE_ACOUSTIC_COMPARE_PATH`, which logs a
+second model's score on the same audio.
+
+The `0.02` below and the tables in this section are from before that, scored one 2 s clip at a time.
 
 Recall at matched false-positives-per-hour budgets, all three runs scored on one common eval set
 (`compare_models.py`, paired bootstrap — every v2 win below is significant):
@@ -61,14 +68,18 @@ Re-derive with `compare_models.py` on every promotion — then keep it if it hol
 |---|---|---|---|
 | `yuuka_wakeword` (POC) | 300 / 60 · 100 / 20 | 3,600 | Deliberately starved to validate the pipeline. Essentially noise — 20-30 points behind v2 everywhere. Was the promoted model until v2; **not** a rollback target, and no longer kept under `models/wake_word/`. Output still in `output/yuuka_wakeword/`. |
 | `yuuka_wakeword_v1` | 10,000 / 2,000 · 200 / 40 | 60,000 total | Real signal, never promoted. Validation accuracy climbed from chance (~50%) to ~76%, confirming the pipeline works. |
-| `yuuka_wakeword_v2` | 25,000 / 5,000 · 2,000 / 400 | 120,000 total | **Previous.** The scale-up v1's results called for; live until 2026-10-02. |
-| `yuuka_wakeword_v3` | 25,000 / 5,000 · 2,000 / 400 | 60,000 total | **Current since 2026-10-02, on a trial basis.** Promoted after the bot's acoustic gate moved from a 1 s stride to scoring every 80 ms hop, and it works on the maintainer's voice. The rejection below measured pooled clips and unseen TTS engines, and still stands for those: re-run `compare_models.py` on real recordings before trusting it. Piper VITS instead of VoxCPM2. Best synthetic numbers of any run (82.9% recall @0.5) and clearly worse in the bot: 17-36 points behind v2 at every matched FPPH budget on a common eval set, and near-blind on unseen TTS engines. See [Why v3 lost](#why-v3-lost-single-tts-overfitting). Its negative set and hyperparameters were genuine improvements and are worth carrying into v4. |
+| `yuuka_wakeword_v2` | 25,000 / 5,000 · 2,000 / 400 | 120,000 total | **Current** (again since 2026-10-08, at 0.6 with every-hop scoring). The scale-up v1's results called for; live until 2026-10-02. |
+| `yuuka_wakeword_v3` | 25,000 / 5,000 · 2,000 / 400 | 60,000 total | **Live 2026-10-02 to 10-08, on a trial basis**, then replaced by v2 again (see "Current model"). Promoted after the bot's acoustic gate moved from a 1 s stride to scoring every 80 ms hop, and it works on the maintainer's voice. The rejection below measured pooled clips and unseen TTS engines, and still stands for those: re-run `compare_models.py` on real recordings before trusting it. Piper VITS instead of VoxCPM2. Best synthetic numbers of any run (82.9% recall @0.5) and clearly worse in the bot: 17-36 points behind v2 at every matched FPPH budget on a common eval set, and near-blind on unseen TTS engines. See [Why v3 lost](#why-v3-lost-single-tts-overfitting). Its negative set and hyperparameters were genuine improvements and are worth carrying into v4. |
 
 `steps` in the config sets phase 1 only; the real total is `steps + steps/10 + steps/10`.
 
 ### v3 in a real group call (2026-10-04)
 
-First test with three people in one Discord VC, production gate `STT_WAKE_ACOUSTIC_THRESHOLD=0.3`:
+First test with three people in one Discord VC, production gate `STT_WAKE_ACOUSTIC_THRESHOLD=0.3`.
+These scores come from the old scoring, which gave a segment of 2 s or less a single window ending at
+its last sample; since 2026-10-08 the bot scores every 80 ms hop of such a segment (see
+`utils/wake_acoustic.py`), and audio after the name no longer hides it. The 0.0-0.1 scores below are
+partly that bug, so re-measure v2, v3 and any v4 with the new scoring before comparing them:
 
 - On the maintainer's voice, a clear "ยูกะ" in a quiet room scores **0.4-0.6** at best. With noise
   from someone's speakers, or an unclear take, it scores **0.0-0.1**: below the gate, so the call

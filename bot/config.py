@@ -86,8 +86,11 @@ class Config:
 
     # ── Acoustic wake-word pre-filter (/ai voice only) ────────────────────
     stt_wake_acoustic_enabled: bool = True
-    stt_wake_acoustic_model_path: str = "models/wake_word/yuuka_wakeword_v3.onnx"
-    stt_wake_acoustic_threshold: float = 0.1
+    stt_wake_acoustic_model_path: str = "models/wake_word/yuuka_wakeword_v2.onnx"
+    stt_wake_acoustic_threshold: float = 0.6  # best score over every 80 ms hop (see utils/wake_acoustic.py)
+    # Dev only: a second model scored on the same windows and logged beside the first, to
+    # compare two models on identical audio. It never decides. Empty = off (production).
+    stt_wake_acoustic_compare_path: str = ""
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -187,9 +190,10 @@ class Config:
             not in ("false", "0", "no"),
             stt_wake_acoustic_model_path=os.getenv(
                 "STT_WAKE_ACOUSTIC_MODEL_PATH",
-                "models/wake_word/yuuka_wakeword_v3.onnx",
+                "models/wake_word/yuuka_wakeword_v2.onnx",
             ),
-            stt_wake_acoustic_threshold=float(os.getenv("STT_WAKE_ACOUSTIC_THRESHOLD", "0.1")),
+            stt_wake_acoustic_threshold=float(os.getenv("STT_WAKE_ACOUSTIC_THRESHOLD", "0.6")),
+            stt_wake_acoustic_compare_path=os.getenv("STT_WAKE_ACOUSTIC_COMPARE_PATH", "").strip(),
         )
 
 

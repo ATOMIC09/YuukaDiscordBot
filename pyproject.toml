@@ -1,6 +1,6 @@
 [project]
 name = "yuukadiscordbot"
-version = "3.2.1"
+version = "3.2.2"
 description = "Yuuka does all the hard work so her lazy creator doesn't have to"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -43,7 +43,7 @@ dev = [
 ]
 
 [tool.bumpversion]
-current_version = "3.2.1"
+current_version = "3.2.2"
 commit = true
 tag = true
 tag_name = "v{new_version}"

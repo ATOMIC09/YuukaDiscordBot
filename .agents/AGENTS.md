@@ -18,6 +18,7 @@ Main features:
 3. **Music player** (`/music …`) — yt-dlp streaming with queue, loop, seek and crossfade
 4. **Voice tools** — recording, live captions, attendance, kick, countdown disconnect
 5. **Image tools** — `/image …` and right-click message commands
+6. **Server memory** (`/memory …`) — notes she keeps when asked ("จำไว้นะว่า…"), stored in a hidden channel of the server itself, not on the machine she runs on
 
 ---
 
@@ -40,6 +41,7 @@ YuukaDiscordBot/
 │   ├── ai/
 │   │   ├── __init__.py       # The shared /ai SlashCommandGroup
 │   │   ├── chat.py           # /ai chat, /ai voice, /ai stop; @mention replies; owns the reminder scheduler
+│   │   ├── memory.py         # /memory setup|me|forget|optout|optin; owns the MemoryStore and the listeners that keep it true
 │   │   └── voice_chat.py     # Voice-chat logic (no commands of its own; chat.py calls it)
 │   ├── voice/
 │   │   ├── player.py         # /music … — the music player (PlayerCog)
@@ -60,7 +62,7 @@ YuukaDiscordBot/
 │   └── moderation/           # Empty placeholder package
 │
 ├── utils/
-│   ├── ai/                   # The agent: agent.py, tool_calling.py, models.py, context.py, confirm.py, scheduler.py, tools/
+│   ├── ai/                   # The agent: agent.py, tool_calling.py, models.py, context.py, confirm.py, scheduler.py, memory.py, tools/
 │   ├── attendance.py         # /attendance and /absent report builders (shared by the cog and the agent tools)
 │   ├── ai_actions.py         # Runs /music commands for the agent, posts their embeds and logs them (log_command)
 │   ├── web_search.py         # Tavily search with an in-memory TTL cache
@@ -130,6 +132,9 @@ def setup(bot: discord.Bot):
 - All modules import the shared logger: `from bot.logger import logger`
 - Do NOT use `print()` for debugging — use `logger.debug()`, `logger.info()`, `logger.warning()`, `logger.error()`.
 - Log format includes timestamps, level, and the calling module.
+- The file sink (`logs/yuuka.log`, kept 7 days) outlives a reply, so never log what a member said or a
+  memory note's text (see Server Memory). Both sinks run with `diagnose=False`: loguru's default prints
+  the value of every variable in a traceback, which would copy whatever the failing code was handling.
 
 ### 6. Embeds (`utils/embeds.py`)
 - All user-facing responses should use Discord embeds, not plain text.
@@ -457,12 +462,63 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 | `attendance.py` | `attendance`, `absent` — the `/attendance` and `/absent` reports (`utils/attendance.py`, shared with the commands), posted with their CSV and logged. Read-only, so no confirm button; refused with the reason when the requester is not in a voice channel. Tool results name at most 40 people, the embed and CSV have everyone |
 | `capture.py` | `record_start/stop`, `transcribe_start/stop` — the `/record` and `/transcribe` commands, through the same `begin_*`/`end_*` methods as the slash commands. No confirmation (deliberate); starting also posts the command's "started" embed so the room can see it. `/record stop`'s files are delivered in a background task |
 | `reminders.py` | `remind_me`, `notify_when_joins_voice` — timers/listeners in `scheduler.py`, **0 LLM requests** while waiting or firing |
+| `memory.py` | `memory_save`, `memory_search`, `memory_forget` — see "Server Memory". Save and forget end the turn (1 request each). `memory_save` is offered in every guild turn with a requester, even before `/memory setup` (it refuses with the reason, since hiding it let the model claim to remember without calling anything); the other two only once the server has a memory channel. Their arguments are never logged (`PRIVATE_ARGS`) |
 
 - **Progress embed** (`utils/ai/progress.py`, used by `/ai voice` replies): a turn can run tens of seconds with nothing on screen, so people repeat the request and get it twice. `TurnProgress` feeds on `thinking` (round n of `AGENT_MAX_ROUNDS`), `plan` (the calls the model chose, labelled by `utils/ai/tools/labels.py`) and `step` (running / ok / failed / skipped) and keeps one embed with a checklist. It appears after 3 s, or at once for a plan of 2+ steps (a quick answer never shows it), is edited in the background (it never blocks the turn) and deleted when the turn ends. A new tool needs a line in `labels.py`, or it shows under its name. `/ai chat` replies keep their own status embed for now
 - **Token budget** (free model: 20 RPM, 50/day without credits): a plain chat is 1 request, a tool turn 2, worst case `AGENT_MAX_ROUNDS`. Button presses, reminders and watches never call the model. Every request carries `max_tokens` = `OPENROUTER_MAX_TOKENS` (4096): without it OpenRouter reserves the model's whole context for the reply and rejects the request when the key's credit cannot cover that.
 - **What a request carries**: the system prompt, the `[TOOLS]` section (about 30 schemas, resent every round, so no padding: `_tool_text` strips docstring indentation and JSON spaces), up to `MAX_HISTORY_LENGTH` messages, and every earlier tool result of the turn. Search results are the big item: the table of contents caps each snippet and lists three images, a detail read is capped at 3000 characters, and **the system prompt only names the cached queries** (`[CACHED SEARCHES]`; the model re-reads one with the same query, free). Pasting every cached result there used to put an hour of searches on every request, "play a song" included. Each model call logs `[Usage] prompt N + reply M (reasoning R) tokens` (`stream_usage=True` in `models.py`) — read it before cutting anything else.
-- **State**: nothing is persisted (stateless Docker container); pending reminders are lost on restart by design.
+- **State**: nothing is persisted (stateless Docker container); pending reminders are lost on restart by design. Server memory is not kept on that machine either: it lives in each server's own Discord channel (below).
 - **History squashing**: consecutive messages with the same `role` are merged (required by some instruct models).
+
+---
+
+## Server Memory — `utils/ai/memory.py`
+
+Yuuka keeps notes for a server as a small knowledge graph **without storing them where she runs**: the
+production box is stateless on purpose, and its owner does not want to hold the members' data.
+
+- **Discord is the database.** `/memory setup` (needs Manage Server) creates a channel (`yuuka-memory`,
+  hidden from @everyone, so administrators only) whose topic starts with `[yuuka-memory]`. That marker is how
+  she finds it again, so not even its id is kept. One note is one embed there (footer `yuuka-memory:fact:v1`:
+  the text, "เกี่ยวกับ" its entities, "จากช่อง" the channel it was said in, "บอกโดย" who asked); an opt-out is
+  one embed with the `optout:v1` footer. `MemoryStore` reads the channel back lazily, once per server (the
+  newest `MEMORY_MAX_FACTS * 2 + 200` messages), and the cog's listeners keep the RAM copy true (deleted
+  messages; the channel deleted or unmarked). Only her own embeds with a known footer are parsed, so nobody
+  can add a note by posting there. The server owns the data: deleting a message forgets that note, deleting
+  the channel forgets everything. Never write a note anywhere else: no file, database or log.
+- **The graph.** A note is an edge between its entities: plain names (compared through `wake.normalize`, so
+  tone marks, spacing, case and kana do not matter) and members (by id, and only when the name is *exactly*
+  theirs: `exact_member`, since `resolve_member` also matches parts of names). Recall follows one hop.
+- **The audience rule** (`MemoryStore.audience_ok`). A note is used in a place only if everyone who can see
+  the reply (the viewers of `ctx.channel`, plus the people in the voice call, who hear it) can also read the
+  channel the note was said in. A staff note never reaches #general, a private thread's notes stay in it,
+  and a note whose channel is gone is unusable. Saving is checked the same way with the memory channel as the
+  place, so a memory channel somebody opened to everyone refuses notes from private channels. Answers are
+  cached for 5 minutes and cleared by the cog's permission and role listeners. Every path that shows or uses
+  a note goes through it (the `[MEMORY]` note, `memory_search`, `memory_forget`). `/memory me|forget` filter
+  by what the *member* can read instead, because their answer is ephemeral.
+- **Saved only when asked.** Nothing is extracted from messages on its own: it would cost a request per
+  message and build profiles of people who never spoke to her. A note may be about another member; it is
+  attributed to whoever asked, and it can be forgotten by them, by the person it is about, or by a server
+  manager. Obvious private data (emails, long digit runs, keys, password words) is refused.
+- **Recall costs no request.** `memory_notice` (`tools/memory.py`) builds a `[MEMORY]` block from RAM:
+  notes whose names appear in the request, up to three about the speaker, then one hop from the notes the
+  request named (never through the speaker, or a greeting would pull in all of their notes).
+  `run_agent` inserts it as its own user message *in front of* the request. Members wrote the notes, so they
+  get a user's trust, not the system prompt's, and the block says they are not instructions. In front,
+  because `_reply_language` reads the last user message. At most `MEMORY_NOTICE_MAX` notes and
+  `MEMORY_NOTICE_MAX_CHARS` characters (header included), and nothing when nothing matched. Recall is by name: a question that names none of a note's
+  subjects only finds it if she calls `memory_search` (a second request). Never paste the whole store into a
+  request: the same lesson as `[CACHED SEARCHES]`.
+- **Nothing a note says is logged.** `logs/yuuka.log` keeps 7 days. The memory tools are in `PRIVATE_ARGS`,
+  so the agent logs `memory_save(…)`; `tool_calling._logged` does not quote model text that names a
+  `memory_*` tool; memory code logs counts and ids only; the memory tools never call `log_command` (the log
+  channel belongs to the bot owner). The memory channel itself cannot be read through `read_messages` or
+  `search_messages` (`is_memory_channel`), or an admin could have every note read into a public channel.
+- **Opt-out.** `/memory optout` deletes everything about or told by the member and writes a record; while it
+  stands she refuses notes that name them or that they ask for, and does not recall them. `/memory optin`
+  lifts it. `/memory me` and `/memory forget` are ephemeral, take no free text (so the command log never
+  receives a note), and `forget` asks before wiping.
 
 ---
 
@@ -554,4 +610,6 @@ There is no test suite. Before committing:
 - ❌ Do NOT install `langchain` or `langgraph` — `langchain` v1 pulls in LangGraph; use `langchain-core` / `langchain-openai` only
 - ❌ Do NOT let an AI tool act on other people without the `ConfirmActionView` (its button, or the requester's own spoken yes/no), and check the **requester's** permissions, never just the bot's. The one deliberate exception is starting `/record` and `/transcribe` (`capture.py`): no confirmation, but the "started" embed is always posted
 - ❌ Do NOT let an AI tool find, list or name a channel the requester cannot see — resolve through `utils/ai/tools/resolve.py`, which treats hidden channels as nonexistent
+- ❌ Do NOT store server memory anywhere but the server's own memory channel — no file, database, cache directory or log. The point is that nothing about a server or its members is kept where the bot runs
+- ❌ Do NOT show or use a memory note without `MemoryStore.audience_ok`, and do NOT log a note's text: a new memory tool goes in `PRIVATE_ARGS`
 - ❌ Do NOT use `OLLAMA_*` env vars — nothing reads them; the LLM settings are `OPENROUTER_*`

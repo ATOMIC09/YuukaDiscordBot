@@ -115,6 +115,23 @@ def _names(member: discord.Member) -> set[str]:
     return {n.casefold() for n in names if n}
 
 
+def exact_member(guild: discord.Guild, text: str) -> discord.Member | None:
+    """The member `text` names exactly (a mention, an id, or the whole display, user or global
+    name), or None. Unlike `resolve_member`, a part of a name or a name two members share is not
+    a match: it is for deciding whether a word is a person at all."""
+    raw = text.strip()
+    match = _USER_MENTION.match(raw)
+    if match or raw.isdigit():
+        member = guild.get_member(int(match.group(1) if match else raw))
+        if member:
+            return member
+    wanted = raw.lstrip("@").strip().casefold()
+    if not wanted:
+        return None
+    found = [m for m in guild.members if wanted in _names(m)]
+    return found[0] if len(found) == 1 else None
+
+
 def resolve_member(ctx: YuukaContext, text: str) -> discord.Member:
     """A member of the requester's guild, by mention, id, or display/user name."""
     guild = ctx.guild

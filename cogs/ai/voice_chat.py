@@ -78,6 +78,7 @@ from utils import chime, wake
 from utils.audio import boost_pcm, decode_to_pcm, music_mixer, pcm_duration_seconds
 from utils.ai import YuukaContext, run_agent
 from utils.ai.progress import TurnProgress
+from utils.ai.tools.memory import disclosure_note
 from utils.embeds import (
     ai_disclosure_field,
     build_embed,
@@ -1288,6 +1289,8 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             if stt_ready
             else "เสียงพูดจะยังไม่ถูกส่งไปที่ไหนเพราะระบบฟังเสียงปิดอยู่ค่ะ"
         )
+        if memory_note := disclosure_note(self.bot, ctx.guild):
+            voice_note += f"\n{memory_note}"
 
         await ctx.respond(embed=build_embed(
             "🎙️ AI Voice Chat เริ่มแล้วค่ะ",

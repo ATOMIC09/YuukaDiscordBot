@@ -25,6 +25,7 @@ from cogs.ai import ai_group
 from utils.embeds import AI_DISCLOSURE_NAME, ai_disclosure_field, build_embed, COLOR_SUCCESS, error_embed, success_embed
 from utils.ai import YuukaContext, run_agent
 from utils.ai.scheduler import ReminderScheduler
+from utils.ai.tools.memory import disclosure_note
 from utils.errors import UserWarning
 
 
@@ -189,7 +190,7 @@ class AIChatCog(commands.Cog, name="AI Chat"):
             "รับทราบค่ะ! หนูกำลังฟังทุกคนอยู่นะคะ (b ᵔ▽ᵔ)b \n\n"
             "หนูอ่านข้อความก่อนหน้านี้มาแล้วค่ะ ถ้าอยากคุยกับหนู อย่าลืม `@mention` เรียกหนูด้วยนะคะ!",
             COLOR_SUCCESS,
-            fields=[ai_disclosure_field(config.openrouter_model)],
+            fields=[ai_disclosure_field(config.openrouter_model, extra_note=disclosure_note(self.bot, ctx.guild))],
         ))
 
     # ──────────────────────────────────────────────────────────────────────

@@ -10,7 +10,9 @@ from typing import Callable
 from langchain_core.tools import BaseTool
 
 from utils.ai.context import YuukaContext
-from utils.ai.tools import actions, attendance, capture, discord_read, music, reminders, search, server, wait
+from utils.ai.tools import (
+    actions, attendance, capture, discord_read, memory, music, reminders, search, server, wait,
+)
 
 # Tools that only look something up. The same call twice in one reply would return the
 # same thing, so the agent runs it once. Never put an action here: "play X" twice is a
@@ -19,7 +21,12 @@ READ_ONLY = frozenset({
     "web_search", "read_messages", "search_messages",
     "voice_members", "user_info", "server_info",
     "music_now_playing", "music_queue", "music_history",
+    "memory_search",
 })
+
+# Tools whose arguments are a server's private notes. The agent keeps them out of its log
+# lines, and the log file outlives the reply.
+PRIVATE_ARGS = frozenset(tool.name for tool in memory.TOOLS)
 
 _STATUS: dict[str, Callable[[dict], str]] = {
     **search.STATUS,
@@ -30,6 +37,7 @@ _STATUS: dict[str, Callable[[dict], str]] = {
     **attendance.STATUS,
     **capture.STATUS,
     **reminders.STATUS,
+    **memory.STATUS,
     **wait.STATUS,
 }
 
@@ -70,6 +78,13 @@ def tools_for(ctx: YuukaContext) -> list[BaseTool]:
 
     if ctx.guild and ctx.requester and reminders.scheduler_for(ctx) is not None:
         tools += reminders.TOOLS
+
+    if ctx.guild and ctx.requester and (store := memory.store_for(ctx)) is not None:
+        # Saving is offered before /memory setup too: it refuses with the reason. Hiding it
+        # left the model to say "ok, I will remember" without calling anything.
+        tools.append(memory.memory_save)
+        if store.channel_for(ctx.guild) is not None:
+            tools += [memory.memory_search, memory.memory_forget]
 
     return tools
 

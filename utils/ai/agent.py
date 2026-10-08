@@ -40,7 +40,7 @@ from utils.ai.context import YuukaContext
 from utils.ai.linker import ChannelLinker
 from utils.ai.models import chat_model
 from utils.ai.tool_calling import FABRICATED, ToolPromptChatModel
-from utils.ai.tools import READ_ONLY, music, status_line, tools_for
+from utils.ai.tools import PRIVATE_ARGS, READ_ONLY, memory, music, status_line, tools_for
 from utils.ai_actions import ActionResult
 from utils.errors import UserError, UserWarning
 
@@ -80,6 +80,75 @@ def _cache_notice() -> str:
     )
 
 
+async def _with_memory(messages: list[dict], ctx: YuukaContext) -> bool:
+    """Put the server's notes that bear on the request in front of it, as a user message of their own.
+    True when a note was added.
+
+    Members wrote the notes, so they get a user's trust and not the system prompt's. In front of
+    the request, not after it, because the reply language is read off the last user message."""
+    notice = await memory.memory_notice(ctx, messages)
+    if not notice:
+        return False
+    for index in range(len(messages) - 1, 0, -1):
+        if messages[index]["role"] == "user":
+            messages.insert(index, {"role": "user", "content": notice})
+            return True
+    return False
+
+
+class _EchoFilter:
+    """Cuts a copy of the [MEMORY] block off the start of a reply.
+
+    The block is a user turn, and a model sometimes takes it for part of the message and repeats
+    it before answering (seen on the free model). Left in, it would be posted in the chat, or
+    read aloud in a call. The block is the "[MEMORY]" line and the "- " lines under it; the
+    reply starts at the first line that is neither."""
+
+    _HEAD = "[MEMORY]"
+
+    def __init__(self) -> None:
+        self._buffer = ""
+        self._state = "start"  # start: not sure yet, echo: inside the block, pass: nothing to cut
+
+    @staticmethod
+    def _in_block(line: str) -> bool:
+        line = line.strip()
+        return not line or line.startswith("[MEMORY]") or line.startswith("- ")
+
+    def feed(self, text: str) -> str:
+        if self._state == "pass":
+            return text
+        self._buffer += text
+        if self._state == "start":
+            seen = self._buffer.lstrip()
+            if len(seen) < len(self._HEAD) and self._HEAD.startswith(seen):
+                return ""  # could still turn out to be the block
+            if not seen.startswith(self._HEAD):
+                self._state, out, self._buffer = "pass", self._buffer, ""
+                return out
+            self._state = "echo"
+        while "\n" in self._buffer:
+            line, rest = self._buffer.split("\n", 1)
+            if self._in_block(line):
+                self._buffer = rest
+                continue
+            self._state, out, self._buffer = "pass", self._buffer, ""
+            return out
+        return ""
+
+    def flush(self) -> str:
+        """Whatever is still held when the reply ends."""
+        out = "" if self._state == "echo" and self._in_block(self._buffer) else self._buffer
+        self._buffer = ""
+        return out
+
+
+def _logged_args(name: str, args: dict) -> str:
+    """A call's arguments for a log line. A tool that carries a server's notes logs none: the
+    log file outlives the reply."""
+    return "…" if name in PRIVATE_ARGS else str(args)
+
+
 def _error_event(exc: Exception) -> tuple[str, Any]:
     """Map a failure to the shapes the cogs already show and log."""
     if isinstance(exc, openai.APITimeoutError):
@@ -116,10 +185,11 @@ async def _run_tool(tools: dict, call: dict, ctx: YuukaContext) -> tuple[ToolMes
     except (UserError, UserWarning) as exc:
         return ToolMessage(f"{exc.title}: {exc.description}", tool_call_id=call_id, name=name), False
     except ValidationError as exc:
-        logger.warning(f"[Agent] Bad arguments for '{name}': {exc}")
+        # The error quotes the input, which for a memory tool is the note.
+        logger.warning(f"[Agent] Bad arguments for '{name}': {'…' if name in PRIVATE_ARGS else exc}")
         return ToolMessage("Invalid arguments for this tool.", tool_call_id=call_id, name=name), False
     except Exception as exc:
-        logger.exception(f"[Agent] Tool '{name}' failed: {exc}")
+        logger.exception(f"[Agent] Tool '{name}' failed: {type(exc).__name__ if name in PRIVATE_ARGS else exc}")
         return ToolMessage("Tool failed.", tool_call_id=call_id, name=name), False
 
 
@@ -131,6 +201,7 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
         messages[0]["content"] += _cache_notice()
         if "music_play" in tools:
             messages[0]["content"] += music.now_playing_notice(ctx)
+    noted = await _with_memory(messages, ctx)
     conversation = convert_to_messages(messages)
 
     plain = ToolPromptChatModel(inner=chat_model())
@@ -155,10 +226,11 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
 
             reply: AIMessageChunk | None = None
             separate = wrote
+            echo = _EchoFilter() if noted else None
             async for chunk in model.astream(conversation):
                 reply = chunk if reply is None else reply + chunk
-                if chunk.content:
-                    text = chunk.content
+                text = echo.feed(chunk.content) if echo is not None and chunk.content else chunk.content
+                if text:
                     if separate and text.strip():
                         text, separate = "\n\n" + text.lstrip(), False
                     wrote = wrote or bool(text.strip())
@@ -166,6 +238,9 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
                         text = linker.feed(text)
                     if text:
                         yield ("content", text)
+            if echo is not None and (held := echo.flush()):
+                wrote = wrote or bool(held.strip())
+                yield ("content", linker.feed(held) if linker is not None else held)
             if linker is not None and (rest := linker.flush()):
                 yield ("content", rest)
 
@@ -209,7 +284,7 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
             index = -1  # position among the planned calls, which is what the "step" events number
             for position, call in enumerate(calls):
                 if position in duplicate:
-                    logger.info(f"[Agent] Skipped a repeated call: {call['name']}({call['args']})")
+                    logger.info(f"[Agent] Skipped a repeated call: {call['name']}({_logged_args(call['name'], call['args'])})")
                     conversation.append(ToolMessage(
                         "Same call as an earlier one in this reply: use that result.",
                         tool_call_id=call["id"],
@@ -217,7 +292,7 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
                     ))
                     continue
                 index += 1
-                logger.info(f"[Agent] Tool call: {call['name']}({call['args']})")
+                logger.info(f"[Agent] Tool call: {call['name']}({_logged_args(call['name'], call['args'])})")
                 yield ("step", (index, "running"))
                 yield ("status", status_line(call["name"], call["args"]))
 

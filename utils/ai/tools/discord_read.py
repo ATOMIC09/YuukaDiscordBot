@@ -15,6 +15,7 @@ from langchain_core.tools import tool
 from bot.config import config
 from bot.logger import logger
 from utils.ai.context import Ctx, YuukaContext
+from utils.ai.memory import is_memory_channel
 from utils.ai.tools.resolve import resolve_text_channel
 from utils.errors import UserWarning
 
@@ -27,6 +28,12 @@ async def _readable_channel(ctx: YuukaContext, name: str) -> discord.TextChannel
     # Resolving already refuses anything the requester cannot see at all,
     # private threads they are not in included.
     channel = await resolve_text_channel(ctx, name)
+    if is_memory_channel(channel):
+        # Reading it out would put every note in front of whoever asks, wherever they ask.
+        raise UserWarning(
+            "อ่านช่องนั้นไม่ได้ค่ะ",
+            "ช่องนั้นคือสมุดความจำของหนู หนูอ่านออกมาให้ไม่ได้นะคะ ถ้าอยากรู้ว่าหนูจำอะไรไว้ ถามหนูหรือใช้ `/memory me` ได้เลยค่ะ",
+        )
     if not channel.permissions_for(ctx.requester).read_message_history:
         # Say nothing about what the channel contains.
         raise UserWarning("อ่านช่องนั้นไม่ได้ค่ะ", "เซนเซย์ไม่มีสิทธิ์อ่านช่องนั้นนะคะ หนูเลยบอกอะไรไม่ได้ค่ะ")

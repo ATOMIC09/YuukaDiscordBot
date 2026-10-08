@@ -58,6 +58,10 @@ _LABELS: dict[str, Callable[[dict], str]] = {
     "transcribe_stop": lambda a: "⏹️ หยุดถอดเสียง",
     "remind_me": lambda a: f"⏰ ตั้งเตือนอีก {_clip(a.get('minutes', ''))} นาที: {_clip(a.get('text', ''))}",
     "notify_when_joins_voice": lambda a: f"🔔 รอเตือนเมื่อ {_clip(a.get('member', ''))} เข้าห้องเสียง",
+    # What is being kept or forgotten is never shown: the line is read aloud to a room.
+    "memory_save": lambda a: "📒 จดลงสมุดความจำ",
+    "memory_search": lambda a: f"🔎 เปิดสมุดความจำ: {_clip(a.get('query', ''))}".rstrip(": "),
+    "memory_forget": lambda a: "🗑️ ลบออกจากสมุดความจำ",
     "wait": lambda a: f"⏳ รอ {_clip(a.get('seconds') or 10)} วินาที",
 }
 

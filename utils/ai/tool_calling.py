@@ -129,6 +129,12 @@ _LEAKED_REASONING = re.compile(
 )
 
 
+def _logged(text: str) -> str:
+    """The start of some model text, for a log line. A call to a memory tool carries a server's
+    notes and the log file outlives the reply, so text that names one is not quoted."""
+    return "<a memory call, not logged>" if "memory_" in text else repr(text[:200])
+
+
 def _final_rule(names: Sequence[str]) -> str:
     """Which tools end the turn: anything the user asked for after them must already be in the reply."""
     if not names:
@@ -425,7 +431,7 @@ class ToolPromptChatModel(BaseChatModel):
                     call = _parse_call(block)
                     if call is None:
                         unreadable = True
-                        logger.warning(f"[Tools] Dropped unreadable tool call: {block[:200]!r}")
+                        logger.warning(f"[Tools] Dropped unreadable tool call: {_logged(block)}")
                     else:
                         calls.append(call)
                     mode = None
@@ -468,7 +474,7 @@ class ToolPromptChatModel(BaseChatModel):
             call = _parse_call(block)
             if call is None:
                 unreadable = True
-                logger.warning(f"[Tools] Dropped unreadable tool call: {block[:200]!r}")
+                logger.warning(f"[Tools] Dropped unreadable tool call: {_logged(block)}")
             else:
                 calls.append(call)
         elif mode == "harmony":
@@ -478,7 +484,7 @@ class ToolPromptChatModel(BaseChatModel):
             elif not calls:
                 tail = _harmony_final(block)
                 if not tail:
-                    logger.warning(f"[Tools] Dropped harmony block: {block[:200]!r}")
+                    logger.warning(f"[Tools] Dropped harmony block: {_logged(block)}")
         elif mode is None and not calls:
             tail = buffer
             # gpt-oss sometimes drops the tags and writes the bare JSON. Only a short
@@ -493,21 +499,21 @@ class ToolPromptChatModel(BaseChatModel):
         fabricated = mode == "fake" and not calls
         if calls or fabricated:
             if held.strip():
-                logger.debug(f"[Tools] Dropped text before a call: {held[:200]!r}")
+                logger.debug(f"[Tools] Dropped text before a call: {_logged(held)}")
         elif unreadable:
             # The words before an unreadable call announce what it would have done ("the
             # song is ready"). Shown, they claim something that never happened, so the
             # reply is empty and the agent asks again.
-            logger.warning(f"[Tools] Unreadable call, dropped the text before it: {(held + tail)[:200]!r}")
+            logger.warning(f"[Tools] Unreadable call, dropped the text before it: {_logged(held + tail)}")
             yield ChatGenerationChunk(message=AIMessageChunk(content=""))
         elif held + tail and holding and tools and _is_json_object(held + tail):
             # Only the arguments, no tool name ({"query": ...}): reading it aloud is
             # worse than nothing, and guessing the tool could run the wrong one.
-            logger.warning(f"[Tools] Call without a tool name; dropped: {(held + tail)[:200]!r}")
+            logger.warning(f"[Tools] Call without a tool name; dropped: {_logged(held + tail)}")
             yield ChatGenerationChunk(message=AIMessageChunk(content=""))
         elif held + tail and holding and tools and _LEAKED_REASONING.match((held + tail).strip()):
             # Sent as an empty reply, which the agent retries once.
-            logger.warning(f"[Tools] Reasoning without a call; dropped: {(held + tail)[:200]!r}")
+            logger.warning(f"[Tools] Reasoning without a call; dropped: {_logged(held + tail)}")
             yield ChatGenerationChunk(message=AIMessageChunk(content=""))
         elif held + tail:
             yield await emit(held + tail)
@@ -515,7 +521,7 @@ class ToolPromptChatModel(BaseChatModel):
             # Nothing usable came back: an empty stream, or only an unreadable call.
             # LangChain rejects a stream with no chunks, so send an empty one and let
             # the agent decide.
-            logger.warning(f"[Tools] Model returned no usable reply: {block[:200]!r}")
+            logger.warning(f"[Tools] Model returned no usable reply: {_logged(block)}")
             yield ChatGenerationChunk(message=AIMessageChunk(content=""))
 
         if fabricated:

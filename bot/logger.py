@@ -45,9 +45,13 @@ class InterceptHandler(logging.Handler):
 # Logger is configured once when this module is first imported.
 def _configure_logger(log_level: str = "INFO") -> None:
     _logger.remove()  # Remove the default handler
+    # diagnose=False on both sinks: by default loguru prints the value of every variable in a
+    # traceback, which would copy whatever a failing code path was handling (a server's private
+    # notes, a member's message) into the log file.
     _logger.add(
         sys.stderr,
         level=log_level,
+        diagnose=False,
         format=(
             "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
             "<level>{level: <8}</level> | "
@@ -59,6 +63,7 @@ def _configure_logger(log_level: str = "INFO") -> None:
     _logger.add(
         "logs/yuuka.log",
         level=log_level,
+        diagnose=False,
         rotation="10 MB",
         retention="7 days",
         compression="zip",

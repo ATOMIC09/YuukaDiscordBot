@@ -30,6 +30,10 @@ steps are in `.agents/DEVELOPMENT.md`. When a rule changes, update both files.
   see, and anything done to other people needs the confirm button (in a voice session the
   requester may say yes/no out loud instead). The one exception is starting `/record` and
   `/transcribe`: they run at once but post the command's "started" embed so the room can see it.
+- Server memory (`/memory`, `utils/ai/memory.py`) lives only in the server's own hidden channel: never in
+  a file, database or log. A note is shown or used only where everyone who can see the reply can read the
+  channel it came from (`MemoryStore.audience_ok`), and a memory tool's arguments are never logged
+  (`PRIVATE_ARGS`).
 - The free OpenRouter model allows few requests per day: never call the model in a loop or while
   waiting for something.
 - The production container is stateless: nothing saved at runtime survives a restart.

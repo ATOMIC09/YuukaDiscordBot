@@ -231,8 +231,9 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
   is what the old scoring gave, so a best far above it is a summon that used to be dropped. Scanning lets
   more segments reach STT, and v3 turned out to fire on "silence, then any short sound" (quiet room noise
   in front of the name drops it to 0%, music and voices alone pass about 60% at 0.4), so the default is
-  v2 at 0.6. `STT_WAKE_ACOUSTIC_COMPARE_PATH` (dev only, empty in production) scores a second model on
-  the same windows and logs it beside the first; it never decides.
+  v2. Its threshold started at 0.6 (offline) and is 0.85 now, after real calls showed v2 scoring her
+  name well above that. `STT_WAKE_ACOUSTIC_COMPARE_PATH` (dev only, empty in production) scores a
+  second model on the same windows and logs it beside the first; it never decides.
 - **The signal waits for the transcript, unless the score is sure**: a segment is only known at its end
   (`STT_SILENCE_MS`), and below `STT_WAKE_ACOUSTIC_CONFIDENT_SCORE` (0.9) the acoustic score is not
   proof of her name (it fires on ordinary talk), so the chime and the listening window only come after
@@ -305,6 +306,11 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
   answer first and the results after a blank line, so one model request produces both.
   `_speak(posted=True)` keeps a taken voice slot from posting the same text twice. Whether she asked
   a question is judged on what she said aloud.
+- **A run of actions is acknowledged once, in speech only** (`acknowledged` in `_run_turn`): an
+  action with no text from the model speaks its `spoken_fallback`, but only the first success of a
+  turn does ("queue ten songs" used to say the same line ten times, and each command waited for the
+  last to finish); a failure is always said. The line is never typed (`_speak(typed=False)`): the
+  action's embed already says it is done, and with the voice slot taken it is simply dropped.
 - **Speaking around tools**: text the model writes right before a tool call is dropped
   (`tool_calling.py`): gpt-oss fills that slot with its reasoning. So the room is quiet while a
   tool runs, and a tool that ends the turn speaks its own line instead: `spoken_fallback` for

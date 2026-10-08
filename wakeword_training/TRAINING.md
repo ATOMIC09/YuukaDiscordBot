@@ -22,7 +22,9 @@ Bot integration is done — `utils/wake_acoustic.py`, wired into `cogs/ai/voice_
 
 ## Current model
 
-**`yuuka_wakeword_v2`** — `models/wake_word/yuuka_wakeword_v2.onnx`, threshold **`0.6`** with the
+**`yuuka_wakeword_v2`** — `models/wake_word/yuuka_wakeword_v2.onnx`, threshold **`0.85`** (it was
+`0.6` when v2 went back in; raised after real calls, see
+[v2 vs v3 in real calls](#v2-vs-v3-in-real-calls-2026-10-08)) with the
 bot scoring every 80 ms hop (live again since 2026-10-08; v3 was live 2026-10-02 to 10-08). v3 had
 only ever been tried on the maintainer's voice, never compared with v2 on the same audio, and offline
 it fires on "silence, then any short sound": with quiet room noise (-60 dBFS) in front of the name it
@@ -68,7 +70,7 @@ Re-derive with `compare_models.py` on every promotion — then keep it if it hol
 |---|---|---|---|
 | `yuuka_wakeword` (POC) | 300 / 60 · 100 / 20 | 3,600 | Deliberately starved to validate the pipeline. Essentially noise — 20-30 points behind v2 everywhere. Was the promoted model until v2; **not** a rollback target, and no longer kept under `models/wake_word/`. Output still in `output/yuuka_wakeword/`. |
 | `yuuka_wakeword_v1` | 10,000 / 2,000 · 200 / 40 | 60,000 total | Real signal, never promoted. Validation accuracy climbed from chance (~50%) to ~76%, confirming the pipeline works. |
-| `yuuka_wakeword_v2` | 25,000 / 5,000 · 2,000 / 400 | 120,000 total | **Current** (again since 2026-10-08, at 0.6 with every-hop scoring). The scale-up v1's results called for; live until 2026-10-02. |
+| `yuuka_wakeword_v2` | 25,000 / 5,000 · 2,000 / 400 | 120,000 total | **Current** (again since 2026-10-08, at 0.85 with every-hop scoring). The scale-up v1's results called for; live until 2026-10-02. |
 | `yuuka_wakeword_v3` | 25,000 / 5,000 · 2,000 / 400 | 60,000 total | **Live 2026-10-02 to 10-08, on a trial basis**, then replaced by v2 again (see "Current model"). Promoted after the bot's acoustic gate moved from a 1 s stride to scoring every 80 ms hop, and it works on the maintainer's voice. The rejection below measured pooled clips and unseen TTS engines, and still stands for those: re-run `compare_models.py` on real recordings before trusting it. Piper VITS instead of VoxCPM2. Best synthetic numbers of any run (82.9% recall @0.5) and clearly worse in the bot: 17-36 points behind v2 at every matched FPPH budget on a common eval set, and near-blind on unseen TTS engines. See [Why v3 lost](#why-v3-lost-single-tts-overfitting). Its negative set and hyperparameters were genuine improvements and are worth carrying into v4. |
 
 `steps` in the config sets phase 1 only; the real total is `steps + steps/10 + steps/10`.
@@ -92,7 +94,43 @@ partly that bug, so re-measure v2, v3 and any v4 with the new scoring before com
   about who woke her.
 - No v3 score means "sure" on a Thai voice, so the bot no longer trusts a high score for anything (`STT_WAKE_ACOUSTIC_CONFIDENT_SCORE` is kept but unused; production had to put it below the gate). The score only picks which segments to transcribe.
 
+### v2 vs v3 in real calls (2026-10-08)
+
+Two speakers, 31 minutes, both models scoring the same audio (`STT_WAKE_ACOUSTIC_COMPARE_PATH` logs
+the second one). 18 segments had her name in them, 359 had not.
+
+| | v2 | v3 |
+|---|---|---|
+| her name reaches 0.6 | 18/18 (lowest 0.74) | 18/18 (lowest 0.75) |
+| her name reaches 0.9 | 13/18 | 17/18 |
+| talk without her name reaches 0.6 | 11 (21/h) | 60 (117/h) |
+| talk without her name reaches 0.9 | 0 | 11 (21/h) |
+
+The same on 79 minutes of real conversation with no "Yuuka" in it, every pass a false one: v2
+reached 0.9 about once an hour and v3 30-59 times, which is why the early chime
+(`STT_WAKE_ACOUSTIC_CONFIDENT_SCORE`) is v2 only. Tries per call (short segments until her name was
+read): 6 of the maintainer's 10 calls worked on the first try, against 6 of 21 (quiet) and 2 of 20
+(music) on 2026-10-04/05 with the old scoring; the second speaker's 4 calls took 10, 2, 8 and 11 tries.
+
+What the offline tests showed (TTS the models never trained on, through an Opus round trip):
+
+- **v3 mostly detects "silence, then a short sound".** Quiet room noise (-60 dBFS) in front of the
+  name drops it from 98% to 0% (v2: 85% to 60%). Round-0 augmentation puts every positive after
+  digital silence and centres every negative, so that pattern only ever appeared in positives.
+- **Both models need silence before the word.** A name after a pause was heard 30/40 when the pause
+  was silence in the audio and 9/40 when it was collapsed, which is what Discord delivers (a client
+  that stops sending leaves no gap). The bot now puts that silence back before scoring
+  (`utils/wake_acoustic.py`, no extra false passes on real conversation).
+- **The model barely notices the first 0.2-0.3 s of the name being cut off**, so it cannot be used
+  to check that a cut did not clip the name.
+
 What v4 needs from this, on top of the TODO list below:
+
+- **Pad negatives in round 0 the same way as positives**, so "silence, then sound" stops separating
+  the classes, and add quiet room noise (not only digital silence) before the word.
+- **Drop "yoga", "yuga", "yoogah", "hey yoga" and "you got" from the negatives**: Whisper writes the
+  maintainer's real "ยูกะ" as โยกะ / โยคะ / ヨガ / Yoka / Yoga, so those teach the model to refuse it.
+- **Music with vocals and several voices as backgrounds**, not only the video-call recording.
 
 - **Real positives recorded through Discord**, not a local mic: Opus → decode → 16 kHz is the
   deployment path. Several server members, each saying "ยูกะ" 20-30 times in a normal call, with

@@ -291,6 +291,15 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
 - **Echo guard**: segments overlapping Yuuka's own playback are dropped — a speaker without
   headphones has her voice coming back through their mic.
 - Spoken and typed input both funnel into `_respond()`, so the two paths cannot drift apart.
+- **Chat gets the whole reply; a search reply is clipped for speech** (`_post_reply`, `_say_reply`,
+  `_spoken_part`): every reply is posted in the text channel in full (split to 2000 characters, no
+  link previews, no pings). Replies are read whole, except in a turn where `web_search` ran (seen on
+  the agent's `plan` event): its results are too long to listen to, so only the first paragraph is read,
+  clipped to `VOICE_SPOKEN_MAX_CHARS` at a sentence end or space, followed by "the rest is in the chat"
+  when something was left out. The voice prompt asks, after a web search, for a 1-3 sentence spoken
+  answer first and the results after a blank line, so one model request produces both.
+  `_speak(posted=True)` keeps a taken voice slot from posting the same text twice. Whether she asked
+  a question is judged on what she said aloud.
 - **Speaking around tools**: text the model writes right before a tool call is dropped
   (`tool_calling.py`): gpt-oss fills that slot with its reasoning. So the room is quiet while a
   tool runs, and a tool that ends the turn speaks its own line instead: `spoken_fallback` for

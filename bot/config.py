@@ -79,6 +79,7 @@ class Config:
     stt_listen_window_s: float = 5.0
     stt_answer_window_s: float = 7.0
     speech_over_music_gain: float = 2.0  # her voice's level while she talks over a track, 1 = as synthesised
+    voice_spoken_max_chars: int = 200  # most of a reply she reads aloud; the whole reply is always posted in chat
     # An acoustic score at or above this counts as her name before STT has read it: the chime
     # sounds at once and a transcript that lacks the name is still taken as a call. Above 1
     # turns that off. Calibrated for yuuka_wakeword_v2: in a 31 minute group call nothing but
@@ -193,6 +194,7 @@ class Config:
             stt_listen_window_s=float(os.getenv("STT_LISTEN_WINDOW_S", "5")),
             stt_answer_window_s=float(os.getenv("STT_ANSWER_WINDOW_S", "7")),
             speech_over_music_gain=max(0.1, float(os.getenv("SPEECH_OVER_MUSIC_GAIN", "2"))),
+            voice_spoken_max_chars=max(40, int(os.getenv("VOICE_SPOKEN_MAX_CHARS", "200"))),
             stt_wake_acoustic_confident_score=float(os.getenv("STT_WAKE_ACOUSTIC_CONFIDENT_SCORE", "0.9")),
             stt_wake_relaxed_threshold=int(os.getenv("STT_WAKE_RELAXED_THRESHOLD", "70")),
             stt_wake_acoustic_enabled=os.getenv("STT_WAKE_ACOUSTIC_ENABLED", "true").strip().lower()

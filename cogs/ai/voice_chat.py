@@ -103,7 +103,10 @@ _HUB_KEY = "ai_voice"
 _VOICE_PROMPT_SUFFIX = (
     "\n\nVOICE MODE: Your reply will be read aloud via text-to-speech. "
     "CRITICAL RULES: "
-    "1. Keep responses VERY SHORT and concise (1-5 sentences maximum). "
+    "1. Keep responses VERY SHORT and concise (1-5 sentences maximum). After a web search, "
+    "start with a SHORT spoken answer (1-3 sentences) and put the results, lists and links "
+    "AFTER A BLANK LINE: they are shown in the text chat and never read aloud, so do not "
+    "repeat them in the spoken part. "
     "2. DO NOT use emojis of any kind. "
     "3. DO NOT write out physical actions or expressions in parentheses/asterisks (e.g., (หน้าแดง), *ถอนหายใจ*). Vocal sounds like 'ฮ่าๆ' or 'อ่า' are OK. "
     "4. DO NOT use markdown, code blocks, asterisks, or special formatting. "
@@ -160,6 +163,66 @@ def _speakable(text: str) -> str:
     text = _MD_LINK.sub(r"\1", text)
     text = _BARE_URL.sub("", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+_SENTENCE_END = re.compile(r"[.!?…。！？]+(?=\s|$)")
+_PARAGRAPH = re.compile(r"\n\s*\n")
+# Said after a reply that was cut short for speech. The whole reply is in the chat.
+_MORE_IN_CHAT = "ที่เหลือหนูพิมพ์ไว้ในแชทแล้วนะคะ เซนเซย์"
+# A Discord message holds 2000 characters.
+_CHAT_CHUNK = 1900
+
+
+def _clip(text: str, limit: int) -> str:
+    """`text` cut to at most `limit` characters at a sentence end, else at a space."""
+    if len(text) <= limit:
+        return text
+    window = text[:limit]
+    ends = [m.end() for m in _SENTENCE_END.finditer(window)]
+    if ends and ends[-1] >= limit * 0.4:
+        return window[: ends[-1]].strip()
+    space = window.rfind(" ")
+    if space >= limit * 0.4:
+        return window[:space].strip()
+    return window.strip()
+
+
+def _spoken_part(text: str, limit: int) -> tuple[str, bool]:
+    """What of a reply she reads aloud, and whether the chat holds more than that.
+
+    The model puts the short spoken answer first and any detail after a blank line, so
+    the first paragraph is spoken; one longer than `limit` is clipped as well."""
+    paragraphs = [p for p in _PARAGRAPH.split(text.strip()) if p.strip()]
+    if not paragraphs:
+        return "", False
+    head = _speakable(paragraphs[0])
+    more = len(paragraphs) > 1
+    if len(head) > limit:
+        head, more = _clip(head, limit), True
+    return head, more
+
+
+def _chat_chunks(text: str, size: int = _CHAT_CHUNK) -> list[str]:
+    """`text` in pieces that fit one Discord message, split at line ends where it can."""
+    chunks: list[str] = []
+    current = ""
+    for line in text.strip().split("\n"):
+        while len(line) > size:
+            cut = line.rfind(" ", 0, size)
+            cut = cut if cut > size * 0.4 else size
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(line[:cut])
+            line = line[cut:].lstrip()
+        if current and len(current) + 1 + len(line) > size:
+            chunks.append(current)
+            current = line
+        else:
+            current = f"{current}\n{line}" if current else line
+    if current.strip():
+        chunks.append(current)
+    return chunks
 
 
 # Echo guard: a speaker without headphones has Yuuka's own voice coming back
@@ -785,13 +848,31 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         else:
             _mark_first_output(timing, "answer posted as text")
 
-    async def _speak(self, session: VoiceChatSession, text: str) -> None:
+    async def _post_reply(self, session: VoiceChatSession, text: str) -> None:
+        """Show her whole reply in the text chat, as well as saying part of it.
+
+        A spoken reply is short, so the detail (a search's results, links) lives here.
+        Links do not unfurl and nobody is pinged by what she quotes."""
+        for i, chunk in enumerate(_chat_chunks(text)):
+            body = f"💬 **Yuuka**: {chunk}" if i == 0 else chunk
+            try:
+                await session.text_channel.send(
+                    body, suppress_embeds=True, allowed_mentions=discord.AllowedMentions.none()
+                )
+            except discord.HTTPException as exc:
+                logger.warning(f"[AI Voice] Could not post her reply: {exc}")
+                return
+
+    async def _speak(self, session: VoiceChatSession, text: str, *, posted: bool = False) -> None:
         """Say `text` out loud, or post it if the voice slot is taken.
 
         The check here is an optimisation, not the safety net: synthesizing an
         MP3 the worker is only going to discard costs an Edge-TTS round trip and
         a temp file for nothing. The worker still re-checks, because music can
         start in the gap between this line and playback.
+
+        `posted` says the text is already in the chat (`_post_reply`), so a voice
+        slot that is taken only needs the reason, not the line again.
         """
         if not text.strip():
             return
@@ -799,7 +880,18 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         vc = session.voice_client
         if vc and (vc.is_playing() or vc.is_paused()) and music_mixer(vc) is None:
             logger.info("[AI Voice] Voice slot taken, answering in text without synthesizing")
-            await self._post_unspoken(session, text, session.timing)
+            if posted:
+                if not session.text_fallback_announced:
+                    session.text_fallback_announced = True
+                    try:
+                        await session.text_channel.send(
+                            "-# 🔇 ตอนนี้หนูพูดไม่ได้ (เพลงหยุดอยู่ หรือมีเสียงอื่นเล่นอยู่) อ่านคำตอบในแชทได้เลยนะคะ"
+                        )
+                    except discord.HTTPException:
+                        pass
+                _mark_first_output(session.timing, "answer posted as text")
+            else:
+                await self._post_unspoken(session, text, session.timing)
             return
 
         spoken = _speakable(text)
@@ -810,11 +902,30 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             mp3_path = await synthesize_speech(spoken)
             _mark_turn(session, "speech synthesized")
             # The original text, links included, rides along so the worker can
-            # still deliver the answer if it turns out it cannot play the audio.
-            await session.queue.put((mp3_path, text, session.timing))
+            # still deliver the answer if it turns out it cannot play the audio
+            # (nothing to deliver when the chat already has it).
+            await session.queue.put((mp3_path, "" if posted else text, session.timing))
             logger.debug(f"[AI Voice] Enqueued audio (queue size: {session.queue.qsize()})")
         except Exception as exc:
             logger.error(f"[AI Voice] TTS synthesis failed: {exc}")
+
+    async def _say_reply(self, session: VoiceChatSession, text: str, *, clip: bool = False) -> str:
+        """Read aloud (a stretch of) her reply; returns what was said.
+
+        `clip` is for a reply built on a web search, whose results are too long to listen
+        to: only the spoken part is read. The chat already has, or is about to get, all of
+        it (`_post_reply`), so a reply that is cut for speech says where the rest is.
+        Any other reply is read whole."""
+        if clip:
+            spoken, more = _spoken_part(text, config.voice_spoken_max_chars)
+        else:
+            spoken, more = _speakable(text), False
+        if not spoken:
+            return ""
+        if more:
+            logger.info(f"[AI Voice] Reply of {len(text)} chars: reading {len(spoken)}, the rest is in the chat")
+        await self._speak(session, f"{spoken} {_MORE_IN_CHAT}" if more else spoken, posted=True)
+        return spoken
 
     async def _await_speech(self, session: VoiceChatSession) -> None:
         """Block until everything queued has actually finished playing.
@@ -905,6 +1016,8 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         full_response = ""
         done: list[dict] = []  # what tools did this turn, for the history
         spoken_upto = 0  # how much of full_response has already been spoken
+        said = ""  # the last part of the reply she read aloud, to see whether it asked something
+        searched = False  # a web search ran this turn, so its reply is clipped for speech
 
         async def before_action(extra: str = "") -> None:
             # Anything she said earlier in the turn went out on a status
@@ -931,6 +1044,8 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             async with session.text_channel.typing():
                 async for msg_type, chunk in run_agent(session.history, ctx):
                     progress.feed(msg_type, chunk)
+                    if msg_type == "plan" and any(c["name"] == "web_search" for c in chunk):
+                        searched = True
                     if msg_type == "error":
                         dev_msg = chunk.get("dev", chunk) if isinstance(chunk, dict) else chunk
                         user_msg = chunk.get("user", chunk) if isinstance(chunk, dict) else chunk
@@ -950,7 +1065,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                         # text itself is never spoken.
                         pending = full_response[spoken_upto:]
                         if pending.strip():
-                            await self._speak(session, pending)
+                            said = await self._say_reply(session, pending, clip=searched) or said
                             spoken_upto = len(full_response)
                     elif msg_type == "action":
                         # Said when the command failed, or when she gave no
@@ -978,16 +1093,19 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         logger.debug(f"[AI Voice] LLM response ({len(full_response)} chars): {full_response}")
         session.history.append({"role": "assistant", "content": full_response})
 
+        # The whole reply goes in the chat; only its spoken part is read aloud.
+        await self._post_reply(session, full_response)
+
         tail = full_response[spoken_upto:]
         if tail.strip():
             if spoken_upto:
                 # _speak posts text instead of speaking while the voice
                 # client is busy, and that includes her own earlier sentence.
                 await self._await_speech(session)
-            await self._speak(session, tail)
+            said = await self._say_reply(session, tail, clip=searched) or said
 
         # The window opens when she stops talking, not when she starts.
-        if member is not None and _asks_user(full_response):
+        if member is not None and _asks_user(said or full_response):
             await self._await_speech(session)
             self._start_listening(
                 session,

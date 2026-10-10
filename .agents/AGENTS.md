@@ -284,12 +284,16 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
   Home's end sound. Every chime comes after the speaker has stopped (a segment is only known
   `STT_SILENCE_MS` later), so for a request said with her name the start chime alone sounded like
   "go on" while she was already working on it. So: a request heard in a listening window or answer
-  window gets the closing chime as it arrives (`_end_chime`); a one-shot request that had the early
-  chime gets it once STT has the request; a one-shot without the early chime gets its own sound,
-  `chime.play("got")`: a "tik-tik" on one note, neither rising nor falling, since by then listening has
-  already started and ended. `_end_chime` waits up to `_END_CHIME_WAIT_S` for a
-  start chime still ringing, since a busy client skips a chime. A bare name still gets the start chime
-  alone, and an unused window the closing one. Read the reply that follows as "she got it".
+  window gets the closing chime as it arrives (`_end_chime`). A one-shot request (name and request in
+  one segment) gets only its own sound, `chime.play("got")`: a "tik-tik" on one note, neither rising nor
+  falling, since there is nothing to listen for. The early ding plays before STT, so the acoustic
+  model decides: `AcousticResult.oneshot` is true when the name's window ended at least
+  `_ONESHOT_AFTER_S` (0.6 s) before the segment end (seen: a bare name 0.08-0.24 s, a one-shot
+  1.0-3.4 s), and a one-shot gets no early ding, only the tik-tik once STT has it. Guessed wrong
+  either way, it degrades: a "one-shot" with only the name gets the ding after STT and listens; a
+  "bare name" with a request gets ding, then tik-tik. `_end_chime` waits up to `_END_CHIME_WAIT_S` for a
+  start chime still ringing, since a busy client skips a chime. A bare name gets the ding, and the
+  dong when the request arrives or the window runs out unused. Read the reply that follows as "she got it".
 - **Several speakers**: one reply is generated per guild at a time (`session.busy`). A request that
   arrives meanwhile, from another person or the same one, waits in `session.pending` (at most
   `_MAX_PENDING`) and is answered in turn by the loop in `_respond`; it enters the history only when

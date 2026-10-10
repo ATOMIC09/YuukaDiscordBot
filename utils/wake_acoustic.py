@@ -106,6 +106,10 @@ _TRIM_KEEP_SCORE = 0.8  # what is left must still score this share of the whole 
 # little plausible gets it, and only its last few pauses.
 _PHRASE_MIN_SCORE = 0.1
 _PHRASE_MAX_TRIES = 2
+# A segment with this much after the name holds a request too ("Yuuka, kick everyone"). Seen
+# in real calls: a bare name ended 0.08-0.24 s before the segment end (the audio Discord sends
+# after the speaker stops), a name with a request 1.0-3.4 s before it.
+_ONESHOT_AFTER_S = 0.6
 
 
 class _Scores(NamedTuple):
@@ -174,11 +178,17 @@ class AcousticResult:
     score: float  # best window score
     cut: int = 0  # bytes to drop from the front of the segment's PCM before transcribing it
     scored: bool = True  # False when no model ran (disabled, or it failed to load): a free pass
+    after_name: float = 0.0  # seconds of the segment after the window where the name was heard
 
     @property
     def confident(self) -> bool:
         """Sure enough that it was her name to say so before STT has read it."""
         return self.heard and self.scored and self.score >= config.stt_wake_acoustic_confident_score
+
+    @property
+    def oneshot(self) -> bool:
+        """Something was said after the name, so the segment is likely a request with it."""
+        return self.heard and self.scored and self.after_name >= _ONESHOT_AFTER_S
 
 
 class AcousticWakeDetector:
@@ -358,6 +368,8 @@ class AcousticWakeDetector:
 
         cut = 0
         score = scores.best
+        # Where the name sat, for the chime; unknown (0) when only a later phrase passed.
+        after_name = scores.before_end if heard else 0.0
         if heard and config.stt_trim_before_name:
             end = restored.size - int(round(scores.before_end * _SAMPLE_RATE))
             window_end_s = _original_sample(end, blocks) / _SAMPLE_RATE
@@ -376,7 +388,7 @@ class AcousticWakeDetector:
                     f"[Wake Acoustic] The name only shows once the first {sample / _SAMPLE_RATE:.1f}s are left "
                     f"out ({how} pause): the phrase after it scores {found:.3f}, the whole {scores.best:.3f}"
                 )
-        return AcousticResult(heard, score, cut)
+        return AcousticResult(heard, score, cut, after_name=after_name)
 
     async def detect(self, pcm: bytes, pauses: Sequence[tuple[int, float]] = ()) -> AcousticResult:
         """

@@ -277,6 +277,16 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
   after a reply that asks a question (the answer window, `STT_ANSWER_WINDOW_S`, same closing chime
   if unused) and when a `voice_kick` / `voice_disconnect_timer` confirmation is posted (`expect_answer`).
   Both run after her line has finished, so the voice client is free.
+- **The closing chime means "I stopped listening"**, whether she got a request or not, like Google
+  Home's end sound. Every chime comes after the speaker has stopped (a segment is only known
+  `STT_SILENCE_MS` later), so for a request said with her name the start chime alone sounded like
+  "go on" while she was already working on it. So: a request heard in a listening window or answer
+  window gets the closing chime as it arrives (`_end_chime`); a one-shot request that had the early
+  chime gets it once STT has the request; a one-shot without the early chime gets its own sound,
+  `chime.play("got")`: a "tik-tik" on one note, neither rising nor falling, since by then listening has
+  already started and ended. `_end_chime` waits up to `_END_CHIME_WAIT_S` for a
+  start chime still ringing, since a busy client skips a chime. A bare name still gets the start chime
+  alone, and an unused window the closing one. Read the reply that follows as "she got it".
 - **Several speakers**: one reply is generated per guild at a time (`session.busy`). A request that
   arrives meanwhile, from another person or the same one, waits in `session.pending` (at most
   `_MAX_PENDING`) and is answered in turn by the loop in `_respond`; it enters the history only when
@@ -339,7 +349,8 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
   without the wake word: only from the requester, only while their `ConfirmActionView` is open (60 s),
   and only a short utterance (`spoken_decision` in `utils/ai/confirm.py`; a "no" word beats a "yes"
   word). Anything else from them goes through the normal wake gate. It costs one STT request and no
-  LLM request; the outcome is spoken back via `announce`.
+  LLM request; the outcome is spoken back via `announce`, and so is a timeout ("หมดเวลายืนยันแล้วค่ะ"),
+  which closes the start chime `expect_answer` played.
 - **`announce(guild_id, text)`**: speaks results that arrive after a turn ends (confirmed actions,
   fired reminders); silent if music or her own speech holds the voice client.
 

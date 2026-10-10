@@ -236,6 +236,11 @@ _ECHO_TAIL_S = 0.4
 # stalled request cannot hold the speaker back.
 _VERDICT_WAIT_S = 5.0
 
+# How long the "stopped listening" chime waits for a start chime still ringing. A chime
+# is about 0.4 s (0.6 s cold); this covers it, and is too short to hold anything up
+# behind her own speech, which it then simply skips.
+_END_CHIME_WAIT_S = 0.8
+
 # How long past a clip's own length to wait for it to come out of the music mixer. Only
 # reached when the track was paused or stopped under it.
 _OVERLAY_GRACE_S = 5.0
@@ -569,6 +574,9 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             if again:
                 text = again.remainder  # the name is addressing, not content
             self._cancel_listening(session, segment.user_id)
+            # The window is used: the same "stopped listening" sound as when it runs out,
+            # and the reply that follows says she got it.
+            asyncio.create_task(self._end_chime(session))
             logger.info(f"[AI Voice] Heard {display} while listening: {text}")
             await self._announce_and_respond(
                 segment.guild_id, session, display, text, member,
@@ -664,10 +672,15 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
                     # listening window whose next sentence goes to the model.
                     logger.info(f"[AI Voice] {display} repeated a request she is already on: {result.text!r}")
                     return
-                chimed = chime.play(session.voice_client, "wake")
+                # A request said with her name is already heard in full, so it gets the
+                # "got it" tik-tik; her name alone gets the ding that says "go on".
+                chimed = chime.play(session.voice_client, "got" if remainder else "wake")
                 _mark(display, "chime" if chimed else "chime skipped (voice busy)", segment.ended_at)
             else:
                 chimed = early  # it sounded before STT
+                if remainder and early:
+                    # It said "listening"; the request is in, so say she has stopped.
+                    asyncio.create_task(self._end_chime(session))
             if not remainder:
                 # Just her name and nothing else: she listens for the next thing
                 # this speaker says.
@@ -712,6 +725,17 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
         if not chimed:
             asyncio.create_task(self._post_listening_notice(session, user_id, window))
         return deadline
+
+    async def _end_chime(self, session: VoiceChatSession) -> None:
+        """The "stopped listening" chime. The start chime may still be ringing (it can sound
+        before STT, and a quick transcript lands half a second later), and a busy client
+        skips a chime, so wait for it briefly. Music is no reason to wait: over a track the
+        chime is mixed in."""
+        vc = session.voice_client
+        give_up = time.perf_counter() + _END_CHIME_WAIT_S
+        while vc is not None and vc.is_playing() and music_mixer(vc) is None and time.perf_counter() < give_up:
+            await asyncio.sleep(0.02)
+        chime.play(vc, "done")
 
     def _relisten(self, session: VoiceChatSession, user_id: int, display: str) -> None:
         """She was called again while listening: signal again and restart the window."""

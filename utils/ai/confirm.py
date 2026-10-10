@@ -180,3 +180,6 @@ class ConfirmActionView(discord.ui.View):
                 )
             except discord.HTTPException as exc:
                 logger.warning(f"[AI Confirm] Could not mark the confirmation as expired: {exc}")
+        # In a call the requester may not be watching the chat; the chime that opened the
+        # spoken yes/no gets this as its close.
+        await self._announce("หมดเวลายืนยันแล้วค่ะ")

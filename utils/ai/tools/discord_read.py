@@ -14,7 +14,7 @@ from langchain_core.tools import tool
 
 from bot.config import config
 from bot.logger import logger
-from utils.ai.context import Ctx, YuukaContext
+from utils.ai.context import Ctx, YuukaContext, stamp
 from utils.ai.memory import is_memory_channel
 from utils.ai.tools.resolve import resolve_text_channel
 from utils.errors import UserWarning
@@ -48,8 +48,7 @@ def _line(message: discord.Message) -> str:
     if message.attachments:
         files = ", ".join(a.filename for a in message.attachments)
         text = f"{text} [ไฟล์แนบ: {files}]".strip()
-    stamp = message.created_at.strftime("%Y-%m-%d %H:%M UTC")
-    return f"[{stamp}] {message.author.display_name}: {text} <{message.jump_url}>"
+    return f"[{stamp(message.created_at)}] {message.author.display_name}: {text} <{message.jump_url}>"
 
 
 def _source(ctx: YuukaContext, channel: discord.TextChannel | discord.Thread) -> str:

@@ -165,7 +165,10 @@ def setup(bot: discord.Bot):
 - **History pruning**: capped at `MAX_HISTORY_LENGTH` messages (default 50); the system prompt is always kept.
 - **LLM backend**: Calls `utils.ai.run_agent(history, ctx)` → OpenRouter (see "LLM Backend" below).
 - **Reminders**: `AIChatCog.scheduler` (`utils/ai/scheduler.py`) holds in-memory reminders and voice-join watches; its `on_voice_state_update` listener fires the watches.
-- **Message formatting**: Each user message is prefixed with timestamp and display name for context.
+- **Message formatting**: Each user message is prefixed with timestamp and display name for context. The
+  time is local (`TIMEZONE`, default Asia/Bangkok) with the offset spelled out, `[2026-10-11 07:43 UTC+7]`
+  (`utils.ai.context.stamp`, used everywhere a message is stamped for the model, `read_messages` included):
+  she tells the time off these, and UTC stamps made her answer in UTC.
 
 ---
 

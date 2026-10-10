@@ -77,8 +77,9 @@ _OPTED_OUT_NOTICE = (
     "forgot anything unless memory_save or memory_forget returned success."
 )
 
-# Both /ai chat and /ai voice store a request as "[2026-01-01 12:00 UTC] Name: text".
-_STAMP = re.compile(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC\] [^\n]*?: ")
+# Both /ai chat and /ai voice store a request as "[2026-01-01 12:00 UTC+7] Name: text"
+# (`context.stamp`; an older history may still say plain "UTC").
+_STAMP = re.compile(r"^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC[^\]]*\] [^\n]*?: ")
 _MENTION = re.compile(r"<@!?(\d+)>|<@&(\d+)>|<#(\d+)>")
 _NAME_SPLIT = re.compile(r"[,;\n]")
 

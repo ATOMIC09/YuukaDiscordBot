@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
+import pytz
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -37,6 +38,7 @@ class Config:
     feedback_channel_id: int | None = None
     guild_ids: list[int] = field(default_factory=list)
     log_level: str = "INFO"
+    timezone: str = "Asia/Bangkok"     # the clock the AI reads and tells; an IANA name
 
     # ── Speech-to-text ────────────────────────────────────────────────────
     # Backend: "auto" uses Groq when GROQ_API_KEY is set and falls back to the
@@ -118,6 +120,12 @@ class Config:
 
         log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 
+        timezone = os.getenv("TIMEZONE", "").strip() or "Asia/Bangkok"
+        try:
+            pytz.timezone(timezone)
+        except pytz.UnknownTimeZoneError:
+            raise ValueError(f"TIMEZONE={timezone!r} is not a time zone name (e.g. Asia/Bangkok, UTC).")
+
         openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
         if not openrouter_api_key:
             raise ValueError(
@@ -165,6 +173,7 @@ class Config:
             bot_token=token,
             guild_ids=guild_ids,
             log_level=log_level,
+            timezone=timezone,
             openrouter_api_key=openrouter_api_key,
             openrouter_model=openrouter_model,
             openrouter_max_tokens=openrouter_max_tokens,

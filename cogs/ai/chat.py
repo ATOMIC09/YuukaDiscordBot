@@ -24,6 +24,7 @@ from bot.logger import logger
 from cogs.ai import ai_group
 from utils.embeds import AI_DISCLOSURE_NAME, ai_disclosure_field, build_embed, COLOR_SUCCESS, error_embed, success_embed
 from utils.ai import YuukaContext, run_agent
+from utils.ai.context import stamp
 from utils.ai.scheduler import ReminderScheduler
 from utils.ai.tools.memory import disclosure_note, post_offer
 from utils.errors import UserWarning
@@ -175,7 +176,7 @@ class AIChatCog(commands.Cog, name="AI Chat"):
             if msg.author == self.bot.user:
                 history.append({"role": "assistant", "content": content})
             elif not msg.author.bot:
-                timestamp = msg.created_at.strftime("%Y-%m-%d %H:%M UTC")
+                timestamp = stamp(msg.created_at)
                 user_content = f"[{timestamp}] {msg.author.display_name}: {content}"
                 history.append({"role": "user", "content": user_content})
 
@@ -260,7 +261,7 @@ class AIChatCog(commands.Cog, name="AI Chat"):
         if not content:
             return
 
-        timestamp = message.created_at.strftime("%Y-%m-%d %H:%M UTC")
+        timestamp = stamp(message.created_at)
         user_content = f"[{timestamp}] {message.author.display_name}: {content}"
         history.append({"role": "user", "content": user_content})
 
@@ -394,7 +395,7 @@ class AIChatCog(commands.Cog, name="AI Chat"):
         async with message.channel.typing():
             logger.info(f"[AI Chat] Reacting to {user.display_name}'s reaction {reaction.emoji} in {channel_id}")
 
-            timestamp = discord.utils.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+            timestamp = stamp(discord.utils.utcnow())
             react_content = f"[{timestamp}] {user.display_name} reacted with {reaction.emoji}"
 
             short_history = [

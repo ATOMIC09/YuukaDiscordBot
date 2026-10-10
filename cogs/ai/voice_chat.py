@@ -77,6 +77,7 @@ from bot.logger import logger
 from utils import chime, wake
 from utils.audio import boost_pcm, decode_to_pcm, music_mixer, pcm_duration_seconds
 from utils.ai import YuukaContext, run_agent
+from utils.ai.context import stamp
 from utils.ai.progress import TurnProgress
 from utils.ai.tools.memory import disclosure_note
 from utils.embeds import (
@@ -829,7 +830,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
 
     async def _remember(self, session: VoiceChatSession, speaker: str, text: str) -> None:
         """Append a user turn to history, trimming to the configured window."""
-        timestamp = discord.utils.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        timestamp = stamp(discord.utils.utcnow())
         session.history.append({"role": "user", "content": f"[{timestamp}] {speaker}: {text}"})
         while len(session.history) > config.max_history_length:
             session.history.pop(1)  # preserve system prompt at index 0

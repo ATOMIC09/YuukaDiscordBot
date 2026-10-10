@@ -92,6 +92,7 @@ Use it to answer the user, or call another tool if you still need something.
 
 Rules:
 - Only use a tool when the user clearly asks for it or you truly need it. Talking about something is not the same as asking for it.
+- When the user asks for something a tool does, call it even if you think it will be refused: the tool checks permissions and rules itself and tells you why. Never refuse on your own guess ("I have no permission", "I can't do that").
 - Several calls only when the user asked for several things. A call that needs an earlier call's result must wait for it, in your next reply.
 - Never write a <tool_response> yourself, and never guess what a tool would return. Only the system sends results.
 - Never describe the call format or mention that you are using tools.

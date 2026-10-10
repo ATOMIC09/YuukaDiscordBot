@@ -13,6 +13,8 @@ messages) are all LangChain core.
     ("step", (int, str))        call number (in that plan) and its state: running, ok, failed, skipped
     ("status", str)             a tool is about to run
     ("content", str)            a chunk of her reply
+    ("offer", str)              a lasting fact about the requester she proposes to keep, once the
+                                reply is complete; the cog shows the keep-or-skip buttons
     ("action", ActionResult)    a bot command ran
     ("done", list[dict])        a tool that ends the turn succeeded: its call and result, as
                                 history entries (the turn has no text to record otherwise)
@@ -22,6 +24,7 @@ messages) are all LangChain core.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, AsyncGenerator
 
 import openai
@@ -143,6 +146,65 @@ class _EchoFilter:
         return out
 
 
+class _OfferFilter:
+    """Cuts the <remember>…</remember> line out of a reply and keeps what it says.
+
+    The line is how she proposes a note (`memory.OFFER_NOTE`), so it is never posted or spoken,
+    whether or not an offer is allowed this turn. A tag the model left unclosed counts to the end
+    of the reply. Text after a closing tag goes on as normal."""
+
+    _OPEN, _CLOSE = "<remember", "</remember>"
+    _BODY = re.compile(r"<remember[^>]*>(.*)", re.S)
+
+    def __init__(self) -> None:
+        self._pending = ""  # the end of the text so far, if it could still become the opening tag
+        self._held = ""  # the tag so far, once it is open
+        self._inside = False
+        self._notes: list[str] = []
+
+    def feed(self, text: str) -> str:
+        out = ""
+        text, self._pending = self._pending + text, ""
+        while text:
+            if self._inside:
+                self._held, text = self._held + text, ""
+                end = self._held.find(self._CLOSE)
+                if end == -1:
+                    break
+                text = self._held[end + len(self._CLOSE) :]
+                self._close(self._held[:end])
+                continue
+            at = text.find(self._OPEN)
+            if at != -1:
+                out, text = out + text[:at], text[at:]
+                self._inside = True
+                continue
+            keep = next(
+                (n for n in range(min(len(text), len(self._OPEN) - 1), 0, -1) if self._OPEN.startswith(text[-n:])), 0
+            )
+            out, self._pending = out + text[: len(text) - keep], text[len(text) - keep :]
+            break
+        return out
+
+    def _close(self, tag: str) -> None:
+        self._inside, self._held = False, ""
+        body = self._BODY.match(tag)
+        if body and (note := " ".join(body.group(1).split())):
+            self._notes.append(note)
+
+    def flush(self) -> str:
+        """What is still held when the reply ends: an unclosed tag is read as it stands, a half-written
+        opener that never came is plain text."""
+        if self._inside:
+            self._close(self._held)
+        out, self._pending = self._pending, ""
+        return out
+
+    @property
+    def fact(self) -> str | None:
+        return self._notes[0] if self._notes else None
+
+
 def _logged_args(name: str, args: dict) -> str:
     """A call's arguments for a log line. A tool that carries a server's notes logs none: the
     log file outlives the reply."""
@@ -197,10 +259,13 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
     tools = {t.name: t for t in tools_for(ctx)}
 
     messages = [dict(m) for m in history]
+    offering = await memory.offers_enabled(ctx)
     if messages and messages[0]["role"] == "system":
         messages[0]["content"] += _cache_notice()
         if "music_play" in tools:
             messages[0]["content"] += music.now_playing_notice(ctx)
+        if offering:
+            messages[0]["content"] += memory.OFFER_NOTE
     noted = await _with_memory(messages, ctx)
     conversation = convert_to_messages(messages)
 
@@ -212,6 +277,7 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
 
     wrote = False
     retried = False
+    offered: str | None = None  # what her last reply proposed to keep, if it was an answer
     try:
         # The last round runs without tools so she always answers.
         max_rounds = config.agent_max_rounds
@@ -227,9 +293,11 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
             reply: AIMessageChunk | None = None
             separate = wrote
             echo = _EchoFilter() if noted else None
+            offer = _OfferFilter()
             async for chunk in model.astream(conversation):
                 reply = chunk if reply is None else reply + chunk
                 text = echo.feed(chunk.content) if echo is not None and chunk.content else chunk.content
+                text = offer.feed(text) if text else text
                 if text:
                     if separate and text.strip():
                         text, separate = "\n\n" + text.lstrip(), False
@@ -239,8 +307,13 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
                     if text:
                         yield ("content", text)
             if echo is not None and (held := echo.flush()):
-                wrote = wrote or bool(held.strip())
-                yield ("content", linker.feed(held) if linker is not None else held)
+                held = offer.feed(held)
+                if held:
+                    wrote = wrote or bool(held.strip())
+                    yield ("content", linker.feed(held) if linker is not None else held)
+            if tail := offer.flush():
+                wrote = wrote or bool(tail.strip())
+                yield ("content", linker.feed(tail) if linker is not None else tail)
             if linker is not None and (rest := linker.flush()):
                 yield ("content", rest)
 
@@ -254,7 +327,8 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
                     continue
                 # Nothing at all to show. Usually a one-off, so ask once more (the
                 # round still counts); a second empty reply is reported, not retried.
-                if not wrote and not (reply is not None and str(reply.content).strip()):
+                # A reply that was only a <remember> line has nothing to show either.
+                if not wrote and (offer.fact is not None or not (reply is not None and str(reply.content).strip())):
                     if not retried and not last:
                         retried = True
                         logger.warning("[Agent] Empty reply; asking again")
@@ -262,6 +336,7 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
                         continue
                     yield ("error", {"user": _EMPTY_REPLY, "dev": "The model returned an empty reply."})
                     return
+                offered = offer.fact
                 break
 
             conversation.append(AIMessage(content=reply.content, tool_calls=calls))
@@ -338,5 +413,8 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
                 break
 
         logger.info("[Agent] Turn completed")
+        # Last, so the cog posts it under a finished reply. What it says is never logged.
+        if offering and offered is not None and (fact := memory.prepare_offer(ctx, offered)) is not None:
+            yield ("offer", fact)
     except Exception as exc:
         yield _error_event(exc)

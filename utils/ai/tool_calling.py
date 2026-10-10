@@ -131,8 +131,9 @@ _LEAKED_REASONING = re.compile(
 
 def _logged(text: str) -> str:
     """The start of some model text, for a log line. A call to a memory tool carries a server's
-    notes and the log file outlives the reply, so text that names one is not quoted."""
-    return "<a memory call, not logged>" if "memory_" in text else repr(text[:200])
+    notes and the log file outlives the reply, so text that names one (or holds a <remember> line,
+    a note she was about to offer) is not quoted."""
+    return "<a memory call, not logged>" if "memory_" in text or "<remember" in text else repr(text[:200])
 
 
 def _final_rule(names: Sequence[str]) -> str:

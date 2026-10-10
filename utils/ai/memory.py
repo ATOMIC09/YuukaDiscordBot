@@ -483,6 +483,28 @@ class MemoryStore:
                 "(ช่องความจำควรให้เห็นแค่แอดมินค่ะ)",
             )
 
+    def refusal(
+        self,
+        guild: discord.Guild,
+        *,
+        text: str,
+        names: list[str],
+        members: list[int],
+        source: discord.abc.GuildChannel | discord.Thread,
+        author: discord.Member,
+    ) -> UserWarning | None:
+        """Why `save` would refuse this note right now, or None. Reads RAM only: a server whose notes
+        are not loaded yet is reported as refusing, so nothing is offered that cannot be kept."""
+        mem = self._guilds.get(guild.id)
+        channel = guild.get_channel(mem.channel_id) if mem is not None and mem.loaded else None
+        if channel is None:
+            return UserWarning("ใช้สมุดความจำไม่ได้ค่ะ", "")
+        try:
+            self._check_new(guild, mem, channel, text=text, names=names, members=members, source=source, author=author)
+        except UserWarning as exc:
+            return exc
+        return None
+
     async def save(
         self,
         guild: discord.Guild,

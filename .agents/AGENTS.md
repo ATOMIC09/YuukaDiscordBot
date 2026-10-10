@@ -18,7 +18,7 @@ Main features:
 3. **Music player** (`/music …`) — yt-dlp streaming with queue, loop, seek and crossfade
 4. **Voice tools** — recording, live captions, attendance, kick, countdown disconnect
 5. **Image tools** — `/image …` and right-click message commands
-6. **Server memory** (`/memory …`) — notes she keeps when asked ("จำไว้นะว่า…"), stored in a hidden channel of the server itself, not on the machine she runs on
+6. **Server memory** (`/memory …`) — notes she keeps when asked ("จำไว้นะว่า…") or when a member presses "keep" on her offer, stored in a hidden channel of the server itself, not on the machine she runs on
 
 ---
 
@@ -454,7 +454,7 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 ## LLM Backend — `utils/ai/`
 
 - **Provider**: [OpenRouter](https://openrouter.ai/) through LangChain core (`langchain-core`, `langchain-openai`). **No LangGraph** — do not add `langchain` or `langgraph`; the loop is hand-written.
-- **Agent loop**: `run_agent(history, ctx)` in `agent.py` — the model picks a tool, the result goes back, up to `AGENT_MAX_ROUNDS` model calls (the last without tools). Yields `("thinking" | "plan" | "step" | "status" | "content" | "action" | "done" | "error", payload)` (the first three feed the progress embed, below); `done` is a succeeded turn-ending tool's call and result, which the cogs add to the history as a real tool call (an action-only turn has no text, and a history without it makes the model repeat the request). A `return_direct` tool ends the turn only if it succeeded; a refusal goes back to the model. One reply may hold up to `AGENT_MAX_TOOL_CALLS` calls ("queue it, wait 10 s, then skip"; `wait` pauses without calling the model), run in order; after a failure the rest are skipped. The same read-only call repeated in one reply (`READ_ONLY` in `tools/__init__.py`: search, read, info, queue lookups) runs once and the repeats get a note; actions are never deduplicated, since "play X" twice is a real request.
+- **Agent loop**: `run_agent(history, ctx)` in `agent.py` — the model picks a tool, the result goes back, up to `AGENT_MAX_ROUNDS` model calls (the last without tools). Yields `("thinking" | "plan" | "step" | "status" | "content" | "offer" | "action" | "done" | "error", payload)` (the first three feed the progress embed, below; `offer` is a memory note she proposes, see "Server Memory"); `done` is a succeeded turn-ending tool's call and result, which the cogs add to the history as a real tool call (an action-only turn has no text, and a history without it makes the model repeat the request). A `return_direct` tool ends the turn only if it succeeded; a refusal goes back to the model. One reply may hold up to `AGENT_MAX_TOOL_CALLS` calls ("queue it, wait 10 s, then skip"; `wait` pauses without calling the model), run in order; after a failure the rest are skipped. The same read-only call repeated in one reply (`READ_ONLY` in `tools/__init__.py`: search, read, info, queue lookups) runs once and the repeats get a note; actions are never deduplicated, since "play X" twice is a real request.
 - **No native tool calls**: the free model has none, so `ToolPromptChatModel` (`tool_calling.py`) describes tools in the prompt and parses `<tool_call>{...}</tool_call>` back into `AIMessage.tool_calls` (gpt-oss's own `<|channel|>…<|call|>` format too). Call text, and text written before a call, never reaches Discord or TTS. A `<tool_response>` the model writes itself is cut off and sent back once. A call nested in harmony markers or with an escaped `<\/tool_call>` is read too, and so is one followed by junk (an extra `}`, a half-written `</tool_call}`): the first JSON value is the call. A call that still cannot be read is dropped together with the text before it ("the song is ready" would claim something that never happened) and the agent retries once, and a reply that is only reasoning ("We need to call tool.") is dropped and retried once with a note. A `[result]` line in an earlier assistant turn is the system's record; the prompt tells the model never to write one.
 - **Tools**: standard LangChain `@tool`s in `utils/ai/tools/`, chosen per turn by `tools_for(ctx)`. Per-turn Discord state is passed as `YuukaContext` (`Ctx` alias) via `InjectedToolArg`, so the model never sees it. Adding a tool: write it in a module there, export `TOOLS` and `STATUS`, and gate it in `tools_for`.
 
@@ -503,10 +503,24 @@ production box is stateless on purpose, and its owner does not want to hold the 
   cached for 5 minutes and cleared by the cog's permission and role listeners. Every path that shows or uses
   a note goes through it (the `[MEMORY]` note, `memory_search`, `memory_forget`). `/memory me|forget` filter
   by what the *member* can read instead, because their answer is ephemeral.
-- **Saved only when asked.** Nothing is extracted from messages on its own: it would cost a request per
-  message and build profiles of people who never spoke to her. A note may be about another member; it is
-  attributed to whoever asked, and it can be forgotten by them, by the person it is about, or by a server
-  manager. Obvious private data (emails, long digit runs, keys, password words) is refused.
+- **Saved only when asked, or when the member presses "keep".** Nothing is extracted from messages on its
+  own and she never saves by herself: it would build profiles of people who never asked her to remember
+  anything. A note may be about another member; it is attributed to whoever asked, and it can be forgotten
+  by them, by the person it is about, or by a server manager. Obvious private data (emails, long digit runs,
+  keys, password words) is refused.
+- **Offers** (`MEMORY_OFFERS`, `offers_enabled` / `prepare_offer` / `OfferView` in `tools/memory.py`). When
+  a member tells her something lasting about *themselves* ("I'm vegetarian"), she may offer to keep it.
+  It costs no extra request: `OFFER_NOTE` is added to the system prompt and the model ends its normal reply
+  with `<remember>one sentence about them</remember>`. `agent._OfferFilter` cuts that line out of the stream
+  (always, so it can never be posted or spoken), and at the end of the turn `run_agent` yields `("offer",
+  text)`; `/ai chat` posts it under her reply as a keep/skip embed. Only the member it is about can press it
+  (the press is what saves, through the same `MemoryStore.save` and its checks); skipping it, or ignoring
+  it for 10 minutes, deletes it. Rules that make it safe: text chat only (what is said in a call is not for everyone
+  who can read the chat); only with a memory channel set up, a requester who has not opted out, and a memory
+  channel whose audience can read the channel the note came from; the note is always about the requester
+  (never another member); private data, a duplicate or a full book means no offer; at most one per member
+  every 10 minutes and none for an hour after "skip" (`_OfferLimiter`, deadlines in RAM only, no text). The
+  model never says it saved anything, since nothing is until the press. Never offer from a voice turn.
 - **Recall costs no request.** `memory_notice` (`tools/memory.py`) builds a `[MEMORY]` block from RAM:
   notes whose names appear in the request, up to three about the speaker, then one hop from the notes the
   request named (never through the speaker, or a greeting would pull in all of their notes).
@@ -518,7 +532,7 @@ production box is stateless on purpose, and its owner does not want to hold the 
   request: the same lesson as `[CACHED SEARCHES]`.
 - **Nothing a note says is logged.** `logs/yuuka.log` keeps 7 days. The memory tools are in `PRIVATE_ARGS`,
   so the agent logs `memory_save(…)`; `tool_calling._logged` does not quote model text that names a
-  `memory_*` tool; memory code logs counts and ids only; the memory tools never call `log_command` (the log
+  `memory_*` tool or holds a `<remember>` line; memory code (offers included) logs counts and ids only; the memory tools never call `log_command` (the log
   channel belongs to the bot owner). The memory channel itself cannot be read through `read_messages` or
   `search_messages` (`is_memory_channel`), or an admin could have every note read into a public channel.
 - **Opt-out.** `/memory optout` deletes everything about or told by the member and writes a record; while it

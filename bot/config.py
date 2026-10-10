@@ -104,6 +104,7 @@ class Config:
     memory_max_facts: int = 500        # notes kept per server; saving past it is refused
     memory_notice_max: int = 20        # most notes added to a request on their own; 0 = only when she searches
     memory_notice_max_chars: int = 5000  # most characters of them (the header counts); every one is prompt the free model pays for
+    memory_offers: bool = True         # she may offer, with a button, to remember a lasting fact a member just told her
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -215,6 +216,7 @@ class Config:
             memory_max_facts=max(1, int(os.getenv("MEMORY_MAX_FACTS", "500"))),
             memory_notice_max=max(0, int(os.getenv("MEMORY_NOTICE_MAX", "20"))),
             memory_notice_max_chars=max(600, int(os.getenv("MEMORY_NOTICE_MAX_CHARS", "5000"))),
+            memory_offers=os.getenv("MEMORY_OFFERS", "true").strip().lower() not in ("false", "0", "no"),
         )
 
 

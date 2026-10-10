@@ -33,7 +33,8 @@ steps are in `.agents/DEVELOPMENT.md`. When a rule changes, update both files.
 - Server memory (`/memory`, `utils/ai/memory.py`) lives only in the server's own hidden channel: never in
   a file, database or log. A note is shown or used only where everyone who can see the reply can read the
   channel it came from (`MemoryStore.audience_ok`), and a memory tool's arguments are never logged
-  (`PRIVATE_ARGS`).
+  (`PRIVATE_ARGS`). A note is saved only when a member asks, or presses "keep" on her offer (text chat,
+  about themselves, never from a voice turn); she never saves on her own.
 - The free OpenRouter model allows few requests per day: never call the model in a loop or while
   waiting for something.
 - The production container is stateless: nothing saved at runtime survives a restart.

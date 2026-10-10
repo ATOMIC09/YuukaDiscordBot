@@ -16,6 +16,7 @@ its log lines.
 from __future__ import annotations
 
 import re
+import time
 from typing import Callable
 
 import discord
@@ -35,11 +36,30 @@ from utils.ai.memory import (
     search,
 )
 from utils.ai.tools.resolve import exact_member
-from utils.embeds import success_embed, warning_embed
+from utils.embeds import info_embed, success_embed, warning_embed
 from utils.errors import UserWarning
 
 _LOADING = "<a:AppleLoadingGIF:1052465926487953428>"
 _FORGET_BUTTON_S = 24 * 60 * 60  # how long the button under a saved note works
+_OFFER_BUTTON_S = 10 * 60  # how long an offer waits for an answer before it is withdrawn
+_OFFER_COOLDOWN_S = 10 * 60  # after an offer, none for the same member for this long
+_OFFER_DECLINED_S = 60 * 60  # after they said no, none for this long
+
+# Added to the system prompt of a text turn where an offer is possible. The model never saves
+# anything: the line is cut from the reply (`agent._OfferFilter`) and becomes a button the member
+# may press, which is why it must not say it remembered.
+OFFER_NOTE = (
+    "\n\n[MEMORY OFFER]\n"
+    "When the user's latest message tells you something lasting about themselves (a preference, a "
+    "habit, their work, studies, hobbies or plans) that would still help in a later conversation, "
+    "answer as usual, then end your reply with this on a new last line:\n"
+    "<remember>one short sentence about them, third person, using their name, in their language</remember>\n"
+    "Nothing is saved by it: the system shows them a button to keep it. So never mention the line or "
+    "the button, and never say you have remembered or saved anything. "
+    "Leave it out for small talk, passing moods, jokes, questions, requests, anything about other "
+    "people, and private details (contacts, passwords, addresses, health, money). Most replies have "
+    "none. At most one, and never in a reply that calls a tool."
+)
 
 _NOTICE_HEAD = (
     "[MEMORY] Background for you, not part of the user's message: never quote, repeat or mention "
@@ -73,7 +93,7 @@ def disclosure_note(bot: discord.Bot, guild: discord.Guild | None) -> str:
     if guild is None or store is None or store.channel_for(guild) is None:
         return ""
     return (
-        "📒 หนูจดเรื่องที่เซนเซย์ขอให้จำไว้ในช่องความจำของเซิร์ฟเวอร์นี้ "
+        "📒 หนูจดเรื่องที่เซนเซย์ขอให้จำไว้ (หรือกดให้จำตอนที่หนูถาม) ในช่องความจำของเซิร์ฟเวอร์นี้ "
         "และโน้ตที่เกี่ยวข้องจะถูกส่งไปกับข้อความให้ AI ด้วย ดูหรือลบได้ด้วย `/memory me` ค่ะ"
     )
 
@@ -380,6 +400,157 @@ async def memory_notice(ctx: YuukaContext, messages: list[dict]) -> str:
         size += len(line) + 1
     logger.debug(f"[Memory] Added {len(lines)} notes to the request")
     return _NOTICE_HEAD + "\n".join(lines)
+
+
+# ── Offers ────────────────────────────────────────────────────────────────
+
+class _OfferLimiter:
+    """At most one offer per member every few minutes, and none for a while after they said no.
+
+    RAM only and no text: a deadline per (server, member), so nothing about what was said is kept."""
+
+    def __init__(self) -> None:
+        self._until: dict[tuple[int, int], float] = {}
+
+    def ready(self, guild_id: int, member_id: int) -> bool:
+        return self._until.get((guild_id, member_id), 0.0) <= time.monotonic()
+
+    def hold(self, guild_id: int, member_id: int, seconds: float) -> None:
+        now = time.monotonic()
+        if len(self._until) > 1000:
+            self._until = {k: v for k, v in self._until.items() if v > now}
+        key = (guild_id, member_id)
+        self._until[key] = max(self._until.get(key, 0.0), now + seconds)
+
+
+_offers = _OfferLimiter()
+
+
+async def offers_enabled(ctx: YuukaContext) -> bool:
+    """Whether she may offer to remember something this turn. Decided before the request, so the
+    instruction (and the tokens it costs) is only sent when an offer could actually be posted.
+
+    Text chat only: an offer shows the note in the channel, and what was said in a call is not
+    necessarily for everyone who can read it. Never raises."""
+    if not config.memory_offers or ctx.voice or ctx.guild is None or ctx.requester is None:
+        return False
+    if not isinstance(ctx.channel, (discord.abc.GuildChannel, discord.Thread)):
+        return False
+    store = store_for(ctx)
+    channel = store.channel_for(ctx.guild) if store is not None else None
+    if channel is None or not _offers.ready(ctx.guild.id, ctx.requester.id):
+        return False
+    try:
+        mem = await store.ensure_loaded(ctx.guild)
+    except UserWarning:
+        return False
+    except Exception as exc:
+        logger.warning(f"[Memory] Offer check failed: {type(exc).__name__}")
+        return False
+    return (
+        ctx.requester.id not in mem.optouts
+        and len(mem.notes) < config.memory_max_facts
+        and store.audience_ok(ctx.guild, ctx.channel.id, channel)
+    )
+
+
+def prepare_offer(ctx: YuukaContext, raw: str) -> str | None:
+    """The note to offer from what the model wrote, or None when it would not be kept anyway
+    (too long, private, already known, refused for this member). A note is about the requester."""
+    store = store_for(ctx)
+    if store is None or ctx.guild is None or ctx.requester is None:
+        return None
+    text = _demention(ctx.guild, " ".join(raw.split())).strip(" \"'“”")
+    if not entity_key(text) or len(text) > MAX_FACT_CHARS or looks_private(text):
+        return None
+    refusal = store.refusal(
+        ctx.guild, text=text, names=[], members=[ctx.requester.id], source=ctx.channel, author=ctx.requester
+    )
+    return None if refusal is not None else text
+
+
+class OfferView(discord.ui.View):
+    """The keep-or-skip buttons under an offer. Only the member it is about can answer; the press is what saves."""
+
+    def __init__(
+        self,
+        store: MemoryStore,
+        guild: discord.Guild,
+        channel: discord.abc.GuildChannel | discord.Thread,
+        member: discord.Member,
+        text: str,
+    ) -> None:
+        super().__init__(timeout=_OFFER_BUTTON_S)
+        self.store = store
+        self.guild = guild
+        self.channel = channel
+        self.member = member
+        self.text = text
+        self.message: discord.Message | None = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self.member.id:
+            return True
+        await interaction.response.send_message("ปุ่มนี้ให้คนที่หนูถามกดนะคะ (´-ω-`)", ephemeral=True)
+        return False
+
+    @discord.ui.button(label="จำไว้", style=discord.ButtonStyle.success)
+    async def keep(self, button: discord.ui.Button, interaction: discord.Interaction) -> None:
+        self.stop()
+        await interaction.response.defer()
+        try:
+            note = await self.store.save(
+                self.guild, text=self.text, names=[], members=[self.member.id], source=self.channel, author=self.member
+            )
+        except UserWarning as exc:
+            await interaction.edit_original_response(embed=warning_embed(exc.title, exc.description), view=None)
+            return
+        forget = ForgetView(self.store, self.guild, note)
+        embed = success_embed(
+            "📒 จดไว้ให้แล้วค่ะ",
+            f"{self.text}\n\nกดปุ่มด้านล่างถ้าอยากให้หนูลืมเรื่องนี้ หรือใช้ `/memory me` ดูทั้งหมดได้เลยนะคะ",
+        )
+        forget.message = await interaction.edit_original_response(embed=embed, view=forget)
+
+    @discord.ui.button(label="ไม่ต้อง", style=discord.ButtonStyle.secondary)
+    async def skip(self, button: discord.ui.Button, interaction: discord.Interaction) -> None:
+        self.stop()
+        _offers.hold(self.guild.id, self.member.id, _OFFER_DECLINED_S)
+        await interaction.response.defer()
+        await self._withdraw()
+
+    async def on_timeout(self) -> None:
+        await self._withdraw()
+
+    async def _withdraw(self) -> None:
+        """An offer nobody wants is taken back down, so it does not stay in the channel."""
+        if self.message is not None:
+            try:
+                await self.message.delete()
+            except discord.HTTPException:
+                pass
+
+
+async def post_offer(ctx: YuukaContext, text: str, reply_to: discord.Message | None = None) -> None:
+    """Show the offer under her reply. Never raises: a missing offer costs nothing."""
+    store = store_for(ctx)
+    if store is None or ctx.guild is None or ctx.requester is None:
+        return
+    embed = info_embed(
+        "📒 ให้หนูจำเรื่องนี้ไว้ไหมคะ",
+        f"{text}\n\nถ้ากด “จำไว้” หนูจะจดลงช่องความจำของเซิร์ฟเวอร์นี้ ลบทีหลังได้เสมอนะคะ",
+    )
+    view = OfferView(store, ctx.guild, ctx.channel, ctx.requester, text)
+    try:
+        if reply_to is not None:
+            view.message = await reply_to.reply(embed=embed, view=view, mention_author=False)
+        else:
+            view.message = await ctx.channel.send(embed=embed, view=view)
+    except discord.HTTPException as exc:
+        logger.warning(f"[Memory] Could not post an offer: {type(exc).__name__}")
+        return
+    _offers.hold(ctx.guild.id, ctx.requester.id, _OFFER_COOLDOWN_S)
+    logger.info(f"[Memory] Guild {ctx.guild.id}: offered to remember something")
 
 
 TOOLS = [memory_save, memory_search, memory_forget]

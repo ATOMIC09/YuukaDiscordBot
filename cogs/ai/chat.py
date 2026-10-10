@@ -25,7 +25,7 @@ from cogs.ai import ai_group
 from utils.embeds import AI_DISCLOSURE_NAME, ai_disclosure_field, build_embed, COLOR_SUCCESS, error_embed, success_embed
 from utils.ai import YuukaContext, run_agent
 from utils.ai.scheduler import ReminderScheduler
-from utils.ai.tools.memory import disclosure_note
+from utils.ai.tools.memory import disclosure_note, post_offer
 from utils.errors import UserWarning
 
 
@@ -276,6 +276,7 @@ class AIChatCog(commands.Cog, name="AI Chat"):
                 current_chunk_text = ""
                 full_response = ""
                 done: list[dict] = []
+                offer: str | None = None
                 last_edit = time.time()
                 error_occurred = False
 
@@ -327,6 +328,8 @@ class AIChatCog(commands.Cog, name="AI Chat"):
                         break
                     elif msg_type == "done":
                         done.extend(chunk)
+                    elif msg_type == "offer":
+                        offer = chunk
                     elif msg_type == "content":
                         current_chunk_text += chunk
                         full_response += chunk
@@ -363,6 +366,10 @@ class AIChatCog(commands.Cog, name="AI Chat"):
                     history.extend(done)
                 if full_response and not full_response.startswith("❌"):
                     history.append({"role": "assistant", "content": full_response})
+
+                # Under her finished reply, and only if there was one to put it under.
+                if offer is not None and not error_occurred and full_response.strip():
+                    await post_offer(ctx, offer, message)
 
     # ──────────────────────────────────────────────────────────────────────
     # on_reaction_add — short reaction to user emoji on bot's message

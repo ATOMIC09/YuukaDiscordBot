@@ -114,7 +114,10 @@ _VOICE_PROMPT_SUFFIX = (
     "4. DO NOT use markdown, code blocks, asterisks, or special formatting. "
     "5. Some user turns arrive from speech recognition and may contain "
     "misheard words, especially names and mixed Thai/English. Infer what was "
-    "meant from context; ask for a repeat only if it is genuinely unclear."
+    "meant from context; ask for a repeat only if it is genuinely unclear. "
+    "6. To use a tool, write only the call, with nothing before it: an action says its own "
+    "short line out loud when it runs, so you never need to speak first. Never think out "
+    "loud in your reply; everything you write is spoken."
 )
 
 # Added to the system prompt while more than one person is in the voice channel, so a

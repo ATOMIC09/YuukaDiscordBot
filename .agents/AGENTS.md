@@ -327,8 +327,14 @@ Never call `voice_client.start_recording()` from a cog — subscribe to the hub 
 - **Speaking around tools**: text the model writes right before a tool call is dropped
   (`tool_calling.py`): gpt-oss fills that slot with its reasoning. So the room is quiet while a
   tool runs, and a tool that ends the turn speaks its own line instead: `spoken_fallback` for
-  music, `before_action(text)` for reminders and confirmations. Anything already written is still
-  spoken on each `status` event (`spoken_upto`). `_speak` strips links for TTS only; text
+  music, `before_action(text)` for reminders and confirmations. In a voice turn the whole reply is
+  held until it is known not to end in a call (`ToolPromptChatModel(hold_all=True)`), not just its
+  first 300 characters: the model once wrote 3400 characters of English reasoning before a
+  `voice_kick` call ("for voice chat my spoken words come from my replies… reply with ONLY the
+  call…"), which streamed past the limit, was read aloud for a minute and posted to the chat. The
+  voice prompt (rule 6) also says to write only the call, since an action speaks its own line, which
+  is the dilemma it was reasoning about. So the `status`-event speech (`spoken_upto`) only ever gets
+  text from an earlier round now. `_speak` strips links for TTS only; text
   fallbacks keep them. One `VoiceClient` is shared with music; she speaks over a track
   (below) and posts text instead (`_post_unspoken`) only when she cannot be heard at all.
 - **Speaking over music**: `vc.play()` raises on a busy client, so while a track plays her chime and

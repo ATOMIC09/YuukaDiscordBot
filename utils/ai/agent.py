@@ -269,7 +269,8 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
     noted = await _with_memory(messages, ctx)
     conversation = convert_to_messages(messages)
 
-    plain = ToolPromptChatModel(inner=chat_model())
+    # In a call everything she writes is spoken, so text before a call must never get out.
+    plain = ToolPromptChatModel(inner=chat_model(), hold_all=ctx.voice)
     with_tools = plain.bind_tools(list(tools.values())) if tools else plain
 
     # Text only: a mention read aloud is just digits.

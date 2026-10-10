@@ -102,7 +102,10 @@ Rules:
 
 # Text before a call is never shown: gpt-oss fills it with its reasoning ("We need
 # to read the channel."). A reply that gets longer than this with no call in sight
-# is an answer, and starts streaming.
+# is an answer, and starts streaming. Not in a voice turn (`hold_all`): there the
+# model once reasoned for 3400 characters before its call, which streamed past this
+# limit and was read aloud for a minute. Voice speaks a reply only once it is
+# complete, so holding all of it costs nothing.
 _PREAMBLE_CHARS = 300
 
 # After a long tool result in mixed languages, gpt-oss drifts into a language
@@ -333,6 +336,8 @@ class ToolPromptChatModel(BaseChatModel):
     """Gives any chat model tool calling by describing the tools in the prompt."""
 
     inner: BaseChatModel
+    # Hold the whole reply until it is known not to end in a call (see _PREAMBLE_CHARS).
+    hold_all: bool = False
 
     @property
     def _llm_type(self) -> str:
@@ -410,7 +415,7 @@ class ToolPromptChatModel(BaseChatModel):
                             out = ""  # between or after calls: not part of an answer
                         elif holding:
                             held += out
-                            if len(held) > _PREAMBLE_CHARS:
+                            if not self.hold_all and len(held) > _PREAMBLE_CHARS:
                                 out, held, holding = held, "", False
                             else:
                                 out = ""

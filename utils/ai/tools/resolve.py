@@ -166,6 +166,21 @@ def resolve_member(ctx: YuukaContext, text: str) -> discord.Member:
     raise UserWarning("หาคนนั้นไม่เจอค่ะ", f"ไม่มีสมาชิกชื่อ '{raw}' ในเซิร์ฟเวอร์นี้นะคะ.{hint}")
 
 
+def resolve_member_in(ctx: YuukaContext, text: str, members: list[discord.Member]) -> discord.Member:
+    """Like `resolve_member`, but tried among `members` first (the people in a voice channel), so a
+    short or partial name picks the one in the room over namesakes elsewhere in the server."""
+    wanted = text.strip().lstrip("@").strip().casefold()
+    if wanted and wanted not in _SELF and not _USER_MENTION.match(text.strip()) and not wanted.isdigit():
+        here = [m for m in members if wanted in _names(m)]
+        here = here or [m for m in members if any(wanted in n for n in _names(m))]
+        if len(here) == 1:
+            return here[0]
+        if here:
+            listed = ", ".join(m.display_name for m in here[:5])
+            raise UserWarning("หลายคนชื่อคล้ายกันค่ะ", f"'{text.strip()}' ตรงกับหลายคนในห้อง: {listed} ช่วยระบุให้ชัดขึ้นหน่อยนะคะ")
+    return resolve_member(ctx, text)
+
+
 _ROLE_MENTION = re.compile(r"^<@&(\d+)>$")
 
 

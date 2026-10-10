@@ -13,6 +13,8 @@ by button or, in a voice session, out loud (see `AIVoiceChatCog.expect_answer`).
 
 from __future__ import annotations
 
+import re
+
 import discord
 from langchain_core.tools import tool
 
@@ -20,7 +22,7 @@ from bot.logger import logger
 from utils import ai_actions
 from utils.ai.confirm import ConfirmActionView
 from utils.ai.context import Ctx, YuukaContext
-from utils.ai.tools.resolve import resolve_member
+from utils.ai.tools.resolve import resolve_member, resolve_member_in
 from utils.embeds import info_embed, success_embed
 from utils.errors import UserError, UserWarning
 
@@ -94,21 +96,47 @@ async def _kick_self(ctx: YuukaContext, target: discord.Member) -> str:
 
 # What the model writes for "kick everyone" (เตะทุกคน).
 _EVERYONE = frozenset({"everyone", "everybody", "all", "here", "ทุกคน", "ทั้งหมด", "ทั้งห้อง"})
+# "everyone except Bob" written into `member` itself, instead of using `keep`.
+_EVERYONE_BUT = re.compile(
+    r"^@?(?:" + "|".join(sorted(_EVERYONE, key=len, reverse=True)) + r")\s*(?:except|but|ยกเว้น|นอกจาก|เว้น)\s*(.+)$",
+    re.I | re.S,
+)
+# Words in `keep` that mean her. Her name in Latin letters is found in the room like anyone's (her
+# display name), so a member called "Yuka" is never mistaken for her.
+_HERSELF = frozenset({"you", "yourself", "bot", "ยูกะ", "ยุกะ"})
+_NAME_SPLIT = re.compile(r"\s*(?:[,;、\n]|\band\b|และ|กับ)\s*", re.I)
 
 
-def _kick_targets(channel: discord.VoiceChannel, bot_id: int, requester_id: int) -> list[discord.Member]:
-    """Everyone in `channel`, her included: the others, then the requester, then her last, so her
-    voice session lasts until everyone else is out."""
-    return sorted(channel.members, key=lambda m: (m.id == bot_id, m.id == requester_id))
+def _kept(ctx: YuukaContext, channel: discord.VoiceChannel, keep: str) -> list[discord.Member]:
+    """Who stays when "everyone" is kicked. A name that matches nobody refuses the whole kick:
+    better to ask again than to kick the one person they meant to spare."""
+    kept: dict[int, discord.Member] = {}
+    for name in filter(None, (n.strip() for n in _NAME_SPLIT.split(keep))):
+        if name.lstrip("@").casefold() in _HERSELF:
+            me = ctx.guild.me
+            kept[me.id] = me
+            continue
+        member = resolve_member_in(ctx, name, channel.members)
+        kept[member.id] = member
+    return list(kept.values())
 
 
-def _disconnect_all(ctx: YuukaContext, channel: discord.VoiceChannel):
+def _kick_targets(channel: discord.VoiceChannel, bot_id: int, requester_id: int, kept: set[int]) -> list[discord.Member]:
+    """Everyone in `channel` but those kept, her included: the others, then the requester, then her
+    last, so her voice session lasts until everyone else is out."""
+    members = [m for m in channel.members if m.id not in kept]
+    return sorted(members, key=lambda m: (m.id == bot_id, m.id == requester_id))
+
+
+def _disconnect_all(ctx: YuukaContext, channel: discord.VoiceChannel, kept: list[discord.Member]):
     """The kick for "everyone": whoever is in the room when it runs (at confirm time, not when she
-    asked), her included, as countdis does."""
+    asked) and not kept, her included, as countdis does."""
+    kept_ids = {m.id for m in kept}
+    spared = f" ยกเว้น {', '.join(m.display_name for m in kept)}" if kept else ""
 
     async def kick() -> str:
         gone, refused, herself = 0, 0, False
-        for target in _kick_targets(channel, ctx.bot.user.id, ctx.requester.id):
+        for target in _kick_targets(channel, ctx.bot.user.id, ctx.requester.id, kept_ids):
             try:
                 await target.move_to(None)
             except discord.Forbidden:
@@ -123,8 +151,8 @@ def _disconnect_all(ctx: YuukaContext, channel: discord.VoiceChannel):
             else:
                 gone += 1
         if not (gone or refused or herself):
-            raise UserWarning("ไม่มีใครให้เตะแล้วค่ะ", f"ช่อง {channel.name} ว่างแล้วนะคะ")
-        line = f"เตะทุกคน {gone} คนออกจากช่อง {channel.name}{' รวมถึงหนูด้วย' if herself else ''} เรียบร้อยแล้วค่ะ"
+            raise UserWarning("ไม่มีใครให้เตะแล้วค่ะ", f"ในช่อง {channel.name} ไม่เหลือใครให้เตะแล้วนะคะ")
+        line = f"เตะทุกคน {gone} คนออกจากช่อง {channel.name}{spared}{' รวมถึงหนูด้วย' if herself else ''} เรียบร้อยแล้วค่ะ"
         if refused:
             line += f" (เตะไม่ได้ {refused} คน สิทธิ์ของเขาอาจจะสูงกว่าหนู)"
         return line
@@ -132,40 +160,50 @@ def _disconnect_all(ctx: YuukaContext, channel: discord.VoiceChannel):
     return kick
 
 
-async def _kick_everyone(ctx: YuukaContext) -> str:
-    """/kick for everyone in the requester's voice channel, her included: one confirmation, then
-    all at once. Not countdis: no countdown and no "except me" button."""
+async def _kick_everyone(ctx: YuukaContext, keep: str) -> str:
+    """/kick for everyone in the requester's voice channel but those in `keep`, her included: one
+    confirmation, then all at once. Not countdis: no countdown and no "except me" button."""
     voice = ctx.requester.voice
     if not voice or not voice.channel:
         raise UserError("ยังไม่ได้เข้าห้องเสียง", "เซนเซย์ต้องอยู่ในห้องเสียงก่อนนะคะ หนูถึงจะรู้ว่าต้องเตะใครบ้าง")
     channel = voice.channel
-    kick = _disconnect_all(ctx, channel)
-    others = [m for m in channel.members if m.id not in (ctx.requester.id, ctx.bot.user.id)]
-    if not others:
-        # Only them (and her) in the room: nobody else is touched.
-        return await _run_now(ctx, kick, "/kick member=everyone")
+    kept = _kept(ctx, channel, keep)
+    kept_ids = {m.id for m in kept}
+    targets = _kick_targets(channel, ctx.bot.user.id, ctx.requester.id, kept_ids)
+    if not targets:
+        raise UserWarning("ไม่มีใครให้เตะค่ะ", "ทุกคนในห้องอยู่ในรายชื่อที่ให้เว้นไว้หมดเลยนะคะ")
+    kick = _disconnect_all(ctx, channel, kept)
+    command = "/kick member=everyone" + (f" except={','.join(m.display_name for m in kept)}" if kept else "")
+    if all(m.id in (ctx.requester.id, ctx.bot.user.id) for m in targets):
+        # Only them and/or her go: nobody else is touched.
+        return await _run_now(ctx, kick, command)
     _require_move_members(ctx)
 
-    targets = _kick_targets(channel, ctx.bot.user.id, ctx.requester.id)
     names = ", ".join(m.display_name for m in targets[:10]) + (" …" if len(targets) > 10 else "")
+    spared = f" ยกเว้น {', '.join(m.display_name for m in kept)}" if kept else ""
     return await _propose(
         ctx,
         "🦵 ยืนยันการเตะทุกคนออกจากห้องเสียง",
-        f"เซนเซย์ต้องการให้หนูเตะทุกคนในช่อง `{channel.name}` ({len(targets)} คน: {names}) ออกตอนนี้เลยใช่มั้ยคะ?",
+        f"เซนเซย์ต้องการให้หนูเตะทุกคนในช่อง `{channel.name}`{spared} ({len(targets)} คน: {names}) ออกตอนนี้เลยใช่มั้ยคะ?",
         kick,
         lambda: _require_move_members(ctx),
-        "/kick member=everyone",
+        command,
     )
 
 
 @tool(return_direct=True)
-async def voice_kick(member: str, ctx: Ctx) -> str:
+async def voice_kick(member: str, ctx: Ctx, keep: str | list[str] = "") -> str:
     """Run the /kick command: disconnect a member from their voice channel, after the requester confirms with a button.
 
     `member`: their name; "me" for the requester themselves ("kick me", "เตะผมออก", "เตะตัวเอง"), which needs no permission and no confirmation; "everyone" for everyone in the requester's voice channel at once, you included ("kick everyone", "เตะทุกคน"). Kicking everyone is this tool, not countdis: countdis is only for a countdown.
+    `keep`: only with "everyone", who stays, comma-separated: names, "me" for the requester, "you" for yourself ("kick everyone except Bob and me", "เตะทุกคนยกเว้นบ็อบกับผม" → member="everyone", keep="Bob, me").
     """
-    if member.strip().lstrip("@").casefold() in _EVERYONE:
-        return await _kick_everyone(ctx)
+    keep_text = ", ".join(keep) if isinstance(keep, list) else keep
+    wanted = member.strip()
+    if (but := _EVERYONE_BUT.match(wanted)) is not None:
+        wanted, keep_text = "everyone", ", ".join(filter(None, (keep_text, but.group(1))))
+    if wanted.lstrip("@").casefold() in _EVERYONE:
+        return await _kick_everyone(ctx, keep_text)
     target = resolve_member(ctx, member)
 
     if target.id == ctx.bot.user.id:

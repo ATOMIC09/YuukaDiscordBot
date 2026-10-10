@@ -109,6 +109,9 @@ async def resolve_text_channel(ctx: YuukaContext, text: str) -> discord.TextChan
 
 _USER_MENTION = re.compile(r"^<@!?(\d+)>$")
 
+# What the model writes when the requester means themselves ("kick me", "เตะตัวเอง").
+_SELF = frozenset({"me", "myself", "self", "i", "ผม", "ฉัน", "เรา", "กู", "ตัวเอง", "ตัวผม", "ตัวฉัน"})
+
 
 def _names(member: discord.Member) -> set[str]:
     names = {member.display_name, member.name, member.global_name or ""}
@@ -133,7 +136,7 @@ def exact_member(guild: discord.Guild, text: str) -> discord.Member | None:
 
 
 def resolve_member(ctx: YuukaContext, text: str) -> discord.Member:
-    """A member of the requester's guild, by mention, id, or display/user name."""
+    """A member of the requester's guild, by mention, id, or display/user name; "me" is the requester."""
     guild = ctx.guild
     raw = text.strip()
 
@@ -144,6 +147,8 @@ def resolve_member(ctx: YuukaContext, text: str) -> discord.Member:
             return member
 
     wanted = raw.lstrip("@").strip().casefold()
+    if wanted in _SELF and ctx.requester is not None:
+        return ctx.requester
 
     exact = [m for m in guild.members if wanted in _names(m)]
     if len(exact) == 1:

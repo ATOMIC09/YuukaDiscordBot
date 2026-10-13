@@ -28,6 +28,7 @@ import re
 from typing import Any, AsyncGenerator
 
 import openai
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
     AIMessageChunk,
@@ -35,6 +36,7 @@ from langchain_core.messages import (
     ToolMessage,
     convert_to_messages,
 )
+from langchain_core.tools import BaseTool
 from pydantic import ValidationError
 
 from bot.config import config
@@ -255,8 +257,15 @@ async def _run_tool(tools: dict, call: dict, ctx: YuukaContext) -> tuple[ToolMes
         return ToolMessage("Tool failed.", tool_call_id=call_id, name=name), False
 
 
-async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tuple[str, Any], None]:
-    tools = {t.name: t for t in tools_for(ctx)}
+async def run_agent(
+    history: list[dict],
+    ctx: YuukaContext,
+    *,
+    tools: list[BaseTool] | None = None,
+    model: BaseChatModel | None = None,
+) -> AsyncGenerator[tuple[str, Any], None]:
+    """`tools` and `model` replace `tools_for(ctx)` and `chat_model()`; tests and evals pass fakes."""
+    tools = {t.name: t for t in (tools_for(ctx) if tools is None else tools)}
 
     messages = [dict(m) for m in history]
     offering = await memory.offers_enabled(ctx)
@@ -270,7 +279,7 @@ async def run_agent(history: list[dict], ctx: YuukaContext) -> AsyncGenerator[tu
     conversation = convert_to_messages(messages)
 
     # In a call everything she writes is spoken, so text before a call must never get out.
-    plain = ToolPromptChatModel(inner=chat_model(), hold_all=ctx.voice)
+    plain = ToolPromptChatModel(inner=model or chat_model(), hold_all=ctx.voice)
     with_tools = plain.bind_tools(list(tools.values())) if tools else plain
 
     # Text only: a mention read aloud is just digits.

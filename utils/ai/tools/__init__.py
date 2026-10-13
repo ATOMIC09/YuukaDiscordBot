@@ -24,6 +24,10 @@ READ_ONLY = frozenset({
     "memory_search",
 })
 
+# Tools that bring back text other people wrote. Their results go through `utils.ai.pii.redact`
+# before the model sees them (AI_REDACT_PII).
+UNTRUSTED = frozenset({"web_search", "read_messages", "search_messages", "memory_search"})
+
 # Tools whose arguments are a server's private notes. The agent keeps them out of its log
 # lines, and the log file outlives the reply.
 PRIVATE_ARGS = frozenset(tool.name for tool in memory.TOOLS)

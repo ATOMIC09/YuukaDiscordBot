@@ -60,6 +60,9 @@ class Config:
     azure_openai_base_url: str = ""    # normalised from AZURE_OPENAI_ENDPOINT
     azure_openai_api_key: str = ""
     azure_openai_deployment: str = ""
+    # Hide emails, phone numbers, Thai IDs and card numbers in what she reads for someone (channels,
+    # web pages) before it goes to the model provider.
+    ai_redact_pii: bool = True
 
     # ── Speech-to-text ────────────────────────────────────────────────────
     # Backend: "auto" uses Groq when GROQ_API_KEY is set and falls back to the
@@ -224,6 +227,7 @@ class Config:
             azure_openai_base_url=azure_openai_base_url,
             azure_openai_api_key=azure_openai_api_key,
             azure_openai_deployment=azure_openai_deployment,
+            ai_redact_pii=os.getenv("AI_REDACT_PII", "true").strip().lower() not in ("false", "0", "no"),
             openrouter_api_key=openrouter_api_key,
             openrouter_model=openrouter_model,
             openrouter_max_tokens=openrouter_max_tokens,

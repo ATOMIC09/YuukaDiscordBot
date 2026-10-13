@@ -18,6 +18,7 @@ _SETTINGS = {
     "AGENT_MAX_ROUNDS": "8",
     "AGENT_MAX_TOOL_CALLS": "25",
     "MEMORY_OFFERS": "false",
+    "AI_REDACT_PII": "true",
     "LLM_PROVIDER": "openrouter",
     "LLM_FALLBACK": "",
     "AZURE_OPENAI_ENDPOINT": "",

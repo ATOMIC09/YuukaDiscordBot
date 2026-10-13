@@ -26,6 +26,7 @@ from utils.embeds import AI_DISCLOSURE_NAME, ai_disclosure_field, build_embed, C
 from utils.ai import YuukaContext, run_agent
 from utils.ai.context import stamp
 from utils.ai.models import disclosure
+from utils.ai.pii import hide
 from utils.ai.scheduler import ReminderScheduler
 from utils.ai.tools.memory import disclosure_note, post_offer
 from utils.errors import UserWarning
@@ -166,7 +167,8 @@ class AIChatCog(commands.Cog, name="AI Chat"):
         recent_messages.reverse()  # chronological order
 
         for msg in recent_messages:
-            content = msg.clean_content.strip()
+            # What other people wrote before she joined goes to the model provider.
+            content = hide(msg.clean_content.strip(), "channel history")
             if msg.author == self.bot.user and not content:
                 # Her command results are embeds. Without them every request to her
                 # looks unanswered, and she does it again.
@@ -261,6 +263,10 @@ class AIChatCog(commands.Cog, name="AI Chat"):
         content = message.clean_content.strip()
         if not content:
             return
+        # What she overhears is for the room, not for the model provider. A message that
+        # mentions her is the request itself and is sent as written.
+        if self.bot.user not in message.mentions:
+            content = hide(content, "channel chat")
 
         timestamp = stamp(message.created_at)
         user_content = f"[{timestamp}] {message.author.display_name}: {content}"

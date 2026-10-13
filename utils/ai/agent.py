@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from typing import Any, AsyncGenerator
 
 import openai
@@ -45,7 +46,8 @@ from utils.ai.context import YuukaContext
 from utils.ai.linker import ChannelLinker
 from utils.ai.models import ContentFiltered, chat_model
 from utils.ai.tool_calling import FABRICATED, ToolPromptChatModel
-from utils.ai.tools import PRIVATE_ARGS, READ_ONLY, memory, music, status_line, tools_for
+from utils.ai.pii import redact
+from utils.ai.tools import PRIVATE_ARGS, READ_ONLY, UNTRUSTED, memory, music, status_line, tools_for
 from utils.ai_actions import ActionResult
 from utils.errors import UserError, UserWarning
 
@@ -251,6 +253,12 @@ async def _run_tool(tools: dict, call: dict, ctx: YuukaContext) -> tuple[ToolMes
         message = await tool.ainvoke(
             {"type": "tool_call", "id": call_id, "name": name, "args": {**call["args"], "ctx": ctx}}
         )
+        if name in UNTRUSTED and config.ai_redact_pii and isinstance(message.content, str):
+            counts: Counter = Counter()
+            message = message.model_copy(update={"content": redact(message.content, counts)})
+            if counts:
+                # How many, never what.
+                logger.info(f"[PII] Hid {sum(counts.values())} item(s) in {name}: {dict(counts)}")
         return message, True
     except (UserError, UserWarning) as exc:
         return ToolMessage(f"{exc.title}: {exc.description}", tool_call_id=call_id, name=name), False

@@ -36,8 +36,14 @@ steps are in `.agents/DEVELOPMENT.md`. When a rule changes, update both files.
   channel it came from (`MemoryStore.audience_ok`), and a memory tool's arguments are never logged
   (`PRIVATE_ARGS`). A note is saved only when a member asks, or presses "keep" on her offer (text chat,
   about themselves, never from a voice turn); she never saves on her own.
-- The free OpenRouter model allows few requests per day: never call the model in a loop or while
-  waiting for something.
+- The chat model is Azure OpenAI and/or OpenRouter (`LLM_PROVIDER`, `LLM_FALLBACK`, `utils/ai/models.py`).
+  A request that fails before its first chunk moves to the fallback; never after one, and never on a
+  content filter. The free OpenRouter model allows few requests per day: never call the model in a
+  loop or while waiting for something.
+- Text other people wrote is hidden (`utils/ai/pii.py`: emails, Thai phones and IDs, cards) before the
+  model sees it, when `AI_REDACT_PII` is on (the default). A tool that returns such text (channels, web,
+  memory notes) must be in `UNTRUSTED` in `utils/ai/tools/__init__.py`; history that enters without a tool
+  goes through `pii.hide`. Never log what was hidden, only how many.
 - The production container is stateless: nothing saved at runtime survives a restart.
 - No tokens, IDs or machine-specific paths in tracked files.
 

@@ -62,7 +62,7 @@ YuukaDiscordBot/
 │   └── moderation/           # Empty placeholder package
 │
 ├── utils/
-│   ├── ai/                   # The agent: agent.py, tool_calling.py, models.py, context.py, confirm.py, scheduler.py, memory.py, tools/
+│   ├── ai/                   # The agent: agent.py, tool_calling.py, models.py (Azure/OpenRouter providers with failover), pii.py (hides personal data in what she reads), context.py, confirm.py, scheduler.py, memory.py, tools/
 │   ├── attendance.py         # /attendance and /absent report builders (shared by the cog and the agent tools)
 │   ├── ai_actions.py         # Runs /music commands for the agent, posts their embeds and logs them (log_command)
 │   ├── web_search.py         # Tavily search with an in-memory TTL cache
@@ -665,4 +665,6 @@ Before committing:
 - ❌ Do NOT let an AI tool find, list or name a channel the requester cannot see — resolve through `utils/ai/tools/resolve.py`, which treats hidden channels as nonexistent
 - ❌ Do NOT store server memory anywhere but the server's own memory channel — no file, database, cache directory or log. The point is that nothing about a server or its members is kept where the bot runs
 - ❌ Do NOT show or use a memory note without `MemoryStore.audience_ok`, and do NOT log a note's text: a new memory tool goes in `PRIVATE_ARGS`
+- ❌ Do NOT add a tool that returns text other people wrote (channels, web pages, notes) without listing it in `UNTRUSTED`, and do NOT send it to the model unredacted: its results skip `pii.redact` otherwise
+- ❌ Do NOT fall back to another provider on a content filter, or after a chunk of the reply has been produced (see "Providers and fallback")
 - ❌ Do NOT use `OLLAMA_*` env vars — nothing reads them; the LLM settings are `OPENROUTER_*`

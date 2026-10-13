@@ -6,6 +6,9 @@
   <a href="https://github.com/ATOMIC09/YuukaDiscordBot/actions/workflows/docker-build.yml">
     <img alt="Build" src="https://img.shields.io/github/actions/workflow/status/ATOMIC09/YuukaDiscordBot/docker-build.yml?label=build" />
   </a>
+  <a href="https://github.com/ATOMIC09/YuukaDiscordBot/actions/workflows/ci.yml">
+    <img alt="Tests" src="https://img.shields.io/github/actions/workflow/status/ATOMIC09/YuukaDiscordBot/ci.yml?branch=yuuka-v3&label=tests" />
+  </a>
   <a>
     <img alt="License" src="https://img.shields.io/github/license/ATOMIC09/YuukaDiscordBot">
   </a>

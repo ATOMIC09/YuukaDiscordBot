@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [ "yuuka-v3" ]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Check syntax
+        run: uv run --frozen python -m compileall -q bot cogs utils
+
+      - name: Run tests
+        run: uv run --frozen pytest -q

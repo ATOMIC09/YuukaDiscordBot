@@ -30,7 +30,7 @@ YuukaDiscordBot/
 ├── pyproject.toml, uv.lock   # uv manifest and lock (commit them together)
 ├── .env.example              # Every env var bot/config.py reads — copy to .env
 ├── Dockerfile                # Production image (ffmpeg + uv sync --frozen --no-dev)
-├── .github/workflows/        # docker-build.yml: publishes the image to ghcr.io on a v*.*.* tag
+├── .github/workflows/        # ci.yml: compileall + pytest on every push and PR; docker-build.yml: publishes the image to ghcr.io on a v*.*.* tag
 │
 ├── bot/
 │   ├── bot.py                # YuukaBot(discord.Bot) — intents, cog loader
@@ -79,6 +79,7 @@ YuukaDiscordBot/
 │   ├── image.py              # Image effects for /image
 │   └── video.py              # ffmpeg helpers for /imgaudio
 │
+├── tests/                    # pytest: conftest.py (env), fakes.py (ScriptedChat), test_*.py
 ├── models/wake_word/         # Trained wake-word model used by wake_acoustic.py
 ├── wakeword_training/        # Offline training/eval scripts for that model — not loaded by the bot
 └── assets/audio/recordings/  # Fallback location for /record output (created at runtime)
@@ -610,10 +611,16 @@ Copy it to `.env`; never commit `.env`.
 3. `uv run main.py`, then try the commands in a test server
 
 ### Checking a change
-There is no test suite. Before committing:
+Before committing:
 - `uv run python -m compileall -q bot cogs utils` — syntax
-- Import every cog (`pkgutil.walk_packages` over `cogs`) — catches broken imports without connecting to Discord
-- Logic: a throwaway script with fakes (`unittest.mock`, LangChain's `GenericFakeChatModel`), kept out of the repo
+- `uv run pytest` — `tests/` covers the tool-call parser (`test_tool_calling.py`), the agent loop with a
+  scripted model and fake tools (`test_agent.py`), the wake word (`test_wake.py`) and that every cog
+  imports (`test_import_cogs.py`, which catches broken imports without connecting to Discord).
+  `tests/conftest.py` sets the required env vars before `bot.config` is imported, so a developer's
+  `.env` cannot change a result: list any setting a new test depends on there.
+- New logic gets a test with fakes (`tests/fakes.py`: `ScriptedChat` answers each model call with the
+  next string, in small pieces). `run_agent(..., tools=, model=)` takes fakes for both.
+- CI (`.github/workflows/ci.yml`) runs compileall and pytest on every push to `yuuka-v3` and on pull requests.
 - Discord and voice behaviour still needs a run in a test server; say so if it wasn't done.
 
 ### Commits

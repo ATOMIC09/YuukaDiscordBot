@@ -12,6 +12,7 @@ steps are in `.agents/DEVELOPMENT.md`. When a rule changes, update both files.
 - `uv run main.py` runs the bot; it needs a `.env` (copy `.env.example`)
 - `uv add <package>` adds a dependency (never `pip install`)
 - `uv run python -m compileall -q bot cogs utils` checks syntax
+- `uv run pytest` runs the tests (CI runs the same on every push)
 
 ## Rules that break things when ignored
 
@@ -42,9 +43,10 @@ steps are in `.agents/DEVELOPMENT.md`. When a rule changes, update both files.
 
 ## Checking a change
 
-There is no test suite. Compile, import every cog, and test logic with a throwaway script that uses
-fakes (keep it out of the repo). Discord and voice behaviour needs a run in a test server; say so when
-that was not done.
+Compile and run `uv run pytest`: it covers the tool-call parser, the agent loop, the wake word and
+that every cog imports. Add a test in `tests/` for logic you change, with fakes
+(`tests/fakes.py`: a scripted chat model). Discord and voice behaviour needs a run in a test server;
+say so when that was not done.
 
 ## Git
 

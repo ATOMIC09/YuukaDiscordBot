@@ -40,7 +40,14 @@ cuda = [
 [dependency-groups]
 dev = [
     "bump-my-version>=1.4.1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
 
 [tool.bumpversion]
 current_version = "3.2.3"

@@ -18,6 +18,11 @@ _SETTINGS = {
     "AGENT_MAX_ROUNDS": "8",
     "AGENT_MAX_TOOL_CALLS": "25",
     "MEMORY_OFFERS": "false",
+    "LLM_PROVIDER": "openrouter",
+    "LLM_FALLBACK": "",
+    "AZURE_OPENAI_ENDPOINT": "",
+    "AZURE_OPENAI_API_KEY": "",
+    "AZURE_OPENAI_DEPLOYMENT": "",
 }
 for _key, _value in _SETTINGS.items():
     os.environ[_key] = _value

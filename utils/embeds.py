@@ -87,22 +87,37 @@ def warning_embed(title: str, description: str = "") -> discord.Embed:
 AI_DISCLOSURE_NAME = "🤖 โมเดล & ความเป็นส่วนตัวของข้อมูล"
 
 
-def ai_disclosure_field(model: str, extra_note: str = "") -> tuple[str, str, bool]:
+def ai_disclosure_field(
+    model: str, extra_note: str = "", provider: str = "openrouter", fallback: str = ""
+) -> tuple[str, str, bool]:
     """
     Build the (name, value, inline) field tuple used on AI session-start embeds
     to disclose which model is answering and how the conversation is handled.
 
     Args:
-        model: The chat model identifier currently in use (e.g. config.openrouter_model).
+        model: The chat model identifier currently in use (see `utils.ai.models.disclosure`).
+        provider / fallback: "azure" or "openrouter"; the fallback may be empty.
         extra_note: Optional extra line appended below the base disclosure
             (e.g. voice-specific notes about STT/TTS providers).
     """
-    value = (
-        f"กำลังใช้โมเดล `{model}` ผ่าน OpenRouter ค่ะ\n"
-        "⚠️ ข้อความที่คุยกับหนูจะถูกส่งไปประมวลผลกับผู้ให้บริการ AI ภายนอก "
-        "และอาจถูกบันทึก/นำไปใช้ฝึกโมเดลได้ตามนโยบายของผู้ให้บริการนั้น ๆ "
-        "(โดยเฉพาะโมเดลฟรี) กรุณาเลี่ยงการส่งข้อมูลส่วนตัวหรือข้อมูลละเอียดอ่อนนะคะ"
-    )
+    names = {"azure": "Azure OpenAI", "openrouter": "OpenRouter"}
+    value = f"กำลังใช้โมเดล `{model}` ผ่าน {names.get(provider, provider)} ค่ะ\n"
+    if provider == "azure":
+        value += (
+            "⚠️ ข้อความที่คุยกับหนูจะถูกส่งไปประมวลผลกับ Azure OpenAI "
+            "กรุณาเลี่ยงการส่งข้อมูลส่วนตัวหรือข้อมูลละเอียดอ่อนนะคะ"
+        )
+        if fallback == "openrouter":
+            value += (
+                "\nถ้า Azure ใช้ไม่ได้ หนูจะสลับไปใช้ OpenRouter ซึ่งอาจเป็นโมเดลฟรีที่"
+                "บันทึก/นำข้อความไปฝึกโมเดลได้ตามนโยบายของผู้ให้บริการค่ะ"
+            )
+    else:
+        value += (
+            "⚠️ ข้อความที่คุยกับหนูจะถูกส่งไปประมวลผลกับผู้ให้บริการ AI ภายนอก "
+            "และอาจถูกบันทึก/นำไปใช้ฝึกโมเดลได้ตามนโยบายของผู้ให้บริการนั้น ๆ "
+            "(โดยเฉพาะโมเดลฟรี) กรุณาเลี่ยงการส่งข้อมูลส่วนตัวหรือข้อมูลละเอียดอ่อนนะคะ"
+        )
     if extra_note:
         value += f"\n{extra_note}"
     return (AI_DISCLOSURE_NAME, value, False)

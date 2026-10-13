@@ -78,6 +78,7 @@ from utils import chime, wake
 from utils.audio import boost_pcm, decode_to_pcm, music_mixer, pcm_duration_seconds
 from utils.ai import YuukaContext, run_agent
 from utils.ai.context import stamp
+from utils.ai.models import disclosure
 from utils.ai.progress import TurnProgress
 from utils.ai.tools.memory import disclosure_note
 from utils.embeds import (
@@ -1334,7 +1335,7 @@ class AIVoiceChatCog(commands.Cog, name="AI Voice Chat"):
             f"หนูเข้ามาอยู่ในห้อง **{voice_channel.name}** แล้วนะคะ 🎧\n\n"
             f"{how}\n\nใช้ `/ai stop` เมื่อต้องการหยุดน้า",
             COLOR_SUCCESS,
-            fields=[ai_disclosure_field(config.openrouter_model, extra_note=voice_note)],
+            fields=[ai_disclosure_field(**disclosure(), extra_note=voice_note)],
         ))
 
     async def stop_session(self, guild_id: int) -> bool:

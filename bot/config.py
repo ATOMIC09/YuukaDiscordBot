@@ -3,7 +3,8 @@ bot/config.py
 Loads environment variables from .env and exposes a typed Config dataclass.
 Import the singleton `config` object — never access os.environ directly elsewhere.
 
-OpenRouter settings use the `OPENROUTER_*` env var prefix.
+The chat model is Azure OpenAI and/or OpenRouter (`LLM_PROVIDER`, `LLM_FALLBACK`). OpenRouter
+settings use the `OPENROUTER_*` prefix, Azure ones `AZURE_OPENAI_*`.
 Legacy `OLLAMA_*` vars are left in .env for optional local Ollama use.
 """
 
@@ -16,6 +17,19 @@ import pytz
 from dotenv import load_dotenv
 
 load_dotenv()
+
+_PROVIDERS = ("openrouter", "azure")
+
+
+def azure_base_url(endpoint: str) -> str:
+    """The v1 base URL from whatever was pasted: the resource URL, `…/openai/v1/`, or the full
+    `…/openai/v1/chat/completions` request URL."""
+    url = endpoint.strip().rstrip("/")
+    if url.endswith("/chat/completions"):
+        url = url[: -len("/chat/completions")].rstrip("/")
+    if not url.endswith("/openai/v1"):
+        url = url.removesuffix("/openai") + "/openai/v1"
+    return url + "/"
 
 
 @dataclass(frozen=True)
@@ -39,6 +53,13 @@ class Config:
     guild_ids: list[int] = field(default_factory=list)
     log_level: str = "INFO"
     timezone: str = "Asia/Bangkok"     # the clock the AI reads and tells; an IANA name
+
+    # ── Chat model ────────────────────────────────────────────────────────
+    llm_provider: str = "openrouter"   # openrouter | azure
+    llm_fallback: str = ""             # empty | openrouter | azure: tried when the provider is busy or down
+    azure_openai_base_url: str = ""    # normalised from AZURE_OPENAI_ENDPOINT
+    azure_openai_api_key: str = ""
+    azure_openai_deployment: str = ""
 
     # ── Speech-to-text ────────────────────────────────────────────────────
     # Backend: "auto" uses Groq when GROQ_API_KEY is set and falls back to the
@@ -126,11 +147,35 @@ class Config:
         except pytz.UnknownTimeZoneError:
             raise ValueError(f"TIMEZONE={timezone!r} is not a time zone name (e.g. Asia/Bangkok, UTC).")
 
-        openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
-        if not openrouter_api_key:
+        llm_provider = os.getenv("LLM_PROVIDER", "").strip().lower() or "openrouter"
+        llm_fallback = os.getenv("LLM_FALLBACK", "").strip().lower()
+        if llm_provider not in _PROVIDERS:
+            raise ValueError(f"LLM_PROVIDER={llm_provider!r} must be one of: {', '.join(_PROVIDERS)}.")
+        if llm_fallback and llm_fallback not in _PROVIDERS:
+            raise ValueError(f"LLM_FALLBACK={llm_fallback!r} must be empty or one of: {', '.join(_PROVIDERS)}.")
+        if llm_fallback == llm_provider:
+            raise ValueError("LLM_FALLBACK must differ from LLM_PROVIDER.")
+        used = {llm_provider, llm_fallback}
+
+        # Only the providers in use need their keys.
+        openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "")
+        if "openrouter" in used and not openrouter_api_key:
             raise ValueError(
                 "OPENROUTER_API_KEY is not set. Add your OpenRouter API key to .env."
             )
+
+        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "").strip()
+        azure_openai_api_key = os.getenv("AZURE_OPENAI_API_KEY", "")
+        azure_openai_deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "").strip()
+        if "azure" in used:
+            for name, value in (
+                ("AZURE_OPENAI_ENDPOINT", azure_endpoint),
+                ("AZURE_OPENAI_API_KEY", azure_openai_api_key),
+                ("AZURE_OPENAI_DEPLOYMENT", azure_openai_deployment),
+            ):
+                if not value:
+                    raise ValueError(f"{name} is not set, but Azure OpenAI is the LLM provider or its fallback.")
+        azure_openai_base_url = azure_base_url(azure_endpoint) if azure_endpoint else ""
 
         openrouter_model = os.getenv("OPENROUTER_MODEL", "openrouter/free")
         # Without a cap OpenRouter reserves the model's whole context for the reply and
@@ -174,6 +219,11 @@ class Config:
             guild_ids=guild_ids,
             log_level=log_level,
             timezone=timezone,
+            llm_provider=llm_provider,
+            llm_fallback=llm_fallback,
+            azure_openai_base_url=azure_openai_base_url,
+            azure_openai_api_key=azure_openai_api_key,
+            azure_openai_deployment=azure_openai_deployment,
             openrouter_api_key=openrouter_api_key,
             openrouter_model=openrouter_model,
             openrouter_max_tokens=openrouter_max_tokens,

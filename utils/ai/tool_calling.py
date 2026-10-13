@@ -341,7 +341,7 @@ class ToolPromptChatModel(BaseChatModel):
 
     @property
     def _llm_type(self) -> str:
-        return "tool-prompt-openrouter"
+        return "tool-prompt"
 
     def bind_tools(self, tools: Sequence[Any], *, tool_choice: Any = None, **kwargs: Any):
         # `tools` is never forwarded to the provider; _astream turns it into prompt text.
@@ -466,6 +466,8 @@ class ToolPromptChatModel(BaseChatModel):
                 f"system {system_chars} chars, {len(rendered)} messages, "
                 f"{sum(len(m.content) for m in rendered)} chars in all"
             )
+            if provider := getattr(self.inner, "last_provider", ""):
+                sizes += f" | {provider}"
             if usage:
                 details = usage.get("output_token_details") or {}
                 logger.info(

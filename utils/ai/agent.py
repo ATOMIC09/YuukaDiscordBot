@@ -43,7 +43,7 @@ from bot.config import config
 from bot.logger import logger
 from utils.ai.context import YuukaContext
 from utils.ai.linker import ChannelLinker
-from utils.ai.models import chat_model
+from utils.ai.models import ContentFiltered, chat_model
 from utils.ai.tool_calling import FABRICATED, ToolPromptChatModel
 from utils.ai.tools import PRIVATE_ARGS, READ_ONLY, memory, music, status_line, tools_for
 from utils.ai_actions import ActionResult
@@ -67,6 +67,8 @@ _RETRY_NOTE = (
 )
 
 _EMPTY_REPLY = "หนูนึกคำตอบไม่ออกค่ะ เซนเซย์ลองถามใหม่อีกทีนะคะ (´・ω・`)"
+
+_FILTERED_REPLY = "เรื่องนี้หนูตอบให้ไม่ได้นะคะ เซนเซย์ (・_・;)"
 
 
 def _cache_notice() -> str:
@@ -215,17 +217,21 @@ def _logged_args(name: str, args: dict) -> str:
 
 def _error_event(exc: Exception) -> tuple[str, Any]:
     """Map a failure to the shapes the cogs already show and log."""
+    provider = getattr(exc, "provider", "") or "the AI provider"
+    if isinstance(exc, ContentFiltered):
+        # models.py already logged it, without the text.
+        return ("error", {"user": _FILTERED_REPLY, "dev": f"{provider} content filter blocked the request."})
     if isinstance(exc, openai.APITimeoutError):
-        logger.error("[Agent] Request to OpenRouter timed out.")
+        logger.error(f"[Agent] Request to {provider} timed out.")
         return ("error", "Timeout Error: The AI took too long to respond.")
     if isinstance(exc, openai.APIConnectionError):
-        logger.error("[Agent] Failed to connect to OpenRouter.")
-        return ("error", "Connection Error: Could not reach OpenRouter. Please check your internet connection.")
+        logger.error(f"[Agent] Failed to connect to {provider}.")
+        return ("error", f"Connection Error: Could not reach {provider}. Please check your internet connection.")
     if isinstance(exc, openai.APIStatusError):
-        logger.error(f"[Agent] OpenRouter error {exc.status_code}: {exc.message}")
+        logger.error(f"[Agent] {provider} error {exc.status_code}: {exc.message}")
         return ("error", {
-            "user": f"Unexpected Error: OpenRouter returned status {exc.status_code}",
-            "dev": f"OpenRouter API Error {exc.status_code}\n{exc.message}",
+            "user": f"Unexpected Error: {provider} returned status {exc.status_code}",
+            "dev": f"{provider} API Error {exc.status_code}\n{exc.message}",
         })
     logger.exception(f"[Agent] Unexpected error: {exc}")
     return ("error", f"Unexpected Error: {exc}")

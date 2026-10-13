@@ -46,6 +46,35 @@ class ScriptedChat(BaseChatModel):
             yield ChatGenerationChunk(message=AIMessageChunk(content=text[start : start + self.piece]))
 
 
+class Flaky(ScriptedChat):
+    """A provider that raises `error` once it has sent `after` chunks (0 = before the first)."""
+
+    error: Exception | None = None
+    after: int = 0
+    finish_reason: str = ""
+
+    async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
+        self.seen.append(list(messages))
+        if self.error is not None and self.after == 0:
+            raise self.error
+        text = self.replies.pop(0) if self.replies else ""
+        pieces = [text[i : i + self.piece] for i in range(0, len(text), self.piece)] or [""]
+        for index, piece in enumerate(pieces):
+            last = index == len(pieces) - 1
+            meta = {"finish_reason": self.finish_reason} if last and self.finish_reason else {}
+            yield ChatGenerationChunk(message=AIMessageChunk(content=piece, response_metadata=meta))
+            if self.error is not None and index + 1 == self.after:
+                raise self.error
+
+
+def api_error(kind: type, status: int, **body: Any) -> Exception:
+    """An `openai` exception of the given class, built the way the client builds it."""
+    import httpx
+
+    response = httpx.Response(status, request=httpx.Request("POST", "https://example.invalid/v1/chat"))
+    return kind("provider said no", response=response, body=body or None)
+
+
 def call(name: str, **arguments: Any) -> str:
     """A tool call as the model writes it."""
     import json

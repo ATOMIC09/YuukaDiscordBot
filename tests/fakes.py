@@ -6,6 +6,7 @@ so a tag or token can be split across chunks the way a real provider splits it.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, AsyncIterator
 
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
@@ -18,6 +19,10 @@ from pydantic import Field
 class ScriptedChat(BaseChatModel):
     replies: list[str]
     piece: int = 5
+    # Seconds before every piece: a provider that takes its time.
+    delay: float = 0.0
+    # Reported on the last piece, the way a provider reports its token counts.
+    usage: dict | None = None
     # What each call was sent, for tests that check the prompt.
     seen: list[list[BaseMessage]] = Field(default_factory=list)
 
@@ -43,7 +48,15 @@ class ScriptedChat(BaseChatModel):
             yield ChatGenerationChunk(message=AIMessageChunk(content=""))
             return
         for start in range(0, len(text), self.piece):
-            yield ChatGenerationChunk(message=AIMessageChunk(content=text[start : start + self.piece]))
+            if self.delay:
+                await asyncio.sleep(self.delay)
+            last = start + self.piece >= len(text)
+            yield ChatGenerationChunk(
+                message=AIMessageChunk(
+                    content=text[start : start + self.piece],
+                    usage_metadata=self.usage if last else None,
+                )
+            )
 
 
 class Flaky(ScriptedChat):

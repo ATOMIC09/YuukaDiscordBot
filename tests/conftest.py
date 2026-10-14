@@ -19,6 +19,7 @@ _SETTINGS = {
     "AGENT_MAX_TOOL_CALLS": "25",
     "MEMORY_OFFERS": "false",
     "AI_REDACT_PII": "true",
+    "USAGE_CHANNEL_ID": "",
     "LLM_PROVIDER": "openrouter",
     "LLM_FALLBACK": "",
     "AZURE_OPENAI_ENDPOINT": "",
@@ -27,3 +28,13 @@ _SETTINGS = {
 }
 for _key, _value in _SETTINGS.items():
     os.environ[_key] = _value
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _fresh_usage_totals():
+    """The usage totals are process-wide; every test starts from none."""
+    from utils.ai import usage
+
+    usage.reset()

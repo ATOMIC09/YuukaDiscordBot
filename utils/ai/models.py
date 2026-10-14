@@ -145,6 +145,8 @@ class FailoverChat(BaseChatModel):
     providers: list[Provider]
     # Which provider answered the last request, for the [Usage] line.
     last_provider: str = ""
+    # How many times a request moved on to the next provider (for the usage totals).
+    fallbacks: int = 0
 
     @property
     def _llm_type(self) -> str:
@@ -181,6 +183,7 @@ class FailoverChat(BaseChatModel):
                 _pause(provider, exc)
                 if not has_next:
                     raise
+                self.fallbacks += 1
                 status = getattr(exc, "status_code", None) or type(exc).__name__
                 paused = int(_paused_until[provider.name] - time.monotonic())
                 logger.warning(

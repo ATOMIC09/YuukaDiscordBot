@@ -7,6 +7,8 @@ import platform
 import sys
 import time
 
+from utils.ai import usage
+
 
 class InfoCog(commands.Cog):
     def __init__(self, bot: discord.Bot):
@@ -57,7 +59,12 @@ class InfoCog(commands.Cog):
         embed.add_field(name="📊 สถิติพื้นฐาน", value=f"เซิร์ฟเวอร์: `{guilds:,}`\nสมาชิก: `{users:,}`\nความหน่วง: `{latency}ms`", inline=True)
         embed.add_field(name="💻 การใช้ทรัพยากร", value=f"CPU: `{cpu_usage}%`\nRAM: `{memory_mb:.2f} MB`", inline=True)
         embed.add_field(name="⚙️ ระบบ", value=f"OS: `{os_name}`\nPython: `{py_version}`\nPy-cord: `{pycord_version}`", inline=False)
-        
+        embed.add_field(
+            name="🧠 การใช้งาน AI (ตั้งแต่เปิดบอท)",
+            value=usage.summary() or "ยังไม่มีใครคุยกับหนูเลยค่ะ",
+            inline=False,
+        )
+
         await ctx.followup.send(embed=embed)
 
     # ─────────────────────────────────────────────

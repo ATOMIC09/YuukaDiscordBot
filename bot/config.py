@@ -49,6 +49,7 @@ class Config:
     search_cache_ttl_minutes: int
     owner_id: int | None = None
     log_channel_id: int | None = None
+    usage_channel_id: int | None = None  # one embed per AI turn: tokens and time, never text
     feedback_channel_id: int | None = None
     guild_ids: list[int] = field(default_factory=list)
     log_level: str = "INFO"
@@ -203,6 +204,9 @@ class Config:
         log_channel_id_str = os.getenv("LOG_CHANNEL_ID")
         log_channel_id = int(log_channel_id_str) if log_channel_id_str and log_channel_id_str.isdigit() else None
 
+        usage_channel_id_str = os.getenv("USAGE_CHANNEL_ID")
+        usage_channel_id = int(usage_channel_id_str) if usage_channel_id_str and usage_channel_id_str.isdigit() else None
+
         feedback_channel_id_str = os.getenv("FEEDBACK_CHANNEL_ID")
         feedback_channel_id = int(feedback_channel_id_str) if feedback_channel_id_str and feedback_channel_id_str.isdigit() else None
 
@@ -240,6 +244,7 @@ class Config:
             search_cache_ttl_minutes=search_cache_ttl_minutes,
             owner_id=owner_id,
             log_channel_id=log_channel_id,
+            usage_channel_id=usage_channel_id,
             feedback_channel_id=feedback_channel_id,
             stt_backend=os.getenv("STT_BACKEND", "auto").strip().lower(),
             groq_api_key=os.getenv("GROQ_API_KEY", "").strip(),

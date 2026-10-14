@@ -43,7 +43,9 @@ steps are in `.agents/DEVELOPMENT.md`. When a rule changes, update both files.
 - Text other people wrote is hidden (`utils/ai/pii.py`: emails, Thai phones and IDs, cards) before the
   model sees it, when `AI_REDACT_PII` is on (the default). A tool that returns such text (channels, web,
   memory notes) must be in `UNTRUSTED` in `utils/ai/tools/__init__.py`; history that enters without a tool
-  goes through `pii.hide`. Never log what was hidden, only how many.
+  goes through `pii.hide`. Never log what was hidden, only how many. Usage telemetry (`utils/ai/usage.py`,
+  `USAGE_CHANNEL_ID`, `/status`) records tokens, times and tool names with their outcome, never what a tool was called with,
+  a message, a reply, a tool result or a note.
 - The production container is stateless: nothing saved at runtime survives a restart.
 - No tokens, IDs or machine-specific paths in tracked files.
 

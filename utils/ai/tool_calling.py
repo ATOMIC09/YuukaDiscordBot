@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import uuid
 from typing import Any, AsyncIterator, Sequence
 
@@ -45,9 +46,11 @@ from langchain_core.messages import (
 from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langchain_core.utils.json import parse_partial_json
+from pydantic import Field
 
 from bot.config import config
 from bot.logger import logger
+from utils.ai.usage import CallUsage
 
 _OPEN = "<tool_call>"
 _CLOSE = "</tool_call>"
@@ -338,6 +341,8 @@ class ToolPromptChatModel(BaseChatModel):
     inner: BaseChatModel
     # Hold the whole reply until it is known not to end in a call (see _PREAMBLE_CHARS).
     hold_all: bool = False
+    # One entry per request this model made, for the turn's usage totals (see utils/ai/usage.py).
+    usage_log: list[CallUsage] = Field(default_factory=list)
 
     @property
     def _llm_type(self) -> str:
@@ -394,8 +399,17 @@ class ToolPromptChatModel(BaseChatModel):
                 await run_manager.on_llm_new_token(text)
             return ChatGenerationChunk(message=AIMessageChunk(content=text))
 
+        # Time spent waiting on the provider. The body of the loop below hands text to Discord or
+        # TTS, which would inflate a plain start-to-finish clock.
+        waited = 0.0
+        first_chunk: float | None = None
+        mark = time.perf_counter()
+
         try:
             async for piece in stream:
+                waited += time.perf_counter() - mark
+                if first_chunk is None:
+                    first_chunk = waited
                 usage = getattr(piece, "usage_metadata", None) or usage
                 buffer += _text(piece)
 
@@ -447,7 +461,9 @@ class ToolPromptChatModel(BaseChatModel):
                         done = True
                 if done:
                     break
+                mark = time.perf_counter()
             else:
+                waited += time.perf_counter() - mark
                 block = buffer
         except ValueError as exc:
             # LangChain raises this when the stream carried no data at all: OpenRouter
@@ -455,6 +471,7 @@ class ToolPromptChatModel(BaseChatModel):
             # an empty reply.
             if "No generation chunks" not in str(exc):
                 raise
+            waited += time.perf_counter() - mark
             block = buffer
         finally:
             aclose = getattr(stream, "aclose", None)
@@ -466,16 +483,28 @@ class ToolPromptChatModel(BaseChatModel):
                 f"system {system_chars} chars, {len(rendered)} messages, "
                 f"{sum(len(m.content) for m in rendered)} chars in all"
             )
-            if provider := getattr(self.inner, "last_provider", ""):
+            provider = getattr(self.inner, "last_provider", "")
+            if provider:
                 sizes += f" | {provider}"
+            timing = f"in {waited:.2f}s" + (f", first chunk +{first_chunk:.2f}s" if first_chunk is not None else "")
+            reasoning = ((usage or {}).get("output_token_details") or {}).get("reasoning", 0)
+            self.usage_log.append(
+                CallUsage(
+                    provider=provider,
+                    prompt=(usage or {}).get("input_tokens"),
+                    reply=(usage or {}).get("output_tokens"),
+                    reasoning=reasoning,
+                    seconds=waited,
+                    first_chunk=first_chunk,
+                )
+            )
             if usage:
-                details = usage.get("output_token_details") or {}
                 logger.info(
                     f"[Usage] prompt {usage.get('input_tokens')} + reply {usage.get('output_tokens')}"
-                    f" (reasoning {details.get('reasoning', 0)}) tokens | {sizes}"
+                    f" (reasoning {reasoning}) tokens {timing} | {sizes}"
                 )
             else:
-                logger.info(f"[Usage] tokens not reported | {sizes}")
+                logger.info(f"[Usage] tokens not reported {timing} | {sizes}")
 
         tail = ""
         if mode == "tag" and block.strip():

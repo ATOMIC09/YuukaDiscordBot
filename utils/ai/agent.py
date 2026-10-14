@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from collections import Counter
 from typing import Any, AsyncGenerator
 
@@ -47,6 +48,7 @@ from utils.ai.linker import ChannelLinker
 from utils.ai.models import ContentFiltered, chat_model
 from utils.ai.tool_calling import FABRICATED, ToolPromptChatModel
 from utils.ai.pii import redact
+from utils.ai.usage import Step, finish_turn
 from utils.ai.tools import PRIVATE_ARGS, READ_ONLY, UNTRUSTED, memory, music, status_line, tools_for
 from utils.ai_actions import ActionResult
 from utils.errors import UserError, UserWarning
@@ -293,7 +295,9 @@ async def run_agent(
     conversation = convert_to_messages(messages)
 
     # In a call everything she writes is spoken, so text before a call must never get out.
-    plain = ToolPromptChatModel(inner=model or chat_model(), hold_all=ctx.voice)
+    inner = model or chat_model()
+    steps: list[Step] = []  # what she did, for the usage channel
+    plain = ToolPromptChatModel(inner=inner, hold_all=ctx.voice)
     with_tools = plain.bind_tools(list(tools.values())) if tools else plain
 
     # Text only: a mention read aloud is just digits.
@@ -383,6 +387,7 @@ async def run_agent(
             index = -1  # position among the planned calls, which is what the "step" events number
             for position, call in enumerate(calls):
                 if position in duplicate:
+                    steps.append(Step(round_no + 1, call["name"], "skipped", 0.0))
                     logger.info(f"[Agent] Skipped a repeated call: {call['name']}({_logged_args(call['name'], call['args'])})")
                     conversation.append(ToolMessage(
                         "Same call as an earlier one in this reply: use that result.",
@@ -395,13 +400,16 @@ async def run_agent(
                 yield ("step", (index, "running"))
                 yield ("status", status_line(call["name"], call["args"]))
 
+                started = time.perf_counter()
                 result, ok = await _run_tool(tools, call, ctx)
+                took = time.perf_counter() - started
                 conversation.append(result)
 
                 action = result.artifact if isinstance(result.artifact, ActionResult) else None
                 if action is not None:
                     yield ("action", action)
                 worked = ok and (action is None or action.ok)
+                steps.append(Step(round_no + 1, call["name"], "ok" if worked else "failed", took))
                 yield ("step", (index, "ok" if worked else "failed"))
                 # A terminal tool ends the turn only when it worked; a refusal
                 # goes back to the model so she can explain it.
@@ -424,6 +432,7 @@ async def run_agent(
                     offset = index
                     for later, skipped in enumerate(calls[position + 1 :], start=position + 1):
                         logger.info(f"[Agent] Skipped after a failure: {skipped['name']}")
+                        steps.append(Step(round_no + 1, skipped["name"], "skipped", 0.0))
                         if later not in duplicate:
                             offset += 1
                             yield ("step", (offset, "skipped"))
@@ -442,3 +451,6 @@ async def run_agent(
             yield ("offer", fact)
     except Exception as exc:
         yield _error_event(exc)
+    finally:
+        # Counted and posted in the background, also when the turn failed half way.
+        finish_turn(ctx.bot, plain.usage_log, getattr(inner, "fallbacks", 0), ctx.voice, steps)

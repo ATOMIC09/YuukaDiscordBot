@@ -11,7 +11,7 @@ from tests.fakes import Flaky, api_error
 from utils.ai import agent, models
 from utils.ai.agent import run_agent
 from utils.ai.context import YuukaContext
-from utils.ai.models import ContentFiltered, FailoverChat, Provider
+from utils.ai.models import ContentFiltered, FailoverChat, Provider, filter_categories
 
 
 # ── Settings ──────────────────────────────────────────────────────────────
@@ -245,3 +245,37 @@ def test_a_lone_provider_keeps_the_client_retry(monkeypatch):
 def test_disclosure_names_the_primary_and_its_fallback(monkeypatch):
     configured(monkeypatch, llm_provider="azure", llm_fallback="openrouter", azure_openai_deployment="my-deployment")
     assert models.disclosure() == {"model": "my-deployment", "provider": "azure", "fallback": "openrouter"}
+
+
+# ── Which filter fired ────────────────────────────────────────────────────
+
+AZURE_BODY = {
+    "message": "The response was filtered due to the prompt triggering Azure OpenAI's content management policy.",
+    "param": "prompt",
+    "code": "content_filter",
+    "innererror": {
+        "code": "ResponsibleAIPolicyViolation",
+        "content_filter_result": {
+            "hate": {"filtered": False, "severity": "safe"},
+            "jailbreak": {"filtered": True, "detected": True},
+            "violence": {"filtered": True, "severity": "medium"},
+        },
+    },
+}
+
+
+def test_the_categories_that_fired_are_named_without_the_words():
+    exc = api_error(openai.BadRequestError, 400, **AZURE_BODY)
+    assert filter_categories(exc) == ["jailbreak", "violence (medium)"]
+    assert filter_categories(api_error(openai.BadRequestError, 400, error=AZURE_BODY)) == ["jailbreak", "violence (medium)"]
+
+
+def test_a_body_without_categories_names_none():
+    assert filter_categories(api_error(openai.BadRequestError, 400, code="content_filter")) == []
+    assert filter_categories(ValueError("no body")) == []
+
+
+async def test_the_blocked_request_names_the_category_in_the_error():
+    azure = Flaky(replies=[], error=api_error(openai.BadRequestError, 400, **AZURE_BODY))
+    ((_, payload),) = [e for e in await events_of(failover(("azure", azure))) if e[0] == "error"]
+    assert "jailbreak" in payload["dev"] and payload["user"] == agent._FILTERED_REPLY

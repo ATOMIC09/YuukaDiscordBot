@@ -222,7 +222,7 @@ def _error_event(exc: Exception) -> tuple[str, Any]:
     provider = getattr(exc, "provider", "") or "the AI provider"
     if isinstance(exc, ContentFiltered):
         # models.py already logged it, without the text.
-        return ("error", {"user": _FILTERED_REPLY, "dev": f"{provider} content filter blocked the request."})
+        return ("error", {"user": _FILTERED_REPLY, "dev": f"{exc}: the request was blocked before any model ran."})
     if isinstance(exc, openai.APITimeoutError):
         logger.error(f"[Agent] Request to {provider} timed out.")
         return ("error", "Timeout Error: The AI took too long to respond.")

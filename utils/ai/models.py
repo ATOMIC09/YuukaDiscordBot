@@ -175,7 +175,7 @@ class FailoverChat(BaseChatModel):
             except Exception as exc:
                 exc.provider = provider.label  # type: ignore[attr-defined]
                 if _is_content_filter(exc):
-                    raise _filtered(provider) from exc
+                    raise _filtered(provider, filter_categories(exc)) from exc
                 if started or not _switchable(exc):
                     raise
                 _pause(provider, exc)
@@ -193,10 +193,30 @@ class FailoverChat(BaseChatModel):
             return
 
 
-def _filtered(provider: Provider) -> ContentFiltered:
-    # Counted, never quoted: what was blocked is a member's words.
-    logger.warning(f"[LLM] {provider.label} content filter blocked a request")
-    exc = ContentFiltered(f"{provider.label} content filter")
+def filter_categories(exc: Exception) -> list[str]:
+    """Which of Azure's filters fired (hate, violence, jailbreak…), from the 400's body. Category
+    names only: the body says what kind of thing was found, never the words."""
+    body = getattr(exc, "body", None)
+    if not isinstance(body, dict):
+        return []
+    body = body.get("error") if isinstance(body.get("error"), dict) else body
+    inner = body.get("innererror") if isinstance(body.get("innererror"), dict) else {}
+    results = inner.get("content_filter_result")
+    if not isinstance(results, dict):
+        return []
+    found = []
+    for category, result in results.items():
+        if isinstance(result, dict) and result.get("filtered"):
+            severity = result.get("severity")
+            found.append(f"{category} ({severity})" if severity else category)
+    return found
+
+
+def _filtered(provider: Provider, categories: list[str] | None = None) -> ContentFiltered:
+    # Counted, never quoted: what was blocked is a member's words. Which filter fired is not.
+    detail = f": {', '.join(categories)}" if categories else ""
+    logger.warning(f"[LLM] {provider.label} content filter blocked a request{detail}")
+    exc = ContentFiltered(f"{provider.label} content filter{detail}")
     exc.provider = provider.label
     return exc
 

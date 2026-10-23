@@ -453,6 +453,14 @@ friends at the mall". Groq's free tier runs real `whisper-large-v3-turbo` (20 RP
 - `synthesize_speech(text)` → temp MP3 via Edge TTS (`en-US-EmmaMultilingualNeural`, which also speaks Thai).
   The caller plays it and deletes the file.
 - Only `/ai voice` uses it; there is no standalone `/tts` command.
+- **A connector of its own for every try, and one retry** (`_ATTEMPTS`). `edge_tts` opens a `ClientSession` per
+  stream and that session closes the connector it was given, so a shared connector is dead after its first use
+  and aiohttp says "Session is closed". That message hides the real error: when Microsoft refuses the handshake
+  (403: a changed protocol version, or a clock off by minutes) `edge_tts` corrects itself and streams again
+  on the session that just closed. Seen in production with edge-tts 7.2.8, whose `Sec-MS-GEC-Version` the
+  service stopped accepting (fixed by 7.3.x): the LLM answer reached the chat and nothing was spoken, only
+  `TTS synthesis failed: Session is closed` in the log. If it comes back, run `edge_tts` once with its
+  default connector and read the first exception. Tested in `tests/test_tts.py`.
 
 ### Music Player — `cogs/voice/player.py`
 - `/music play|local|pause|resume|stop|skip|seek|previous|nowplaying|loop|queue|volume|leave`, plus a

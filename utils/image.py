@@ -1,11 +1,25 @@
 import io
+from itertools import chain
 from PIL import Image, ImageEnhance, ImageOps, ExifTags, ImageSequence
 from petpetgif import petpet
+from petpetgif.saveGif import TransparentAnimatedGifConverter
 import qrcode
 import logging
 import aiohttp
 
 logger = logging.getLogger(__name__)
+
+
+def _petpet_adjust_palette(self) -> None:
+    """pet-pet-gif passes an itertools.chain to Image.putpalette(), which Pillow 13 slices in ImagePalette.copy()."""
+    unused_color = self._get_unused_color()
+    final_palette = bytes(
+        chain.from_iterable(self._img_p_parsedpalette.get(x, unused_color) for x in range(256))
+    )
+    self._img_p.putpalette(data=final_palette)
+
+
+TransparentAnimatedGifConverter._adjust_palette = _petpet_adjust_palette
 
 def _process_image(img_bytes: bytes, frame_processor: callable, force_jpeg: bool = False) -> tuple[io.BytesIO, str, tuple[int, int], tuple[int, int]]:
     img = Image.open(io.BytesIO(img_bytes))

@@ -1,0 +1,87 @@
+# Dependabot configuration for YuukaDiscordBot
+# Docs: https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+updates:
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      # Dependabot automatically appends ": " after a closing parenthesis,
+      # producing commits like "chore(deps): bump ..."
+      prefix: "chore(deps)"
+    groups:
+      # Bundle all Dependabot security alert fixes into a single PR
+      security-fixes:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+      # AI agent, LLM providers, and web search
+      ai:
+        applies-to: version-updates
+        patterns:
+          - "langchain*"
+          - "langsmith*"
+          - "openai*"
+          - "tavily*"
+          - "tiktoken*"
+          - "pydantic*"
+          - "httpx*"
+          - "httpcore*"
+          - "anyio*"
+
+      # Voice, STT, wake-word, TTS, and music playback
+      voice-and-audio:
+        applies-to: version-updates
+        patterns:
+          - "faster-whisper*"
+          - "ctranslate2*"
+          - "huggingface-hub*"
+          - "tokenizers*"
+          - "av*"
+          - "livekit-wakeword*"
+          - "onnxruntime*"
+          - "scipy*"
+          - "rapidfuzz*"
+          - "edge-tts*"
+          - "yt-dlp*"
+          - "numpy*"
+          - "tinytag*"
+          - "nvidia-*"
+
+      # Image tools (/image, petpet, QR codes)
+      image:
+        applies-to: version-updates
+        patterns:
+          - "pillow*"
+          - "pet-pet-gif*"
+          - "qrcode*"
+
+      # Discord client and async HTTP transport
+      discord:
+        applies-to: version-updates
+        patterns:
+          - "py-cord*"
+          - "aiohttp*"
+          - "aiodns*"
+          - "pycares*"
+          - "multidict*"
+          - "yarl*"
+          - "propcache*"
+          - "frozenlist*"
+          - "aiosignal*"
+
+      # Development and test tooling ([dependency-groups].dev)
+      dev:
+        applies-to: version-updates
+        dependency-type: "development"
+        patterns:
+          - "*"
+
+      # Remaining runtime and transitive utilities (dotenv, loguru, psutil, etc.)
+      other:
+        applies-to: version-updates
+        patterns:
+          - "*"
